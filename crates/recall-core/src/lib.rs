@@ -1,0 +1,51 @@
+//! recall-core — pure domain layer for Recall-MCP.
+//!
+//! No HTTP, no MCP, no async runtime: models, the [`store::Store`] trait with a
+//! SQLite implementation (FTS5 keyword index), embedders, and the explainable
+//! hybrid scorer. Everything else in the workspace is a shell around this crate.
+
+pub mod embed;
+pub mod error;
+pub mod export;
+pub mod models;
+#[cfg(feature = "openai")]
+pub mod openai_embed;
+pub mod scorer;
+pub mod sqlite;
+pub mod store;
+pub mod util;
+
+pub use embed::{Embedder, HashEmbedder};
+pub use error::{RecallError, Result};
+pub use models::{Memory, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats, Weights};
+pub use scorer::HybridScorer;
+pub use sqlite::SqliteStore;
+pub use store::Store;
+
+/// Shared, thread-safe handle to a store, used by the server and CLI shells.
+pub type SharedStore = std::sync::Arc<std::sync::Mutex<dyn Store>>;
+
+/// Wrap a concrete store in the shared handle.
+pub fn shared(store: SqliteStore) -> SharedStore {
+    std::sync::Arc::new(std::sync::Mutex::new(store))
+}
+
+/// Current unix time in seconds.
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_now_is_plausible() {
+        let now = unix_now();
+        // 2026-09-06 is ~1.786e9; guard against clock disasters both ways.
+        assert!((1_700_000_000..2_500_000_000).contains(&now));
+    }
+}

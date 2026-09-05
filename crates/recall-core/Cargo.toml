@@ -1,0 +1,24 @@
+[package]
+name = "recall-core"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+description = "Pure domain layer for Recall-MCP: models, SQLite store with FTS5, embedders, explainable hybrid scorer"
+
+[dependencies]
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+# Optional OpenAI-compatible embedding client (ADR-003).
+openai = ["dep:reqwest"]
