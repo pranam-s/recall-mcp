@@ -2,5 +2,24 @@
 name = "recall-cli"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+repository.workspace = true
+description = "CLI for Recall-MCP: serve (HTTP + MCP), remember, recall, export, import"
+
+[[bin]]
+name = "recall-cli"
+path = "src/main.rs"
 
 [dependencies]
+recall-core = { workspace = true }
+recall-server = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
