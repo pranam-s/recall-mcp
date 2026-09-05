@@ -30,7 +30,9 @@ impl HashEmbedder {
     /// Custom dimensionality; must be non-zero.
     pub fn new(dim: usize) -> Result<Self> {
         if dim == 0 {
-            return Err(RecallError::InvalidInput("embedding dimension must be > 0".into()));
+            return Err(RecallError::InvalidInput(
+                "embedding dimension must be > 0".into(),
+            ));
         }
         Ok(Self { dim })
     }
@@ -59,10 +61,14 @@ impl Embedder for HashEmbedder {
             let sign = if h >> 63 & 1 == 1 { 1.0f32 } else { -1.0 };
             buckets[idx] += sign;
         }
-        let norm = buckets.iter().map(|v| {
-            let v = f64::from(*v);
-            v * v
-        }).sum::<f64>().sqrt();
+        let norm = buckets
+            .iter()
+            .map(|v| {
+                let v = f64::from(*v);
+                v * v
+            })
+            .sum::<f64>()
+            .sqrt();
         if norm == 0.0 {
             return buckets;
         }
@@ -91,7 +97,11 @@ mod tests {
         let a = e.embed("kubernetes rollout");
         let b = e.embed("database migration");
         assert_ne!(a, b);
-        let norm: f64 = a.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>().sqrt();
+        let norm: f64 = a
+            .iter()
+            .map(|v| (*v as f64) * (*v as f64))
+            .sum::<f64>()
+            .sqrt();
         assert!((norm - 1.0).abs() < 1e-5, "L2 norm should be 1, got {norm}");
         // Unit vectors: cosine of identical text is 1, and components are bounded.
         assert!(a.iter().all(|v| v.abs() <= 1.0));

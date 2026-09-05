@@ -7,8 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use recall_core::export::{ExportData, export, import};
 use recall_core::{
-    Embedder, HashEmbedder, NewMemory, RecallParams, SharedStore, SqliteStore, shared,
-    unix_now,
+    Embedder, HashEmbedder, NewMemory, RecallParams, SharedStore, SqliteStore, shared, unix_now,
 };
 use recall_server::{ServerConfig, build_router};
 
@@ -97,7 +96,10 @@ fn env_api_key() -> Option<String> {
 }
 
 fn effective_api_key(cli_key: Option<&String>, env_value: Option<String>) -> Option<String> {
-    cli_key.cloned().or(env_value).filter(|k| !k.trim().is_empty())
+    cli_key
+        .cloned()
+        .or(env_value)
+        .filter(|k| !k.trim().is_empty())
 }
 
 struct ServeArgs {
@@ -147,7 +149,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let db = cli.db.clone();
     match &cli.command {
-        Command::Serve { stdio, bind, api_key, web_dir } => {
+        Command::Serve {
+            stdio,
+            bind,
+            api_key,
+            web_dir,
+        } => {
             serve(&ServeArgs {
                 db,
                 stdio: *stdio,
@@ -157,7 +164,12 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Command::Remember { namespace, text, tags, pinned } => {
+        Command::Remember {
+            namespace,
+            text,
+            tags,
+            pinned,
+        } => {
             let store = open_store(&db)?;
             let embedder = HashEmbedder::new_256();
             // Scripted remember is agent-like: create the namespace if missing.
@@ -182,19 +194,31 @@ async fn main() -> Result<()> {
             drop(guard);
             print_json(serde_json::to_value(&memory)?)
         }
-        Command::Recall { namespace, query, k, tau_days } => {
+        Command::Recall {
+            namespace,
+            query,
+            k,
+            tau_days,
+        } => {
             let store = open_store(&db)?;
             let embedder: Arc<dyn Embedder> = Arc::new(HashEmbedder::new_256());
             let params = RecallParams {
                 k: *k,
-                tau_days: if *tau_days <= 0.0 { None } else { Some(*tau_days) },
+                tau_days: if *tau_days <= 0.0 {
+                    None
+                } else {
+                    Some(*tau_days)
+                },
                 ..RecallParams::default()
             };
             let query_embedding = embedder.embed(query);
-            let hits = store
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .recall(namespace, query, Some(&query_embedding), &params, unix_now())?;
+            let hits = store.lock().unwrap_or_else(|p| p.into_inner()).recall(
+                namespace,
+                query,
+                Some(&query_embedding),
+                &params,
+                unix_now(),
+            )?;
             print_json(serde_json::to_value(&hits)?)
         }
         Command::Export { out } => {
@@ -221,8 +245,8 @@ async fn main() -> Result<()> {
         }
         Command::Import { file } => {
             let store = open_store(&db)?;
-            let raw =
-                std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+            let raw = std::fs::read_to_string(file)
+                .with_context(|| format!("read {}", file.display()))?;
             let data: ExportData = serde_json::from_str(&raw)?;
             let report = import(&*store.lock().unwrap_or_else(|p| p.into_inner()), &data)?;
             print_json(serde_json::to_value(&report)?)
@@ -238,8 +262,14 @@ mod tests {
     fn api_key_prefers_cli_then_env_then_none() {
         let cli = Some("cli-key".to_string());
         assert!(effective_api_key(None, None).is_none());
-        assert_eq!(effective_api_key(cli.as_ref(), None).as_deref(), Some("cli-key"));
-        assert_eq!(effective_api_key(None, Some("env-key".into())).as_deref(), Some("env-key"));
+        assert_eq!(
+            effective_api_key(cli.as_ref(), None).as_deref(),
+            Some("cli-key")
+        );
+        assert_eq!(
+            effective_api_key(None, Some("env-key".into())).as_deref(),
+            Some("env-key")
+        );
         // CLI wins over env.
         assert_eq!(
             effective_api_key(cli.as_ref(), Some("env-key".into())).as_deref(),

@@ -94,16 +94,26 @@ fn default_recency() -> f64 {
 
 impl Default for Weights {
     fn default() -> Self {
-        Self { bm25: 0.45, vector: 0.45, recency: 0.10 }
+        Self {
+            bm25: 0.45,
+            vector: 0.45,
+            recency: 0.10,
+        }
     }
 }
 
 impl Weights {
     /// All weights must be finite and non-negative.
     pub fn validate(&self) -> Result<()> {
-        for (name, w) in [("bm25", self.bm25), ("vector", self.vector), ("recency", self.recency)] {
+        for (name, w) in [
+            ("bm25", self.bm25),
+            ("vector", self.vector),
+            ("recency", self.recency),
+        ] {
             if !w.is_finite() || w < 0.0 {
-                return Err(RecallError::InvalidInput(format!("weight {name} must be finite and >= 0")));
+                return Err(RecallError::InvalidInput(format!(
+                    "weight {name} must be finite and >= 0"
+                )));
             }
         }
         Ok(())
@@ -164,14 +174,20 @@ impl Default for RecallParams {
 impl RecallParams {
     pub fn validate(&self) -> Result<()> {
         if self.k == 0 || self.k > 100 {
-            return Err(RecallError::InvalidInput("k must be between 1 and 100".into()));
+            return Err(RecallError::InvalidInput(
+                "k must be between 1 and 100".into(),
+            ));
         }
         if !self.pinned_boost.is_finite() || self.pinned_boost < 0.0 {
-            return Err(RecallError::InvalidInput("pinned_boost must be finite and >= 0".into()));
+            return Err(RecallError::InvalidInput(
+                "pinned_boost must be finite and >= 0".into(),
+            ));
         }
         if let Some(tau) = self.tau_days {
             if !tau.is_finite() || tau <= 0.0 {
-                return Err(RecallError::InvalidInput("tau_days must be finite and > 0".into()));
+                return Err(RecallError::InvalidInput(
+                    "tau_days must be finite and > 0".into(),
+                ));
             }
         }
         if self.candidate_cap == 0 || self.scan_cap == 0 {
@@ -204,15 +220,43 @@ mod tests {
     #[test]
     fn weights_defaults_match_architecture() {
         let w = Weights::default();
-        assert_eq!(w, Weights { bm25: 0.45, vector: 0.45, recency: 0.10 });
+        assert_eq!(
+            w,
+            Weights {
+                bm25: 0.45,
+                vector: 0.45,
+                recency: 0.10
+            }
+        );
         assert!(w.validate().is_ok());
     }
 
     #[test]
     fn weights_reject_negative_and_non_finite() {
-        assert!(Weights { bm25: -0.1, ..Weights::default() }.validate().is_err());
-        assert!(Weights { vector: f64::NAN, ..Weights::default() }.validate().is_err());
-        assert!(Weights { recency: f64::INFINITY, ..Weights::default() }.validate().is_err());
+        assert!(
+            Weights {
+                bm25: -0.1,
+                ..Weights::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Weights {
+                vector: f64::NAN,
+                ..Weights::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Weights {
+                recency: f64::INFINITY,
+                ..Weights::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
@@ -223,34 +267,75 @@ mod tests {
     #[test]
     fn recall_params_reject_bad_k() {
         for k in [0usize, 101] {
-            let p = RecallParams { k, ..RecallParams::default() };
+            let p = RecallParams {
+                k,
+                ..RecallParams::default()
+            };
             assert!(p.validate().is_err(), "k={k} should be rejected");
         }
-        assert!(RecallParams { k: 1, ..Default::default() }.validate().is_ok());
-        assert!(RecallParams { k: 100, ..Default::default() }.validate().is_ok());
+        assert!(
+            RecallParams {
+                k: 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            RecallParams {
+                k: 100,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
     }
 
     #[test]
     fn recall_params_reject_bad_boost_tau_and_caps() {
-        let bad_boost = RecallParams { pinned_boost: -1.0, ..Default::default() };
+        let bad_boost = RecallParams {
+            pinned_boost: -1.0,
+            ..Default::default()
+        };
         assert!(bad_boost.validate().is_err());
-        let nan_boost = RecallParams { pinned_boost: f64::NAN, ..Default::default() };
+        let nan_boost = RecallParams {
+            pinned_boost: f64::NAN,
+            ..Default::default()
+        };
         assert!(nan_boost.validate().is_err());
-        let bad_tau = RecallParams { tau_days: Some(0.0), ..Default::default() };
+        let bad_tau = RecallParams {
+            tau_days: Some(0.0),
+            ..Default::default()
+        };
         assert!(bad_tau.validate().is_err());
-        let neg_tau = RecallParams { tau_days: Some(-5.0), ..Default::default() };
+        let neg_tau = RecallParams {
+            tau_days: Some(-5.0),
+            ..Default::default()
+        };
         assert!(neg_tau.validate().is_err());
-        let nan_tau = RecallParams { tau_days: Some(f64::NAN), ..Default::default() };
+        let nan_tau = RecallParams {
+            tau_days: Some(f64::NAN),
+            ..Default::default()
+        };
         assert!(nan_tau.validate().is_err());
-        let no_caps = RecallParams { candidate_cap: 0, ..Default::default() };
+        let no_caps = RecallParams {
+            candidate_cap: 0,
+            ..Default::default()
+        };
         assert!(no_caps.validate().is_err());
-        let no_scan = RecallParams { scan_cap: 0, ..Default::default() };
+        let no_scan = RecallParams {
+            scan_cap: 0,
+            ..Default::default()
+        };
         assert!(no_scan.validate().is_err());
     }
 
     #[test]
     fn recall_params_disable_decay_via_none() {
-        let p = RecallParams { tau_days: None, ..Default::default() };
+        let p = RecallParams {
+            tau_days: None,
+            ..Default::default()
+        };
         assert!(p.validate().is_ok());
     }
 

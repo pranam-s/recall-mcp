@@ -11,7 +11,8 @@ mod tests {
 
     #[test]
     fn document_is_valid_json_describing_this_api() {
-        let doc: serde_json::Value = serde_json::from_str(DOCUMENT).expect("openapi.json must parse");
+        let doc: serde_json::Value =
+            serde_json::from_str(DOCUMENT).expect("openapi.json must parse");
         assert_eq!(doc["openapi"], "3.1.0");
         let paths = doc["paths"].as_object().unwrap();
         for path in [

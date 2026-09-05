@@ -13,7 +13,13 @@ fn app_with(api_key: Option<String>) -> axum::Router {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = shared(recall_core::SqliteStore::open(dir.path().join("mcp.db")).expect("db"));
     std::mem::forget(dir);
-    build_router(store, &ServerConfig { api_key, web_dir: None })
+    build_router(
+        store,
+        &ServerConfig {
+            api_key,
+            web_dir: None,
+        },
+    )
 }
 
 async fn rpc(app: &axum::Router, payload: Value) -> (axum::http::StatusCode, Value) {
@@ -34,7 +40,8 @@ async fn rpc(app: &axum::Router, payload: Value) -> (axum::http::StatusCode, Val
     let value = if bytes.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::String(String::from_utf8_lossy(&bytes).to_string()))
+        serde_json::from_slice(&bytes)
+            .unwrap_or(Value::String(String::from_utf8_lossy(&bytes).to_string()))
     };
     (status, value)
 }
@@ -81,17 +88,29 @@ async fn conformance_initialize_tools_list_call_over_http() {
     let result = unwrap_result(&body);
     assert_eq!(result["serverInfo"]["name"], "recall-mcp");
     assert!(result["protocolVersion"].as_str().is_some());
-    assert!(result["capabilities"]["tools"].is_object(), "tools capability must be advertised");
+    assert!(
+        result["capabilities"]["tools"].is_object(),
+        "tools capability must be advertised"
+    );
 
     // 2) tools/list — exactly the four documented tools, each with an input schema.
-    let (status, body) = rpc(&app, json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
+    let (status, body) = rpc(
+        &app,
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    )
+    .await;
     assert_eq!(status, axum::http::StatusCode::OK);
-    let tools = unwrap_result(&body)["tools"].as_array().expect("tools array");
+    let tools = unwrap_result(&body)["tools"]
+        .as_array()
+        .expect("tools array");
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort();
     assert_eq!(names, vec!["forget", "list_memories", "recall", "remember"]);
     for tool in tools {
-        assert!(tool["inputSchema"].is_object(), "every tool needs an input schema");
+        assert!(
+            tool["inputSchema"].is_object(),
+            "every tool needs an input schema"
+        );
         assert!(tool["description"].as_str().is_some());
     }
 
@@ -110,7 +129,11 @@ async fn conformance_initialize_tools_list_call_over_http() {
     // 4) tools/call recall -> ranked hit with breakdown.
     let (status, body) = rpc(
         &app,
-        tool_call(4, "recall", json!({"namespace": "conformance", "query": "json-rpc transport", "k": 2})),
+        tool_call(
+            4,
+            "recall",
+            json!({"namespace": "conformance", "query": "json-rpc transport", "k": 2}),
+        ),
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
@@ -143,16 +166,29 @@ async fn conformance_initialize_tools_list_call_over_http() {
     // 7) unknown tool -> JSON-RPC protocol error (invalid params / tool missing).
     let (status, body) = rpc(&app, tool_call(8, "nonexistent", json!({}))).await;
     assert_eq!(status, axum::http::StatusCode::OK);
-    assert!(body["error"].is_object(), "unknown tool must be a JSON-RPC error: {body}");
+    assert!(
+        body["error"].is_object(),
+        "unknown tool must be a JSON-RPC error: {body}"
+    );
 
     // 8) caller-fixable tool failure -> isError result with message.
     let (_, body) = rpc(
         &app,
-        tool_call(9, "recall", json!({"namespace": "ghost-namespace", "query": "anything"})),
+        tool_call(
+            9,
+            "recall",
+            json!({"namespace": "ghost-namespace", "query": "anything"}),
+        ),
     )
     .await;
     let err = &body["error"];
-    assert!(err["message"].as_str().unwrap().contains("namespace not found"), "{body}");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("namespace not found"),
+        "{body}"
+    );
 }
 
 #[tokio::test]

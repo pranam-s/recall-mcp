@@ -9,8 +9,8 @@ pub mod state;
 
 use std::sync::Arc;
 
-use axum::routing::{delete, get, post};
 use axum::Router;
+use axum::routing::{delete, get, post};
 use recall_core::HashEmbedder;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -42,8 +42,14 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
     let auth = axum::middleware::from_fn_with_state(state.clone(), auth::require_api_key);
 
     let protected: Router<AppState> = Router::new()
-        .route("/v1/namespaces", post(api::create_namespace).get(api::list_namespaces))
-        .route("/v1/memories", post(api::create_memory).get(api::list_memories))
+        .route(
+            "/v1/namespaces",
+            post(api::create_namespace).get(api::list_namespaces),
+        )
+        .route(
+            "/v1/memories",
+            post(api::create_memory).get(api::list_memories),
+        )
         .route("/v1/memories/{id}", delete(api::delete_memory))
         .route("/v1/recall", post(api::recall))
         .route("/v1/stats", get(api::stats))
@@ -80,8 +86,15 @@ mod tests {
     #[tokio::test]
     async fn healthz_is_open_even_with_api_key() {
         let dir = tempfile::tempdir().unwrap();
-        let store = recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
-        let app = build_router(store, &ServerConfig { api_key: Some("k".into()), web_dir: None });
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        let app = build_router(
+            store,
+            &ServerConfig {
+                api_key: Some("k".into()),
+                web_dir: None,
+            },
+        );
         let res = app
             .oneshot(
                 Request::builder()

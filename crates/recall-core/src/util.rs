@@ -72,7 +72,10 @@ mod tests {
 
     #[test]
     fn tokenize_lowercases_and_drops_punctuation() {
-        assert_eq!(tokenize("Hello, World! rust-tool"), vec!["hello", "world", "rust", "tool"]);
+        assert_eq!(
+            tokenize("Hello, World! rust-tool"),
+            vec!["hello", "world", "rust", "tool"]
+        );
         assert!(tokenize("  ,, ").is_empty());
         assert!(tokenize("").is_empty());
         assert_eq!(tokenize("Ünïcode_Ω"), vec!["ünïcode", "ω"]);

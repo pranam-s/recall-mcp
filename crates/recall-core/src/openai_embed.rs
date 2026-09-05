@@ -36,13 +36,22 @@ struct EmbeddingItem {
 impl OpenAIEmbedder {
     /// Create a client. `endpoint` is the full embeddings URL,
     /// e.g. `https://api.openai.com/v1/embeddings`.
-    pub fn new(endpoint: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>, dims: usize) -> Result<Self> {
+    pub fn new(
+        endpoint: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        dims: usize,
+    ) -> Result<Self> {
         let api_key = api_key.into();
         if api_key.trim().is_empty() {
-            return Err(RecallError::InvalidInput("OpenAI api key must not be empty".into()));
+            return Err(RecallError::InvalidInput(
+                "OpenAI api key must not be empty".into(),
+            ));
         }
         if dims == 0 {
-            return Err(RecallError::InvalidInput("embedding dimension must be > 0".into()));
+            return Err(RecallError::InvalidInput(
+                "embedding dimension must be > 0".into(),
+            ));
         }
         Ok(Self {
             endpoint: endpoint.into(),
@@ -53,14 +62,21 @@ impl OpenAIEmbedder {
     }
 
     /// OpenAI's default embeddings endpoint.
-    pub fn openai(api_key: impl Into<String>, model: impl Into<String>, dims: usize) -> Result<Self> {
+    pub fn openai(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        dims: usize,
+    ) -> Result<Self> {
         Self::new("https://api.openai.com/v1/embeddings", api_key, model, dims)
     }
 
     /// Build the JSON request body sent to the API.
     pub(crate) fn request_body(&self, text: &str) -> String {
-        serde_json::to_string(&EmbeddingRequest { model: &self.model, input: text })
-            .unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string(&EmbeddingRequest {
+            model: &self.model,
+            input: text,
+        })
+        .unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Parse an API response body into the embedding vector, validating shape.
@@ -124,7 +140,9 @@ impl OpenAIEmbedder {
             .text()
             .map_err(|e| RecallError::Embedder(e.to_string()))?;
         if !status.is_success() {
-            return Err(RecallError::Embedder(format!("embeddings API returned {status}")));
+            return Err(RecallError::Embedder(format!(
+                "embeddings API returned {status}"
+            )));
         }
         Self::parse_response(&body)
     }
@@ -156,12 +174,18 @@ mod tests {
     #[test]
     fn parse_response_validates_payload() {
         let good = r#"{"data":[{"embedding":[0.1,0.2,0.3]}]}"#;
-        assert_eq!(OpenAIEmbedder::parse_response(good).unwrap(), vec![0.1, 0.2, 0.3]);
+        assert_eq!(
+            OpenAIEmbedder::parse_response(good).unwrap(),
+            vec![0.1, 0.2, 0.3]
+        );
 
         assert!(OpenAIEmbedder::parse_response("not json").is_err());
         assert!(OpenAIEmbedder::parse_response(r#"{"data":[]}"#).is_err());
         assert!(OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[]}]}"#).is_err());
-        assert!(OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[1]},{"embedding":[2]}]}"#).is_err());
+        assert!(
+            OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[1]},{"embedding":[2]}]}"#)
+                .is_err()
+        );
     }
 
     #[test]

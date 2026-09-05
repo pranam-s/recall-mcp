@@ -71,8 +71,11 @@ pub fn import(store: &dyn Store, data: &ExportData) -> Result<ImportReport> {
     let after = store.list_namespaces()?;
     report.namespaces_created = (after.len() - before.len()) as u64;
 
-    let ns_by_id: std::collections::HashMap<String, String> =
-        data.namespaces.iter().map(|ns| (ns.id.clone(), ns.name.clone())).collect();
+    let ns_by_id: std::collections::HashMap<String, String> = data
+        .namespaces
+        .iter()
+        .map(|ns| (ns.id.clone(), ns.name.clone()))
+        .collect();
     for memory in &data.memories {
         let namespace = match ns_by_id.get(&memory.namespace_id) {
             Some(name) => name.clone(),
@@ -189,10 +192,13 @@ mod tests {
         let data = export(&empty).unwrap();
         assert!(data.namespaces.is_empty() && data.memories.is_empty());
         let report = import(&SqliteStore::open_in_memory().unwrap(), &data).unwrap();
-        assert_eq!(report, ImportReport {
-            namespaces_created: 0,
-            memories_inserted: 0,
-            memories_skipped: 0
-        });
+        assert_eq!(
+            report,
+            ImportReport {
+                namespaces_created: 0,
+                memories_inserted: 0,
+                memories_skipped: 0
+            }
+        );
     }
 }

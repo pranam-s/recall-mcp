@@ -23,7 +23,11 @@ impl StdioSession {
             .expect("spawn recall-cli serve --stdio");
         let stdin = child.stdin.take().expect("stdin");
         let stdout = child.stdout.take().expect("stdout");
-        Self { child, stdin: Some(stdin), reader: BufReader::new(stdout) }
+        Self {
+            child,
+            stdin: Some(stdin),
+            reader: BufReader::new(stdout),
+        }
     }
 
     fn send(&mut self, payload: &Value) {
@@ -34,12 +38,18 @@ impl StdioSession {
             .expect("stdin open")
             .write_all(line.as_bytes())
             .expect("write request");
-        self.stdin.as_mut().expect("stdin open").flush().expect("flush request");
+        self.stdin
+            .as_mut()
+            .expect("stdin open")
+            .flush()
+            .expect("flush request");
     }
 
     fn recv(&mut self) -> Value {
         let mut line = String::new();
-        self.reader.read_line(&mut line).expect("read response line");
+        self.reader
+            .read_line(&mut line)
+            .expect("read response line");
         assert!(!line.is_empty(), "stdio transport closed before response");
         serde_json::from_str(&line).expect("response must be JSON-RPC")
     }
@@ -94,25 +104,35 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     // 2) initialized notification (no response expected), then tools/list
     session.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     let response = session.request(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
-    let tools = unwrap_result(&response)["tools"].as_array().expect("tools array");
+    let tools = unwrap_result(&response)["tools"]
+        .as_array()
+        .expect("tools array");
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort();
     assert_eq!(names, vec!["forget", "list_memories", "recall", "remember"]);
 
     // 3) tools/call remember (auto-creates the namespace)
-    let response = session.request(&tool_call(3, "remember", json!({
-        "namespace": "stdio-test",
-        "text": "stdio transport remembers decisions across sessions"
-    })));
+    let response = session.request(&tool_call(
+        3,
+        "remember",
+        json!({
+            "namespace": "stdio-test",
+            "text": "stdio transport remembers decisions across sessions"
+        }),
+    ));
     let stored = tool_text(unwrap_result(&response));
     let id = stored["id"].as_str().expect("memory id").to_string();
     assert_eq!(stored["source"], "mcp");
 
     // 4) tools/call recall with breakdowns
-    let response = session.request(&tool_call(4, "recall", json!({
-        "namespace": "stdio-test",
-        "query": "decisions across sessions"
-    })));
+    let response = session.request(&tool_call(
+        4,
+        "recall",
+        json!({
+            "namespace": "stdio-test",
+            "query": "decisions across sessions"
+        }),
+    ));
     let hits = tool_text(unwrap_result(&response));
     assert_eq!(hits.as_array().unwrap().len(), 1);
     assert_eq!(hits[0]["id"], id.as_str());
@@ -121,8 +141,18 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     // 5) forget + list_memories round out the tool surface
     let response = session.request(&tool_call(5, "forget", json!({ "id": id })));
     assert_eq!(tool_text(unwrap_result(&response))["deleted"], true);
-    let response = session.request(&tool_call(6, "list_memories", json!({ "namespace": "stdio-test" })));
-    assert_eq!(tool_text(unwrap_result(&response)).as_array().unwrap().len(), 0);
+    let response = session.request(&tool_call(
+        6,
+        "list_memories",
+        json!({ "namespace": "stdio-test" }),
+    ));
+    assert_eq!(
+        tool_text(unwrap_result(&response))
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 fn tool_call(id: u64, name: &str, args: Value) -> Value {

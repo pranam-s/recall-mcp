@@ -1,9 +1,9 @@
 //! REST API handlers (`/v1/*`, `/healthz`, `/openapi.json`).
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use recall_core::{NewMemory, RecallError, RecallHit, RecallParams, Weights};
 use serde::Deserialize;
 
@@ -19,7 +19,10 @@ pub async fn healthz() -> impl IntoResponse {
 }
 
 pub async fn openapi() -> impl IntoResponse {
-    ([(axum::http::header::CONTENT_TYPE, "application/json")], crate::openapi::DOCUMENT)
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        crate::openapi::DOCUMENT,
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +71,8 @@ pub async fn list_memories(
     Query(query): Query<ListMemoriesQuery>,
 ) -> Result<Response, HttpError> {
     let limit = query.limit.unwrap_or(100);
-    let memories = state.with_store(|store| store.list_memories(query.namespace.as_deref(), limit))?;
+    let memories =
+        state.with_store(|store| store.list_memories(query.namespace.as_deref(), limit))?;
     Ok(Json(memories).into_response())
 }
 

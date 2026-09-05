@@ -26,7 +26,11 @@ pub struct HybridScorer {
 
 impl Default for HybridScorer {
     fn default() -> Self {
-        Self { weights: Weights::default(), tau_days: Some(30.0), pinned_boost: 0.2 }
+        Self {
+            weights: Weights::default(),
+            tau_days: Some(30.0),
+            pinned_boost: 0.2,
+        }
     }
 }
 
@@ -44,10 +48,19 @@ impl HybridScorer {
             _ => 0.0,
         };
         let pinned_boost = if raw.pinned { self.pinned_boost } else { 0.0 };
-        let total = self.weights.bm25.mul_add(bm25, self.weights.vector * vector)
+        let total = self
+            .weights
+            .bm25
+            .mul_add(bm25, self.weights.vector * vector)
             + self.weights.recency * recency
             + pinned_boost;
-        ScoreBreakdown { bm25, vector, recency, pinned_boost, total }
+        ScoreBreakdown {
+            bm25,
+            vector,
+            recency,
+            pinned_boost,
+            total,
+        }
     }
 }
 
@@ -65,7 +78,12 @@ mod tests {
     #[test]
     fn perfect_fresh_pinned_candidate() {
         let b = scorer().score(
-            RawScore { bm25_normalized: 1.0, cosine: 1.0, created_at: NOW, pinned: true },
+            RawScore {
+                bm25_normalized: 1.0,
+                cosine: 1.0,
+                created_at: NOW,
+                pinned: true,
+            },
             NOW,
         );
         assert!((b.bm25 - 1.0).abs() < 1e-9);
@@ -82,7 +100,12 @@ mod tests {
         // Disable decay so the only inputs are keyword/vector/pinned — all zero here.
         s.tau_days = None;
         let b = s.score(
-            RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW, pinned: false },
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW,
+                pinned: false,
+            },
             NOW,
         );
         assert_eq!(b.total, 0.0);
@@ -93,19 +116,51 @@ mod tests {
     #[test]
     fn recency_decays_with_age_and_clamps_future_timestamps() {
         let s = scorer();
-        let fresh = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW, pinned: false }, NOW);
+        let fresh = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((fresh.recency - 1.0).abs() < 1e-9);
 
         let tau = 30.0f64;
-        let aged = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW - DAY, pinned: false }, NOW);
+        let aged = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW - DAY,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((aged.recency - (-1.0 / tau).exp()).abs() < 1e-9);
 
-        let ten_days = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW - 10 * DAY, pinned: false }, NOW);
+        let ten_days = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW - 10 * DAY,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((ten_days.recency - (-10.0 / tau).exp()).abs() < 1e-9);
         assert!(aged.recency > ten_days.recency);
 
         // Clock skew (created in the future) is clamped to age 0.
-        let future = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW + DAY, pinned: false }, NOW);
+        let future = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW + DAY,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((future.recency - 1.0).abs() < 1e-9);
     }
 
@@ -113,21 +168,45 @@ mod tests {
     fn decay_disabled_and_bad_tau_zero_the_recency_term() {
         let mut s = scorer();
         s.tau_days = None;
-        let b = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW - 365 * DAY, pinned: false }, NOW);
+        let b = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW - 365 * DAY,
+                pinned: false,
+            },
+            NOW,
+        );
         assert_eq!(b.recency, 0.0);
         assert_eq!(b.total, 0.0);
 
         // A validated-elsewhere tau <= 0 never multiplies the term.
         s.tau_days = Some(0.0);
-        let b = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.0, created_at: NOW, pinned: false }, NOW);
+        let b = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.0,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert_eq!(b.recency, 0.0);
     }
 
     #[test]
     fn pinned_boost_only_applies_to_pinned() {
         let s = scorer();
-        let base = || RawScore { bm25_normalized: 1.0, cosine: 0.0, created_at: NOW, pinned: false };
-        let pinned = RawScore { pinned: true, ..base() };
+        let base = || RawScore {
+            bm25_normalized: 1.0,
+            cosine: 0.0,
+            created_at: NOW,
+            pinned: false,
+        };
+        let pinned = RawScore {
+            pinned: true,
+            ..base()
+        };
         let unpinned_total = s.score(base(), NOW).total;
         let pinned_total = s.score(pinned, NOW).total;
         assert!((pinned_total - unpinned_total - 0.2).abs() < 1e-9);
@@ -136,35 +215,84 @@ mod tests {
     #[test]
     fn custom_weights_are_honored() {
         let s = HybridScorer {
-            weights: Weights { bm25: 1.0, vector: 0.0, recency: 0.0 },
+            weights: Weights {
+                bm25: 1.0,
+                vector: 0.0,
+                recency: 0.0,
+            },
             tau_days: Some(30.0),
             pinned_boost: 0.0,
         };
-        let b = s.score(RawScore { bm25_normalized: 0.5, cosine: 0.9, created_at: NOW, pinned: false }, NOW);
+        let b = s.score(
+            RawScore {
+                bm25_normalized: 0.5,
+                cosine: 0.9,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((b.total - 0.5).abs() < 1e-9);
     }
 
     #[test]
     fn bm25_input_is_clamped_into_unit_range() {
         let s = scorer();
-        let over = s.score(RawScore { bm25_normalized: 5.0, cosine: 0.0, created_at: NOW, pinned: false }, NOW);
+        let over = s.score(
+            RawScore {
+                bm25_normalized: 5.0,
+                cosine: 0.0,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((over.bm25 - 1.0).abs() < 1e-9);
-        let under = s.score(RawScore { bm25_normalized: -2.0, cosine: 0.0, created_at: NOW, pinned: false }, NOW);
+        let under = s.score(
+            RawScore {
+                bm25_normalized: -2.0,
+                cosine: 0.0,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!((under.bm25 - 0.0).abs() < 1e-9);
     }
 
     #[test]
     fn negative_cosine_is_kept_and_lowers_total() {
         let s = scorer();
-        let pos = s.score(RawScore { bm25_normalized: 0.0, cosine: 0.5, created_at: NOW, pinned: false }, NOW);
-        let neg = s.score(RawScore { bm25_normalized: 0.0, cosine: -0.5, created_at: NOW, pinned: false }, NOW);
+        let pos = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: 0.5,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
+        let neg = s.score(
+            RawScore {
+                bm25_normalized: 0.0,
+                cosine: -0.5,
+                created_at: NOW,
+                pinned: false,
+            },
+            NOW,
+        );
         assert!(neg.total < pos.total);
         assert!((neg.vector + 0.5).abs() < 1e-9);
     }
 
     #[test]
     fn deterministic_bitwise() {
-        let raw = RawScore { bm25_normalized: 0.7, cosine: 0.3, created_at: 1_700_000_000, pinned: true };
+        let raw = RawScore {
+            bm25_normalized: 0.7,
+            cosine: 0.3,
+            created_at: 1_700_000_000,
+            pinned: true,
+        };
         let b1 = scorer().score(raw, NOW);
         let b2 = scorer().score(raw, NOW);
         assert_eq!(b1, b2);

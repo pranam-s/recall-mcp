@@ -70,7 +70,10 @@ pub struct RecallTools {
 
 impl RecallTools {
     pub fn new(state: AppState) -> Self {
-        Self { state, tool_router: Self::tool_router() }
+        Self {
+            state,
+            tool_router: Self::tool_router(),
+        }
     }
 
     fn tool_json(value: impl serde::Serialize) -> Result<CallToolResult, McpError> {
@@ -80,7 +83,8 @@ impl RecallTools {
     fn domain_err(e: recall_core::RecallError) -> McpError {
         match &e {
             // Caller-fixable problems are "invalid params"; anything else is internal.
-            recall_core::RecallError::InvalidInput(_) | recall_core::RecallError::NamespaceNotFound(_) => {
+            recall_core::RecallError::InvalidInput(_)
+            | recall_core::RecallError::NamespaceNotFound(_) => {
                 McpError::invalid_params(e.to_string(), None)
             }
             _ => McpError::internal_error(e.to_string(), None),
@@ -90,13 +94,21 @@ impl RecallTools {
 
 #[tool_router(router = tool_router)]
 impl RecallTools {
-    #[tool(description = "Store a memory (observation, decision, preference) in a namespace. The namespace is created automatically if unknown. Returns the stored record with its id.")]
-    fn remember(&self, Parameters(params): Parameters<RememberParams>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Store a memory (observation, decision, preference) in a namespace. The namespace is created automatically if unknown. Returns the stored record with its id."
+    )]
+    fn remember(
+        &self,
+        Parameters(params): Parameters<RememberParams>,
+    ) -> Result<CallToolResult, McpError> {
         // MCP callers are agents: remember must "just work" (PRD user story),
         // so unlike the strict REST API we auto-create the namespace.
         let namespace = params.namespace.trim().to_string();
         if namespace.is_empty() {
-            return Err(McpError::invalid_params("namespace must not be empty", None));
+            return Err(McpError::invalid_params(
+                "namespace must not be empty",
+                None,
+            ));
         }
         self.state
             .with_store(|store| store.get_or_create_namespace(&namespace))
@@ -119,8 +131,13 @@ impl RecallTools {
         Self::tool_json(&stored)
     }
 
-    #[tool(description = "Hybrid recall: BM25 keyword + embedding similarity + recency decay, ranked with per-hit score breakdowns (bm25, vector, recency, pinned_boost, total).")]
-    fn recall(&self, Parameters(params): Parameters<RecallToolParams>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Hybrid recall: BM25 keyword + embedding similarity + recency decay, ranked with per-hit score breakdowns (bm25, vector, recency, pinned_boost, total)."
+    )]
+    fn recall(
+        &self,
+        Parameters(params): Parameters<RecallToolParams>,
+    ) -> Result<CallToolResult, McpError> {
         let mut tool_params = recall_core::RecallParams::default();
         if let Some(k) = params.k {
             tool_params.k = k;
@@ -149,7 +166,10 @@ impl RecallTools {
     }
 
     #[tool(description = "Forget (permanently delete) one memory by id.")]
-    fn forget(&self, Parameters(params): Parameters<ForgetParam>) -> Result<CallToolResult, McpError> {
+    fn forget(
+        &self,
+        Parameters(params): Parameters<ForgetParam>,
+    ) -> Result<CallToolResult, McpError> {
         let deleted = self
             .state
             .with_store(|store| store.delete_memory(&params.id))
@@ -185,9 +205,8 @@ mod tests {
     use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
 
     fn test_state() -> AppState {
-        let store = recall_core::shared(
-            recall_core::SqliteStore::open_in_memory().expect("in-memory db"),
-        );
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open_in_memory().expect("in-memory db"));
         let embedder: std::sync::Arc<dyn recall_core::Embedder> =
             std::sync::Arc::new(recall_core::HashEmbedder::new_256());
         AppState::new(store, embedder, None)
@@ -199,7 +218,10 @@ mod tests {
         assert_eq!(info.server_info.name, "recall-mcp");
         // Guard against drift between the macro attribute literal and the crate version.
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
-        assert!(info.capabilities.tools.is_some(), "tools capability must be declared");
+        assert!(
+            info.capabilities.tools.is_some(),
+            "tools capability must be declared"
+        );
         assert!(info.instructions.is_some());
     }
 }

@@ -17,7 +17,9 @@ pub mod util;
 
 pub use embed::{Embedder, HashEmbedder};
 pub use error::{RecallError, Result};
-pub use models::{Memory, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats, Weights};
+pub use models::{
+    Memory, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats, Weights,
+};
 pub use scorer::HybridScorer;
 pub use sqlite::SqliteStore;
 pub use store::Store;

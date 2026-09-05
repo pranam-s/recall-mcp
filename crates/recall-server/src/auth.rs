@@ -61,7 +61,11 @@ mod tests {
         h.insert("x-api-key", " xyz ".parse().unwrap());
         assert_eq!(presented_key(&h).as_deref(), Some("xyz"));
         h.insert("authorization", "Basic abc".parse().unwrap());
-        assert_eq!(presented_key(&h).as_deref(), Some("xyz"), "x-api-key wins over non-bearer");
+        assert_eq!(
+            presented_key(&h).as_deref(),
+            Some("xyz"),
+            "x-api-key wins over non-bearer"
+        );
         h.remove("x-api-key");
         assert_eq!(presented_key(&h), None, "non-bearer scheme is ignored");
         h.insert("authorization", "Bearer  ".parse().unwrap());

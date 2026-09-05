@@ -3,13 +3,11 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use tracing::debug;
 
 use crate::error::{RecallError, Result};
-use crate::models::{
-    Memory, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats,
-};
+use crate::models::{Memory, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats};
 use crate::scorer::{HybridScorer, RawScore};
 use crate::store::Store;
 use crate::util::{blob_to_f32, f32_to_blob, tokenize};
@@ -93,7 +91,9 @@ impl SqliteStore {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT id FROM namespaces WHERE name = ?1")?;
-        Ok(stmt.query_row(params![name], |r| r.get::<_, String>(0)).optional()?)
+        Ok(stmt
+            .query_row(params![name], |r| r.get::<_, String>(0))
+            .optional()?)
     }
 
     fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
@@ -120,7 +120,9 @@ impl Store for SqliteStore {
     fn create_namespace(&self, name: &str) -> Result<Namespace> {
         let name = name.trim();
         if name.is_empty() {
-            return Err(RecallError::InvalidInput("namespace name must not be empty".into()));
+            return Err(RecallError::InvalidInput(
+                "namespace name must not be empty".into(),
+            ));
         }
         if let Some(existing) = self.find_namespace(name)? {
             return Err(RecallError::DuplicateNamespace(existing.name));
@@ -132,7 +134,11 @@ impl Store for SqliteStore {
             params![id, name, now],
         )?;
         debug!(namespace = name, "created namespace");
-        Ok(Namespace { id, name: name.to_string(), created_at: now })
+        Ok(Namespace {
+            id,
+            name: name.to_string(),
+            created_at: now,
+        })
     }
 
     fn get_or_create_namespace(&self, name: &str) -> Result<Namespace> {
@@ -147,18 +153,26 @@ impl Store for SqliteStore {
             .conn
             .prepare("SELECT id, name, created_at FROM namespaces ORDER BY created_at, name")?;
         let rows = stmt.query_map([], |r| {
-            Ok(Namespace { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? })
+            Ok(Namespace {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                created_at: r.get(2)?,
+            })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
     fn find_namespace(&self, name: &str) -> Result<Option<Namespace>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, created_at FROM namespaces WHERE name = ?1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, created_at FROM namespaces WHERE name = ?1")?;
         Ok(stmt
             .query_row(params![name], |r| {
-                Ok(Namespace { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? })
+                Ok(Namespace {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    created_at: r.get(2)?,
+                })
             })
             .optional()?)
     }
@@ -166,7 +180,9 @@ impl Store for SqliteStore {
     fn insert_memory(&self, memory: &NewMemory) -> Result<Memory> {
         let text = memory.text.trim();
         if text.is_empty() {
-            return Err(RecallError::InvalidInput("memory text must not be empty".into()));
+            return Err(RecallError::InvalidInput(
+                "memory text must not be empty".into(),
+            ));
         }
         let ns = self
             .namespace_id(&memory.namespace)?
@@ -174,7 +190,9 @@ impl Store for SqliteStore {
 
         let id = match &memory.id {
             Some(id) if id.trim().is_empty() => {
-                return Err(RecallError::InvalidInput("memory id must not be blank".into()));
+                return Err(RecallError::InvalidInput(
+                    "memory id must not be blank".into(),
+                ));
             }
             Some(id) => id.clone(),
             None => new_id(),
@@ -202,8 +220,12 @@ impl Store for SqliteStore {
         );
         match inserted {
             Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
-                return Err(RecallError::InvalidInput(format!("memory id already exists: {id}")));
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                return Err(RecallError::InvalidInput(format!(
+                    "memory id already exists: {id}"
+                )));
             }
             Err(e) => return Err(e.into()),
         }
@@ -225,7 +247,9 @@ impl Store for SqliteStore {
     }
 
     fn delete_memory(&self, id: &str) -> Result<bool> {
-        let n = self.conn.execute("DELETE FROM memories WHERE id = ?1", params![id])?;
+        let n = self
+            .conn
+            .execute("DELETE FROM memories WHERE id = ?1", params![id])?;
         Ok(n > 0)
     }
 
@@ -337,7 +361,11 @@ impl Store for SqliteStore {
                 None => continue,
             };
             let raw_bm25 = keyword.get(id).copied().unwrap_or(0.0);
-            let bm25_normalized = if max_bm25 > 0.0 { raw_bm25 / max_bm25 } else { 0.0 };
+            let bm25_normalized = if max_bm25 > 0.0 {
+                raw_bm25 / max_bm25
+            } else {
+                0.0
+            };
             let cosine = vector.get(id).copied().unwrap_or(0.0);
             let breakdown = scorer.score(
                 RawScore {
@@ -348,7 +376,10 @@ impl Store for SqliteStore {
                 },
                 now,
             );
-            hits.push(RecallHit { memory: memory.clone(), breakdown });
+            hits.push(RecallHit {
+                memory: memory.clone(),
+                breakdown,
+            });
         }
 
         hits.sort_by(|a, b| {
@@ -378,15 +409,18 @@ impl Store for SqliteStore {
     fn stats(&self) -> Result<Stats> {
         let total_namespaces = self
             .conn
-            .query_row("SELECT COUNT(*) FROM namespaces", [], |r| r.get::<_, i64>(0))?;
-        let total_memories = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get::<_, i64>(0))? as u64;
-        let pinned = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM memories WHERE pinned = 1", [], |r| {
+            .query_row("SELECT COUNT(*) FROM namespaces", [], |r| {
                 r.get::<_, i64>(0)
             })?;
+        let total_memories = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get::<_, i64>(0))?
+            as u64;
+        let pinned =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM memories WHERE pinned = 1", [], |r| {
+                    r.get::<_, i64>(0)
+                })?;
         let mut stmt = self.conn.prepare(
             "SELECT n.name, COUNT(m.id) AS c
              FROM namespaces n LEFT JOIN memories m ON m.namespace_id = n.id
@@ -394,7 +428,10 @@ impl Store for SqliteStore {
         )?;
         let per = stmt
             .query_map([], |r| {
-                Ok(NamespaceCount { namespace: r.get(0)?, count: r.get::<_, i64>(1)? as u64 })
+                Ok(NamespaceCount {
+                    namespace: r.get(0)?,
+                    count: r.get::<_, i64>(1)? as u64,
+                })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(Stats {
@@ -440,11 +477,17 @@ mod tests {
 
     #[test]
     fn fts_query_builder_quotes_and_ors() {
-        assert_eq!(build_fts_query("Deploy on Friday"), Some("\"deploy\" OR \"on\" OR \"friday\"".to_string()));
+        assert_eq!(
+            build_fts_query("Deploy on Friday"),
+            Some("\"deploy\" OR \"on\" OR \"friday\"".to_string())
+        );
         assert_eq!(build_fts_query("  "), None);
         assert_eq!(build_fts_query(""), None);
         // Quotes inside tokens are stripped, so MATCH syntax can't be broken.
-        assert_eq!(build_fts_query("a\"b OR c"), Some("\"a\" OR \"b\" OR \"or\" OR \"c\"".to_string()));
+        assert_eq!(
+            build_fts_query("a\"b OR c"),
+            Some("\"a\" OR \"b\" OR \"or\" OR \"c\"".to_string())
+        );
         assert_eq!(build_fts_query("\"\""), None);
     }
 
@@ -456,7 +499,12 @@ mod tests {
         assert_eq!(w.name, "work");
         let dup = s.create_namespace("work").unwrap_err();
         assert!(matches!(dup, RecallError::DuplicateNamespace(_)));
-        assert!(s.create_namespace("  ").unwrap_err().to_string().contains("must not be empty"));
+        assert!(
+            s.create_namespace("  ")
+                .unwrap_err()
+                .to_string()
+                .contains("must not be empty")
+        );
         let listed = s.list_namespaces().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, w.id);
@@ -510,7 +558,10 @@ mod tests {
             s.insert_memory(&mem("w", "   ")).unwrap_err(),
             RecallError::InvalidInput(_)
         ));
-        let blank_id = NewMemory { id: Some("  ".into()), ..mem("w", "hello") };
+        let blank_id = NewMemory {
+            id: Some("  ".into()),
+            ..mem("w", "hello")
+        };
         assert!(s.insert_memory(&blank_id).is_err());
     }
 
@@ -518,9 +569,15 @@ mod tests {
     fn duplicate_memory_id_is_reported_cleanly() {
         let s = store();
         ns(&s, "w");
-        let m = NewMemory { id: Some("fixed-id".into()), ..mem("w", "first") };
+        let m = NewMemory {
+            id: Some("fixed-id".into()),
+            ..mem("w", "first")
+        };
         s.insert_memory(&m).unwrap();
-        let again = NewMemory { id: Some("fixed-id".into()), ..mem("w", "second") };
+        let again = NewMemory {
+            id: Some("fixed-id".into()),
+            ..mem("w", "second")
+        };
         let err = s.insert_memory(&again).unwrap_err();
         assert!(err.to_string().contains("already exists"), "got: {err}");
     }
@@ -541,12 +598,27 @@ mod tests {
         let s = store();
         ns(&s, "a");
         ns(&s, "b");
-        s.insert_memory(&NewMemory { created_at: Some(100), ..mem("a", "old a") }).unwrap();
-        s.insert_memory(&NewMemory { created_at: Some(300), ..mem("a", "new a") }).unwrap();
-        s.insert_memory(&NewMemory { created_at: Some(200), ..mem("b", "mid b") }).unwrap();
+        s.insert_memory(&NewMemory {
+            created_at: Some(100),
+            ..mem("a", "old a")
+        })
+        .unwrap();
+        s.insert_memory(&NewMemory {
+            created_at: Some(300),
+            ..mem("a", "new a")
+        })
+        .unwrap();
+        s.insert_memory(&NewMemory {
+            created_at: Some(200),
+            ..mem("b", "mid b")
+        })
+        .unwrap();
 
         let all_a = s.list_memories(Some("a"), 10).unwrap();
-        assert_eq!(all_a.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), vec!["new a", "old a"]);
+        assert_eq!(
+            all_a.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            vec!["new a", "old a"]
+        );
         let all = s.list_memories(None, 10).unwrap();
         assert_eq!(all.len(), 3);
         let one = s.list_memories(None, 1).unwrap();
@@ -564,7 +636,11 @@ mod tests {
         let s = store();
         ns(&s, "a");
         ns(&s, "b");
-        s.insert_memory(&NewMemory { pinned: true, ..mem("a", "p1") }).unwrap();
+        s.insert_memory(&NewMemory {
+            pinned: true,
+            ..mem("a", "p1")
+        })
+        .unwrap();
         s.insert_memory(&mem("a", "p2")).unwrap();
         let st = s.stats().unwrap();
         assert_eq!(st.total_namespaces, 2);
@@ -582,15 +658,20 @@ mod tests {
         let e = HashEmbedder::new_256();
         let p = RecallParams::default();
         assert!(matches!(
-            s.recall("ghost", "q", Some(&e.embed("q")[..]), &p, 0).unwrap_err(),
+            s.recall("ghost", "q", Some(&e.embed("q")[..]), &p, 0)
+                .unwrap_err(),
             RecallError::NamespaceNotFound(_)
         ));
         ns(&s, "w");
         assert!(matches!(
-            s.recall("w", "   ", Some(&e.embed("q")[..]), &p, 0).unwrap_err(),
+            s.recall("w", "   ", Some(&e.embed("q")[..]), &p, 0)
+                .unwrap_err(),
             RecallError::InvalidInput(_)
         ));
-        let bad_k = RecallParams { k: 0, ..Default::default() };
+        let bad_k = RecallParams {
+            k: 0,
+            ..Default::default()
+        };
         assert!(s.recall("w", "q", None, &bad_k, 0).is_err());
     }
 
@@ -634,14 +715,26 @@ mod tests {
         .unwrap();
 
         let q = e.embed("deploy payments service");
-        let hits = s.recall("w", "deploy payments service", Some(&q), &RecallParams::default(), now).unwrap();
+        let hits = s
+            .recall(
+                "w",
+                "deploy payments service",
+                Some(&q),
+                &RecallParams::default(),
+                now,
+            )
+            .unwrap();
         assert!(!hits.is_empty());
 
         // Every hit carries a complete, consistent breakdown.
         for h in &hits {
             let b = &h.breakdown;
-            let recomputed = 0.45f64.mul_add(b.bm25, 0.45 * b.vector) + 0.10 * b.recency + b.pinned_boost;
-            assert!((recomputed - b.total).abs() < 1e-9, "breakdown must sum to total");
+            let recomputed =
+                0.45f64.mul_add(b.bm25, 0.45 * b.vector) + 0.10 * b.recency + b.pinned_boost;
+            assert!(
+                (recomputed - b.total).abs() < 1e-9,
+                "breakdown must sum to total"
+            );
             assert!((0.0..=1.0).contains(&b.bm25));
         }
 
@@ -661,7 +754,10 @@ mod tests {
         // Deterministic total ordering: pinned twin > fresh match > stale twin
         // (boost 0.2 > fresh recency ~0.1 > stale recency ~0). This is the
         // documented ranking behavior of the default weights.
-        let ids = hits.iter().map(|h| h.memory.id.as_str()).collect::<Vec<_>>();
+        let ids = hits
+            .iter()
+            .map(|h| h.memory.id.as_str())
+            .collect::<Vec<_>>();
         let pos = |id: &str| ids.iter().position(|i| *i == id).unwrap();
         assert!(pos(&pinned.id) < pos(&target.id));
         assert!(pos(&target.id) < pos(&stale.id));
@@ -687,7 +783,9 @@ mod tests {
             ..mem("w", hit_text)
         })
         .unwrap();
-        let hits = s.recall("w", "rust ownership", None, &RecallParams::default(), now).unwrap();
+        let hits = s
+            .recall("w", "rust ownership", None, &RecallParams::default(), now)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert!((hits[0].breakdown.vector - 0.0).abs() < 1e-9);
         assert!(hits[0].breakdown.bm25 > 0.0);
@@ -706,7 +804,9 @@ mod tests {
         })
         .unwrap();
         let zero = vec![0.0f32; 256];
-        let hits = s.recall("w", "alpha", Some(&zero), &RecallParams::default(), 10).unwrap();
+        let hits = s
+            .recall("w", "alpha", Some(&zero), &RecallParams::default(), 10)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].breakdown.vector, 0.0);
     }
@@ -718,11 +818,18 @@ mod tests {
         ns(&s, "w");
         s.insert_memory(&mem("w", "something unrelated")).unwrap();
         let q = e.embed("zzzqqq");
-        let hits = s.recall("w", "zzzqqq", Some(&q), &RecallParams::default(), 5).unwrap();
+        let hits = s
+            .recall("w", "zzzqqq", Some(&q), &RecallParams::default(), 5)
+            .unwrap();
         assert!(hits.is_empty());
 
-        let p = RecallParams { tau_days: None, ..Default::default() };
-        let hits = s.recall("w", "something", Some(&e.embed("something")[..]), &p, 5).unwrap();
+        let p = RecallParams {
+            tau_days: None,
+            ..Default::default()
+        };
+        let hits = s
+            .recall("w", "something", Some(&e.embed("something")[..]), &p, 5)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].breakdown.recency, 0.0);
         assert!(hits[0].breakdown.total > 0.0);
@@ -749,7 +856,10 @@ mod tests {
             })
             .unwrap();
         }
-        let p = RecallParams { k: 2, ..Default::default() };
+        let p = RecallParams {
+            k: 2,
+            ..Default::default()
+        };
         let q = e.embed("ferries");
         let hits = s.recall("w", "ferries", Some(&q), &p, now).unwrap();
         assert_eq!(hits.len(), 2);
@@ -773,8 +883,12 @@ mod tests {
             .unwrap();
         }
         let q = e.embed("gamma");
-        let a = s.recall("w", "gamma", Some(&q), &RecallParams::default(), 10).unwrap();
-        let b = s.recall("w", "gamma", Some(&q), &RecallParams::default(), 10).unwrap();
+        let a = s
+            .recall("w", "gamma", Some(&q), &RecallParams::default(), 10)
+            .unwrap();
+        let b = s
+            .recall("w", "gamma", Some(&q), &RecallParams::default(), 10)
+            .unwrap();
         assert_eq!(a, b);
     }
 
@@ -782,12 +896,17 @@ mod tests {
     fn fts_index_stays_synced_across_delete() {
         let s = store();
         ns(&s, "w");
-        let m = s.insert_memory(&mem("w", "unique widget fingerprint")).unwrap();
+        let m = s
+            .insert_memory(&mem("w", "unique widget fingerprint"))
+            .unwrap();
         let q = "widget";
         let p = RecallParams::default();
         assert_eq!(s.recall("w", q, None, &p, 1).unwrap().len(), 1);
         s.delete_memory(&m.id).unwrap();
-        assert!(s.recall("w", q, None, &p, 1).unwrap().is_empty(), "FTS row must go with the memory");
+        assert!(
+            s.recall("w", q, None, &p, 1).unwrap().is_empty(),
+            "FTS row must go with the memory"
+        );
     }
 
     #[test]
@@ -804,13 +923,20 @@ mod tests {
         .unwrap();
         let q = e.embed("bright lizards fly");
         let p = RecallParams {
-            weights: Weights { bm25: 0.0, vector: 1.0, recency: 0.0 },
+            weights: Weights {
+                bm25: 0.0,
+                vector: 1.0,
+                recency: 0.0,
+            },
             tau_days: Some(30.0),
             ..Default::default()
         };
         let hits = s.recall("w", "bright lizards", Some(&q), &p, now).unwrap();
         assert_eq!(hits.len(), 1);
         let b = &hits[0].breakdown;
-        assert!((b.total - b.vector).abs() < 1e-9, "only the vector weight should apply");
+        assert!(
+            (b.total - b.vector).abs() < 1e-9,
+            "only the vector weight should apply"
+        );
     }
 }

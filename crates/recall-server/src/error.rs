@@ -1,8 +1,8 @@
 //! Mapping of core errors onto HTTP responses.
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use recall_core::RecallError;
 
 /// A core error paired with its HTTP mapping.
@@ -25,7 +25,10 @@ impl IntoResponse for HttpError {
             // Everything else is a server fault; details go to logs, not clients.
             other => {
                 tracing::error!(error = %other, "internal error handling request");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
             }
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
@@ -49,11 +52,26 @@ mod tests {
     #[tokio::test]
     async fn maps_errors_to_statuses() {
         let cases = [
-            (RecallError::NamespaceNotFound("w".into()), StatusCode::NOT_FOUND),
-            (RecallError::MemoryNotFound("m".into()), StatusCode::NOT_FOUND),
-            (RecallError::DuplicateNamespace("w".into()), StatusCode::CONFLICT),
-            (RecallError::InvalidInput("x".into()), StatusCode::BAD_REQUEST),
-            (RecallError::Io(std::io::Error::other("db down")), StatusCode::INTERNAL_SERVER_ERROR),
+            (
+                RecallError::NamespaceNotFound("w".into()),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                RecallError::MemoryNotFound("m".into()),
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                RecallError::DuplicateNamespace("w".into()),
+                StatusCode::CONFLICT,
+            ),
+            (
+                RecallError::InvalidInput("x".into()),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                RecallError::Io(std::io::Error::other("db down")),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
         ];
         for (err, expected) in cases {
             let res = HttpError(err).into_response();
