@@ -183,12 +183,12 @@ impl RecallParams {
                 "pinned_boost must be finite and >= 0".into(),
             ));
         }
-        if let Some(tau) = self.tau_days {
-            if !tau.is_finite() || tau <= 0.0 {
-                return Err(RecallError::InvalidInput(
-                    "tau_days must be finite and > 0".into(),
-                ));
-            }
+        if let Some(tau) = self.tau_days
+            && (!tau.is_finite() || tau <= 0.0)
+        {
+            return Err(RecallError::InvalidInput(
+                "tau_days must be finite and > 0".into(),
+            ));
         }
         if self.candidate_cap == 0 || self.scan_cap == 0 {
             return Err(RecallError::InvalidInput("caps must be > 0".into()));

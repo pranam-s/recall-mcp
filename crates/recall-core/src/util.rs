@@ -46,12 +46,14 @@ pub fn f32_to_blob(vec: &[f32]) -> Vec<u8> {
 
 /// Decode a BLOB back into f32s. `None` when the byte length is not a multiple of 4.
 pub fn blob_to_f32(bytes: &[u8]) -> Option<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return None;
     }
     Some(
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect(),
     )

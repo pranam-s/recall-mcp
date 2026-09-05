@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
             }
             let embedding = embedder.embed(text);
             // One guard for the whole read-modify sequence (the mutex is not re-entrant).
-            let mut guard = store.lock().unwrap_or_else(|p| p.into_inner());
+            let guard = store.lock().unwrap_or_else(|p| p.into_inner());
             guard.get_or_create_namespace(&namespace)?;
             let memory = guard.insert_memory(&NewMemory {
                 namespace,
@@ -249,7 +249,7 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("read {}", file.display()))?;
             let data: ExportData = serde_json::from_str(&raw)?;
             let report = import(&*store.lock().unwrap_or_else(|p| p.into_inner()), &data)?;
-            print_json(serde_json::to_value(&report)?)
+            print_json(serde_json::to_value(report)?)
         }
     }
 }

@@ -199,33 +199,6 @@ impl RecallTools {
 )]
 impl ServerHandler for RecallTools {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
-
-    fn test_state() -> AppState {
-        let store =
-            recall_core::shared(recall_core::SqliteStore::open_in_memory().expect("in-memory db"));
-        let embedder: std::sync::Arc<dyn recall_core::Embedder> =
-            std::sync::Arc::new(recall_core::HashEmbedder::new_256());
-        AppState::new(store, embedder, None)
-    }
-
-    #[test]
-    fn server_info_pins_name_and_spec_version_literal() {
-        let info = RecallTools::new(test_state()).get_info();
-        assert_eq!(info.server_info.name, "recall-mcp");
-        // Guard against drift between the macro attribute literal and the crate version.
-        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
-        assert!(
-            info.capabilities.tools.is_some(),
-            "tools capability must be declared"
-        );
-        assert!(info.instructions.is_some());
-    }
-}
-
 /// Build the streamable-HTTP MCP service for mounting at `/mcp`.
 pub fn streamable_http_service(
     state: &AppState,
@@ -255,4 +228,30 @@ pub async fn run_stdio_server(state: AppState) -> anyhow::Result<()> {
         .await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state() -> AppState {
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open_in_memory().expect("in-memory db"));
+        let embedder: std::sync::Arc<dyn recall_core::Embedder> =
+            std::sync::Arc::new(recall_core::HashEmbedder::new_256());
+        AppState::new(store, embedder, None)
+    }
+
+    #[test]
+    fn server_info_pins_name_and_spec_version_literal() {
+        let info = RecallTools::new(test_state()).get_info();
+        assert_eq!(info.server_info.name, "recall-mcp");
+        // Guard against drift between the macro attribute literal and the crate version.
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(
+            info.capabilities.tools.is_some(),
+            "tools capability must be declared"
+        );
+        assert!(info.instructions.is_some());
+    }
 }

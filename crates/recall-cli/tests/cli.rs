@@ -63,7 +63,7 @@ fn cli_remember_recall_export_import_roundtrip() {
     assert!(out.status.success(), "recall failed: {}", out.stdout);
     let hits: Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(hits.as_array().unwrap().len(), 1);
-    assert_eq!(hits[0]["breakdown"]["total"].as_f64().unwrap() > 0.0, true);
+    assert!(hits[0]["breakdown"]["total"].as_f64().unwrap() > 0.0);
 
     // export to file
     let export_path = dir.path().join("export.json");
