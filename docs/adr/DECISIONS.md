@@ -191,3 +191,98 @@ pass, so `k` applies *after* filtering. AND (not OR) chosen because recall is
 for narrowing within a namespace; OR users can issue multiple recalls and merge
 with the score breakdowns intact. `RecallParams` dropped `Copy` for the
 `Vec<String>` field — it is only ever passed by reference.
+
+## D-016 — Recall fast path: exact top-k heap + slim BLOB scan (measured)
+
+The first measured p95 (67.2 ms at 10k memories, v0.2) tripped D-002's own
+revisit trigger. Before swapping storage engines, the brute-force scan itself
+was re-engineered (2026-09-07), keeping results exact:
+
+- The vector pass scans only `(rowid, embedding, created_at, pinned)`, reads
+  the BLOB through a borrowed `ValueRef` (zero Rust-side allocations), and
+  computes cosine straight from BLOB bytes (`util::cosine_f32_blob*`) with the
+  query norm hoisted out of the loop — bit-identical arithmetic to the
+  reference `cosine`.
+- Candidate selection is exact: outside the FTS candidate set bm25 is 0, so a
+  row's *vector-only total* (cosine, recency, pinned boost via the same
+  `HybridScorer`) **is** its final total. A bounded max-heap of the k best
+  vector-only rows (comparator mirroring the final ranking, inverted) therefore
+  provably contains every row that could reach the final top-k; everything it
+  evicts sorts strictly below the heap's weakest member and can never surface.
+  Full rows (text/tags/source) are fetched only for survivors — at most
+  `candidate_cap + k` rows instead of the whole namespace — and the
+  `last_accessed_at` refresh is one batched UPDATE.
+- Ranking-order refinement: ties on `(total, created_at)` are now broken by
+  insertion order (rowid) instead of the random UUID id. This only orders
+  content-identical duplicates that straddle the k-boundary; outcomes are
+  deterministic per database either way.
+- Session pragmas `cache_size = -8000` (8 MiB) and `mmap_size = 128 MiB` keep
+  large scans off the OS read path. Semantics-neutral.
+
+Measured on the 10k fixture (this VM, release): criterion `hybrid_k5`
+80.5 ms → 28.3 ms mean; `keyword_only_k5` 41.7 ms → 9.9 ms; exact-percentile
+harness p95 69.4 ms → 33–35 ms (see EVALUATION.md for run-by-run numbers).
+A rejected experiment: rewriting the FTS namespace filter as
+`rowid IN (SELECT …)` made SQLite correlate the subquery per FTS match —
+1.6 s per query; the JOIN formulation stays. The residual ~20 ms is SQLite
+blob-read throughput in the O(n) scan — the structural fix is the D-002
+revisit (packed in-process vectors or an ANN index); the trigger is now
+formally measured rather than speculative.
+
+## D-017 — Production hardening defaults for the HTTP/MCP surface
+
+Adopted 2026-09-07 so the server is operable beyond "works on loopback":
+
+- **Constant-time key comparison** (RustCrypto `subtle::ConstantTimeEq`) for
+  API-key checks; timing no longer leaks key-prefix matches.
+- **Body limit**: 1 MiB default on every request (`DefaultBodyLimit`),
+  configurable via flag/env/config file; oversize → 413. Memory texts are
+  short by design; bulk imports that bring their own vectors fit comfortably.
+- **Rate limiting**: token bucket per presented key (one shared `anonymous`
+  bucket when no key is presented, which also throttles key-guessing), applied
+  with auth to `/v1/*` + `/mcp`; `429` + `Retry-After`. Off by default (the
+  local-first single-user default); enabled by `--rate-limit` (sustained req/s)
+  and optional `--rate-burst` (default max(2×rate, 10)). Validation fails
+  closed on non-positive rates. `healthz`/`openapi.json` stay unlimited —
+  probes must survive load.
+- **Metrics**: `/metrics` in Prometheus text exposition (0.0.4) — request
+  counter, status codes, per-route latency histogram, embedding timings (a
+  timed wrapper around the shared embedder covers REST, MCP and capture),
+  rate-limit counter, and live store gauges scraped through the store. It is
+  auth-protected like `/v1/*` when a key is configured; scrapers send the key.
+- **Graceful shutdown**: Ctrl-C/SIGTERM stops accepts, drains in-flight
+  requests, then checkpoints the WAL so the next open starts from a clean
+  main file. SIGTERM is a no-op arm on Windows.
+- **Maintenance**: `Store::checkpoint_wal/vacuum/vacuum_into` with CLI
+  `backup --out` (hot compacted snapshot via `VACUUM INTO`; refuses to
+  overwrite; keyed stores yield keyed backups because ciphertext is copied
+  verbatim) and CLI `vacuum` (in-place compact + checkpoint).
+- **Release profile**: `lto = "fat"`, `codegen-units = 1`,
+  `strip = "symbols"` for the shipped binary.
+- **Config precedence**: CLI flag > environment (`RECALL_MCP_BIND`,
+  `RECALL_MCP_RATE_LIMIT`, `RECALL_MCP_BODY_LIMIT`) > optional JSON
+  `--config` file (bind, rate_limit, rate_burst, body_limit) > defaults.
+  Secrets (API key, encryption key) remain env/flag-only — no secrets in
+  world-readable files.
+
+Rejected: tower-governor (extra dependency for ~60 lines of bucket math) and
+scraping /metrics unauthenticated (would leak store sizes when a key is set).
+
+## D-018 — Auto-capture ingestion: deterministic chunking, REST-first
+
+COMPETITORS.md rec #2 ("manual remember() starves the store") landed as a
+scaffold: `POST /v1/capture` takes `{namespace, transcript: [{role?, content,
+at?}], tags?, max_chunk_chars?}` and stores memories with `source = "capture"`.
+
+- Chunking lives in pure core (`recall_core::capture::chunk_text`): ≤ max_chars
+  (default 1000, clamped 100..=8000) with paragraph → sentence → hard-wrap
+  boundaries, greedy packing, unicode-safe, deterministic. Each chunk embeds
+  itself (a chunk's vector must match the text a future query matches).
+- Roles are prefixed into the text and added as `role:<role>` tags so
+  tag-filtered recall and analytics work without new tables; caller tags are
+  merged in; message `at` timestamps pass through to `created_at`.
+- The namespace is auto-created, mirroring MCP `remember` (D-009): capture is
+  the agent-shaped, no-setup path. Insertions happen under one store lock.
+- REST-first is deliberate: hooks (session-end, IDE, CI) speak HTTP; an MCP
+  `capture` tool would mostly duplicate `remember` for interactive agents. If
+  demand appears, the same core chunking is reusable behind a tool in minutes.
