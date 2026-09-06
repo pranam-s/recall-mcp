@@ -7,3 +7,5 @@ test-results/
 *.db-wal
 *.db-shm
 .env
+spikes/onnx-spike/target/
+spikes/onnx-spike/ort-bin/
