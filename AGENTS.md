@@ -13,7 +13,7 @@ before planning work.
   no HTTP/JSON types. Models, `Store` trait, `Embedder` trait, `HybridScorer`.
 - `recall-server` (axum + rmcp) and `recall-cli` (clap) are thin shells over
   core. Same engine behind REST, MCP, and CLI — no logic drift between them.
-- Decisions live in docs/adr/DECISIONS.md (D-001…D-012). Do not silently
+- Decisions live in docs/adr/DECISIONS.md (D-001…D-015). Do not silently
   deviate: if a decision is wrong, propose an amendment first.
 
 ## Style guides (load before writing code)

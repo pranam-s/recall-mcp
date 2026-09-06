@@ -25,6 +25,19 @@ mod tests {
         ] {
             assert!(paths.contains_key(path), "missing {path}");
         }
+        // Drift guards: the update endpoint and the recall tag filter must
+        // stay documented alongside the core surface.
+        assert!(
+            paths["/v1/memories/{id}"]["patch"].is_object(),
+            "PATCH /v1/memories/{{id}} must be documented"
+        );
+        assert!(
+            paths["/v1/recall"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                ["properties"]["tags"]
+                .is_object(),
+            "recall tags filter must be documented"
+        );
         assert!(doc["components"]["schemas"]["ScoreBreakdown"].is_object());
+        assert!(doc["components"]["schemas"]["MemoryUpdate"].is_object());
     }
 }
