@@ -1,10 +1,12 @@
 # Recall-MCP
 
+[![CI](https://github.com/pranam/recall-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pranam/recall-mcp/actions/workflows/ci.yml)
+
 **Local-first semantic memory broker for AI agents** — an MCP server (stdio +
 streamable-HTTP) that any MCP-capable agent can use to `remember`, `recall`,
-`forget`, and `list_memories`, backed by one SQLite file. Also exposes a plain
-HTTP/JSON API with an OpenAPI document, a web UI that explains every ranking,
-and a CLI for scripting.
+`forget`, `update_memory`, and `list_memories`, backed by one SQLite file. Also
+exposes a plain HTTP/JSON API with an OpenAPI document, a web UI that explains
+every ranking, and a CLI for scripting.
 
 - Status: **v0.1 working end-to-end** (see [docs/STATUS.md](docs/STATUS.md) for
   the honest done/partial list and [docs/EVALUATION.md](docs/EVALUATION.md) for
@@ -31,8 +33,13 @@ Prereqs: Rust (GNU toolchain used here; rustup override included in the repo),
 gcc for bundled SQLite, Node 24.
 
 ```bash
-# 1. Run the whole test suite (80 tests: unit + integration + MCP conformance + eval)
+# 1. Run the whole test suite (88 tests: unit + integration + MCP conformance + eval)
 cargo test --workspace
+
+# 1b. Measure recall latency on the 10k fixture (criterion + exact percentiles).
+#     Measured: p95 ≈ 67 ms at 10k — see docs/EVALUATION.md before trusting the 25 ms PRD budget.
+cargo bench -p recall-core
+cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
 
 # 2. Serve REST + MCP + web UI (creates recall.db if missing)
 cargo run -p recall-cli -- serve --bind 127.0.0.1:8787 --db recall.db
@@ -105,6 +112,8 @@ refreshed. See `docs/adr/DECISIONS.md` D-002 for the sqlite-vec trade-off.
 
 ## Repository hygiene
 
-- `cargo clippy --workspace --all-targets` — 0 warnings (2026-09-06)
+- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings (2026-09-06)
 - `cargo fmt --all` enforced
+- CI (`.github/workflows/ci.yml`): fmt + clippy, workspace tests, llvm-cov
+  90/90 gate on recall-core (linux-gnu, D-010), windows-gnu test job
 - Conventional commits; every feature slice landed with its tests
