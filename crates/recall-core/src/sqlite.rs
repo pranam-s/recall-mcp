@@ -1,11 +1,18 @@
 //! SQLite-backed [`Store`] with an FTS5 keyword index (external content,
 //! trigger-synced) and BLOB-stored embeddings (ADR-002).
+//!
+//! Encryption at rest (D-014): when opened with a [`StoreKey`], `memories.text`
+//! stores only AEAD ciphertext (`enc:v1:...`) and the FTS index is built from
+//! keyed HMAC token digests, so no plaintext reaches disk. The keyword pass
+//! digests query tokens with the same key, keeping BM25 ranking identical.
+//! Legacy plaintext databases are upgraded in place on the first keyed open.
 
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use tracing::debug;
 
+use crate::crypto::{StoreKey, key_check_context, text_context};
 use crate::error::{RecallError, Result};
 use crate::models::{Memory, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats};
 use crate::scorer::{HybridScorer, RawScore};
@@ -17,6 +24,11 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
 
+CREATE TABLE IF NOT EXISTS store_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS namespaces (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
@@ -27,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id               TEXT PRIMARY KEY,
     namespace_id     TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
     text             TEXT NOT NULL,
+    fts_tokens       TEXT NOT NULL DEFAULT '',
     tags             TEXT NOT NULL DEFAULT '[]',
     embedding        BLOB,
     source           TEXT NOT NULL DEFAULT 'agent',
@@ -38,23 +51,38 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-    text,
+    fts_tokens,
     content = 'memories',
     content_rowid = 'rowid'
 );
 
 CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
+    INSERT INTO memories_fts(rowid, fts_tokens) VALUES (new.rowid, new.fts_tokens);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+    INSERT INTO memories_fts(memories_fts, rowid, fts_tokens)
+    VALUES ('delete', old.rowid, old.fts_tokens);
+END;
+
+-- Keeps the external-content index exact for text rewrites (memory updates).
+-- Access-time `last_accessed_at` updates must not churn the index, hence the
+-- WHEN guard and the column restriction.
+CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE OF text, fts_tokens ON memories
+WHEN old.fts_tokens IS NOT new.fts_tokens
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, fts_tokens)
+    VALUES ('delete', old.rowid, old.fts_tokens);
+    INSERT INTO memories_fts(rowid, fts_tokens) VALUES (new.rowid, new.fts_tokens);
 END;
 "#;
 
 /// Minimal FTS5 expression builder: double-quoted OR of tokens, so arbitrary
-/// user input can neither break MATCH syntax nor inject operators.
-pub fn build_fts_query(query: &str) -> Option<String> {
+/// user input can neither break MATCH syntax nor inject operators. When a key
+/// is supplied (encrypted mode), each token is replaced by its keyed digest —
+/// the same transformation applied to stored documents, so ranking is
+/// unchanged while query and index stay plaintext-free.
+pub fn build_fts_query(query: &str, key: Option<&StoreKey>) -> Option<String> {
     let tokens = tokenize(query);
     if tokens.is_empty() {
         return None;
@@ -62,7 +90,13 @@ pub fn build_fts_query(query: &str) -> Option<String> {
     Some(
         tokens
             .iter()
-            .map(|t| format!("\"{}\"", t.replace('"', "")))
+            .map(|t| {
+                let term = match key {
+                    Some(k) => k.token_digest(t),
+                    None => t.replace('"', ""),
+                };
+                format!("\"{term}\"")
+            })
             .collect::<Vec<_>>()
             .join(" OR "),
     )
@@ -70,21 +104,266 @@ pub fn build_fts_query(query: &str) -> Option<String> {
 
 pub struct SqliteStore {
     conn: Connection,
+    key: Option<StoreKey>,
+}
+
+/// Metadata keys in `store_meta`.
+const META_AT_REST: &str = "at_rest";
+const META_KEY_CHECK: &str = "key_check";
+const AT_REST_PLAIN: &str = "plain";
+const AT_REST_ENC: &str = "enc_v1";
+/// Known plaintext encrypted as the key check: a wrong key fails at open.
+const KEY_CHECK_PLAINTEXT: &str = "recall-mcp key check v1";
+
+/// Raw column view of a `memories` row, before tag parsing and decryption.
+struct MemoryRow {
+    id: String,
+    namespace_id: String,
+    text_stored: String,
+    tags_json: String,
+    embedding: Option<Vec<u8>>,
+    source: String,
+    pinned: bool,
+    created_at: i64,
+    last_accessed_at: i64,
+}
+
+const MEMORY_COLUMNS: &str =
+    "id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at";
+
+fn memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
+    Ok(MemoryRow {
+        id: row.get("id")?,
+        namespace_id: row.get("namespace_id")?,
+        text_stored: row.get("text")?,
+        tags_json: row.get("tags")?,
+        embedding: row.get("embedding")?,
+        source: row.get("source")?,
+        pinned: row.get::<_, i64>("pinned")? != 0,
+        created_at: row.get("created_at")?,
+        last_accessed_at: row.get("last_accessed_at")?,
+    })
+}
+
+impl MemoryRow {
+    /// Parse tags and decrypt text (keyed store) into a domain [`Memory`].
+    fn into_memory(self, key: Option<&StoreKey>) -> Result<Memory> {
+        let tags = serde_json::from_str(&self.tags_json).map_err(RecallError::Serialization)?;
+        let text = match (key, StoreKey::is_encrypted(&self.text_stored)) {
+            (Some(k), true) => k.decrypt(&text_context(&self.id), &self.text_stored)?,
+            // Legacy/mixed rows written before the key existed read as-is.
+            (_, false) => self.text_stored,
+            (None, true) => {
+                return Err(RecallError::Crypto(
+                    "encrypted memory value present but no key was provided".into(),
+                ));
+            }
+        };
+        Ok(Memory {
+            id: self.id,
+            namespace_id: self.namespace_id,
+            text,
+            tags,
+            embedding: self.embedding.as_deref().and_then(blob_to_f32),
+            source: self.source,
+            pinned: self.pinned,
+            created_at: self.created_at,
+            last_accessed_at: self.last_accessed_at,
+        })
+    }
 }
 
 impl SqliteStore {
-    /// Open (creating if needed) a database file. `:memory:` is honored.
+    /// Open (creating if needed) a plaintext database file. `:memory:` is
+    /// honored. Refuses databases that are encrypted at rest — open with
+    /// [`SqliteStore::open_with_key`] instead.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        Self::open_inner(path, None)
     }
 
-    /// In-memory database, mainly for tests and ephemeral tools.
+    /// Open (creating if needed) with encryption at rest. New memories are
+    /// stored encrypted; an existing plaintext database is upgraded in place
+    /// on first open (D-014). The key is verified against a stored check
+    /// value, so a wrong key fails immediately.
+    pub fn open_with_key<P: AsRef<Path>>(path: P, key: &StoreKey) -> Result<Self> {
+        Self::open_inner(path, Some(key.clone()))
+    }
+
+    /// In-memory database, mainly for tests and ephemeral tools (plaintext).
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        Ok(Self { conn, key: None })
+    }
+
+    /// In-memory encrypted database (tests).
+    pub fn open_in_memory_with_key(key: &StoreKey) -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(SCHEMA)?;
+        let store = Self {
+            conn,
+            key: Some(key.clone()),
+        };
+        store.init_mode()?;
+        Ok(store)
+    }
+
+    fn open_inner<P: AsRef<Path>>(path: P, key: Option<StoreKey>) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(SCHEMA)?;
+        let needs_upgrade = legacy_schema(&conn)?;
+        if needs_upgrade {
+            upgrade_legacy_schema(&conn)?;
+        }
+        let store = Self { conn, key };
+        // Legacy layout always stored plaintext.
+        if needs_upgrade {
+            store.copy_plaintext_fts_tokens()?;
+        }
+        store.init_mode()?;
+        if store.key.is_some() && needs_upgrade {
+            // The plaintext era wrote legacy rows and (pre-upgrade) FTS
+            // content into pages that may linger after deletion; VACUUM
+            // compacts them away after the in-place upgrade.
+            store.conn.execute_batch("VACUUM")?;
+        }
+        Ok(store)
+    }
+
+    /// Enforce mode consistency and complete the keyed-mode setup:
+    /// verify the stored key check, encrypt any remaining plaintext rows,
+    /// and persist the mode marker.
+    fn init_mode(&self) -> Result<()> {
+        let marker = self.meta_get(META_AT_REST)?;
+        match (&self.key, marker.as_deref()) {
+            (None, Some(AT_REST_ENC)) => {
+                return Err(RecallError::Crypto(
+                    "database is encrypted at rest: set RECALL_MCP_KEY (64 hex chars) \
+                     or RECALL_MCP_KEY_FILE to open it"
+                        .into(),
+                ));
+            }
+            (Some(_), Some(AT_REST_ENC)) => self.verify_key_check()?,
+            // First keyed open (fresh or legacy/marked-plain): encrypt everything.
+            (Some(_), _) => {
+                self.encrypt_remaining_plaintext()?;
+                self.meta_set(META_AT_REST, AT_REST_ENC)?;
+                self.meta_set(
+                    META_KEY_CHECK,
+                    &self
+                        .key
+                        .as_ref()
+                        .expect("checked above")
+                        .encrypt(&key_check_context(), KEY_CHECK_PLAINTEXT),
+                )?;
+            }
+            (None, _) => {
+                if marker.is_none() {
+                    self.meta_set(META_AT_REST, AT_REST_PLAIN)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Open-time proof that the supplied key is the one the database was
+    /// written with (AEAD decrypt fails on any other key).
+    fn verify_key_check(&self) -> Result<()> {
+        let key = self.key.as_ref().expect("keyed open");
+        if let Some(check) = self.meta_get(META_KEY_CHECK)? {
+            key.decrypt(&key_check_context(), &check)?;
+        }
+        Ok(())
+    }
+
+    /// Encrypt every remaining plaintext row in one transaction (idempotent:
+    /// already-encrypted rows are skipped). The FTS update trigger keeps the
+    /// index exact as each row's token digest replaces its plaintext copy.
+    fn encrypt_remaining_plaintext(&self) -> Result<()> {
+        let key = match &self.key {
+            Some(k) => k,
+            None => return Ok(()),
+        };
+        let ids: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id FROM memories WHERE text NOT LIKE 'enc:v1:%'")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute_batch("BEGIN")?;
+        let result = (|| -> Result<()> {
+            let mut stmt = self
+                .conn
+                .prepare_cached("UPDATE memories SET text = ?1, fts_tokens = ?2 WHERE id = ?3")?;
+            for id in &ids {
+                let memory = self
+                    .get_memory(id)?
+                    .ok_or_else(|| RecallError::MemoryNotFound(id.clone()))?;
+                let encrypted = key.encrypt(&text_context(id), &memory.text);
+                let tokens = key.fts_tokens(&memory.text);
+                stmt.execute(params![encrypted, tokens, id])?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        debug!(count = ids.len(), "encrypted existing plaintext memories");
+        Ok(())
+    }
+
+    /// Legacy (pre-encryption-schema) databases indexed `memories.text`
+    /// directly. Copy it into the new `fts_tokens` column so the rebuilt
+    /// index matches; the keyed-mode pass replaces it with digests next.
+    /// The copy must run with triggers dropped: firing the update trigger
+    /// with values that were never indexed corrupts an external-content
+    /// FTS5 index.
+    fn copy_plaintext_fts_tokens(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "DROP TRIGGER IF EXISTS memories_fts_insert;
+             DROP TRIGGER IF EXISTS memories_fts_delete;
+             DROP TRIGGER IF EXISTS memories_fts_update;
+             UPDATE memories SET fts_tokens = text;",
+        )?;
+        self.conn.execute_batch(SCHEMA)?;
+        self.conn
+            .execute_batch("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');")?;
+        Ok(())
+    }
+
+    fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT value FROM store_meta WHERE key = ?1")?;
+        Ok(stmt
+            .query_row(params![key], |r| r.get::<_, String>(0))
+            .optional()?)
+    }
+
+    fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO store_meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Storage form of memory text: ciphertext in keyed mode, plaintext
+    /// otherwise; plus the FTS document (keyed digests or the text itself).
+    fn stored_text(&self, id: &str, text: &str) -> (String, String) {
+        match &self.key {
+            Some(k) => (k.encrypt(&text_context(id), text), k.fts_tokens(text)),
+            None => (text.to_string(), text.to_string()),
+        }
     }
 
     fn namespace_id(&self, name: &str) -> Result<Option<String>> {
@@ -95,25 +374,50 @@ impl SqliteStore {
             .query_row(params![name], |r| r.get::<_, String>(0))
             .optional()?)
     }
+}
 
-    fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
-        let tags_json: String = row.get("tags")?;
-        let embedding: Option<Vec<u8>> = row.get("embedding")?;
-        let tags = serde_json::from_str(&tags_json).map_err(|e| {
-            rusqlite::Error::ToSqlConversionFailure(Box::new(RecallError::Serialization(e)))
-        })?;
-        Ok(Memory {
-            id: row.get("id")?,
-            namespace_id: row.get("namespace_id")?,
-            text: row.get("text")?,
-            tags,
-            embedding: embedding.as_deref().and_then(blob_to_f32),
-            source: row.get("source")?,
-            pinned: row.get::<_, i64>("pinned")? != 0,
-            created_at: row.get("created_at")?,
-            last_accessed_at: row.get("last_accessed_at")?,
-        })
-    }
+/// True when `memories` predates the encryption schema (no `fts_tokens`
+/// column, FTS index over `text`).
+fn legacy_schema(conn: &Connection) -> Result<bool> {
+    let has_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = 'fts_tokens'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(has_column == 0 && table_exists(conn, "memories")?)
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// One-time migration of a pre-encryption database to schema v2:
+/// add `fts_tokens`, recreate the FTS virtual table over it, and drop the
+/// old text-based triggers (fresh ones are created by `SCHEMA` on next run /
+/// below). Content is rebuilt by [`SqliteStore::copy_plaintext_fts_tokens`].
+fn upgrade_legacy_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"BEGIN;
+           DROP TRIGGER IF EXISTS memories_fts_insert;
+           DROP TRIGGER IF EXISTS memories_fts_delete;
+           DROP TRIGGER IF EXISTS memories_fts_update;
+           ALTER TABLE memories ADD COLUMN fts_tokens TEXT NOT NULL DEFAULT '';
+           DROP TABLE memories_fts;
+           CREATE VIRTUAL TABLE memories_fts USING fts5(
+               fts_tokens,
+               content = 'memories',
+               content_rowid = 'rowid'
+           );
+           COMMIT;"#,
+    )?;
+    conn.execute_batch(SCHEMA)?;
+    debug!("upgraded legacy schema to encryption-capable layout");
+    Ok(())
 }
 
 impl Store for SqliteStore {
@@ -202,15 +506,17 @@ impl Store for SqliteStore {
         let tags = serde_json::to_string(&memory.tags)?;
         let embedding_blob = memory.embedding.as_deref().map(f32_to_blob);
         let source = memory.source.clone().unwrap_or_else(|| "agent".to_string());
+        let (stored_text, fts_tokens) = self.stored_text(&id, text);
 
         // Distinguish "duplicate id" from other constraint failures for a precise error.
         let inserted = self.conn.execute(
-            "INSERT INTO memories (id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            "INSERT INTO memories (id, namespace_id, text, fts_tokens, tags, embedding, source, pinned, created_at, last_accessed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
             params![
                 id,
                 ns,
-                text,
+                stored_text,
+                fts_tokens,
                 tags,
                 embedding_blob,
                 source,
@@ -235,13 +541,12 @@ impl Store for SqliteStore {
     }
 
     fn get_memory(&self, id: &str) -> Result<Option<Memory>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at
-             FROM memories WHERE id = ?1",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories WHERE id = ?1"
+        ))?;
         let mut rows = stmt.query(params![id])?;
         match rows.next()? {
-            Some(row) => Ok(Some(Self::row_to_memory(row)?)),
+            Some(row) => Ok(Some(memory_row(row)?.into_memory(self.key.as_ref())?)),
             None => Ok(None),
         }
     }
@@ -257,28 +562,33 @@ impl Store for SqliteStore {
         if limit == 0 {
             return Err(RecallError::InvalidInput("limit must be > 0".into()));
         }
-        match namespace {
-            Some(name) => {
-                let ns = self
-                    .namespace_id(name)?
-                    .ok_or_else(|| RecallError::NamespaceNotFound(name.to_string()))?;
-                let mut stmt = self.conn.prepare(
-                    "SELECT id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at
-                     FROM memories WHERE namespace_id = ?1
-                     ORDER BY created_at DESC, id ASC LIMIT ?2",
-                )?;
-                let rows = stmt.query_map(params![ns, limit as i64], Self::row_to_memory)?;
-                Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-            }
-            None => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at
-                     FROM memories ORDER BY created_at DESC, id ASC LIMIT ?1",
-                )?;
-                let rows = stmt.query_map(params![limit as i64], Self::row_to_memory)?;
-                Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-            }
+        let sql = match namespace {
+            Some(_) => format!(
+                "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1
+                 ORDER BY created_at DESC, id ASC LIMIT ?2"
+            ),
+            None => format!(
+                "SELECT {MEMORY_COLUMNS} FROM memories
+                 ORDER BY created_at DESC, id ASC LIMIT ?1"
+            ),
+        };
+        let ns = match namespace {
+            Some(name) => Some(
+                self.namespace_id(name)?
+                    .ok_or_else(|| RecallError::NamespaceNotFound(name.to_string()))?,
+            ),
+            None => None,
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = match ns {
+            Some(ns) => stmt.query_map(params![ns, limit as i64], memory_row)?,
+            None => stmt.query_map(params![limit as i64], memory_row)?,
+        };
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?.into_memory(self.key.as_ref())?);
         }
+        Ok(out)
     }
 
     fn recall(
@@ -299,7 +609,7 @@ impl Store for SqliteStore {
 
         // Pass 1 — keyword candidates from FTS5 (bm25, more negative = better).
         let mut keyword: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-        if let Some(fts_query) = build_fts_query(query) {
+        if let Some(fts_query) = build_fts_query(query, self.key.as_ref()) {
             let mut stmt = self.conn.prepare(
                 "SELECT m.id, bm25(memories_fts) AS rank_score
                  FROM memories_fts
@@ -323,13 +633,12 @@ impl Store for SqliteStore {
         let mut rows_by_id: std::collections::HashMap<String, Memory> =
             std::collections::HashMap::new();
         {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at
-                 FROM memories WHERE namespace_id = ?1 LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![ns, p.scan_cap as i64], Self::row_to_memory)?;
-            for m in rows {
-                let m = m?;
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1 LIMIT ?2"
+            ))?;
+            let rows = stmt.query_map(params![ns, p.scan_cap as i64], memory_row)?;
+            for row in rows {
+                let m = row?.into_memory(self.key.as_ref())?;
                 rows_by_id.insert(m.id.clone(), m);
             }
         }
@@ -458,6 +767,15 @@ mod tests {
         SqliteStore::open_in_memory().expect("in-memory db")
     }
 
+    fn keyed() -> SqliteStore {
+        SqliteStore::open_in_memory_with_key(&test_key()).expect("in-memory keyed db")
+    }
+
+    fn test_key() -> StoreKey {
+        StoreKey::from_hex("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+            .expect("valid hex key")
+    }
+
     fn ns(s: &SqliteStore, name: &str) -> Namespace {
         s.create_namespace(name).expect("namespace")
     }
@@ -478,17 +796,42 @@ mod tests {
     #[test]
     fn fts_query_builder_quotes_and_ors() {
         assert_eq!(
-            build_fts_query("Deploy on Friday"),
+            build_fts_query("Deploy on Friday", None),
             Some("\"deploy\" OR \"on\" OR \"friday\"".to_string())
         );
-        assert_eq!(build_fts_query("  "), None);
-        assert_eq!(build_fts_query(""), None);
+        assert_eq!(build_fts_query("  ", None), None);
+        assert_eq!(build_fts_query("", None), None);
         // Quotes inside tokens are stripped, so MATCH syntax can't be broken.
         assert_eq!(
-            build_fts_query("a\"b OR c"),
+            build_fts_query("a\"b OR c", None),
             Some("\"a\" OR \"b\" OR \"or\" OR \"c\"".to_string())
         );
-        assert_eq!(build_fts_query("\"\""), None);
+        assert_eq!(build_fts_query("\"\"", None), None);
+    }
+
+    #[test]
+    fn fts_query_builder_digests_tokens_in_keyed_mode() {
+        let k = StoreKey::from_hex(&"ab".repeat(32)).unwrap();
+        let plain = build_fts_query("deploy payments", None).unwrap();
+        let keyed = build_fts_query("deploy payments", Some(&k)).unwrap();
+        assert_eq!(
+            keyed,
+            format!(
+                "\"{}\" OR \"{}\"",
+                k.token_digest("deploy"),
+                k.token_digest("payments")
+            )
+        );
+        assert_ne!(plain, keyed);
+        assert!(
+            !keyed.contains("deploy"),
+            "digest mode must not leak tokens"
+        );
+        assert_eq!(
+            build_fts_query("deploy", Some(&k)),
+            build_fts_query("deploy", Some(&k)),
+            "digests are deterministic"
+        );
     }
 
     #[test]
@@ -937,6 +1280,230 @@ mod tests {
         assert!(
             (b.total - b.vector).abs() < 1e-9,
             "only the vector weight should apply"
+        );
+    }
+
+    // ---- Encryption at rest (D-014) ----
+
+    const SECRET: &str = "the launch codes are hidden in the orchard";
+
+    #[test]
+    fn keyed_store_roundtrips_plaintext_through_api() {
+        let s = keyed();
+        ns(&s, "w");
+        let m = s.insert_memory(&mem("w", SECRET)).unwrap();
+        assert_eq!(m.text, SECRET);
+        assert_eq!(s.get_memory(&m.id).unwrap().unwrap().text, SECRET);
+        let listed = s.list_memories(Some("w"), 10).unwrap();
+        assert_eq!(listed[0].text, SECRET);
+        assert_eq!(
+            s.meta_get(META_AT_REST).unwrap().as_deref(),
+            Some(AT_REST_ENC)
+        );
+    }
+
+    #[test]
+    fn keyed_store_recalls_by_keyword_and_vector() {
+        let s = keyed();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let text = "deploy the payments service on friday";
+        s.insert_memory(&NewMemory {
+            embedding: Some(e.embed(text)),
+            ..mem("w", text)
+        })
+        .unwrap();
+        let q = e.embed(text);
+        let hits = s
+            .recall("w", text, Some(&q), &RecallParams::default(), 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].breakdown.bm25 > 0.0, "keyword pass must work keyed");
+        assert!((hits[0].breakdown.vector - 1.0).abs() < 1e-5);
+        assert_eq!(hits[0].memory.text, text);
+    }
+
+    #[test]
+    fn encrypted_at_rest_keeps_plaintext_out_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.db");
+        let key = StoreKey::from_hex(&"7f".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            s.create_namespace("w").unwrap();
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+        }
+        // Raw bytes of the database (and its WAL) must not contain the secret.
+        let db = std::fs::read(&path).unwrap();
+        let wal = std::fs::read(path.with_extension("db-wal")).unwrap_or_default();
+        for buf in [&db, &wal] {
+            let hay = String::from_utf8_lossy(buf);
+            assert!(!hay.contains("launch codes"), "plaintext leaked to disk");
+            assert!(!hay.contains("orchard"), "token leaked to disk");
+        }
+    }
+
+    #[test]
+    fn fts_index_stores_digests_not_plaintext() {
+        let s = keyed();
+        ns(&s, "w");
+        s.insert_memory(&mem("w", "xylophone taxonomy")).unwrap();
+        let tokens: String = {
+            let mut stmt = s.conn.prepare("SELECT fts_tokens FROM memories").unwrap();
+            stmt.query_row([], |r| r.get::<_, String>(0)).unwrap()
+        };
+        assert!(tokens.split(' ').all(|t| t.len() == 32), "digests only");
+        assert!(!tokens.contains("xylophone"));
+        // The FTS inverted index itself must also be digest-only.
+        let mut stmt = s.conn.prepare("SELECT * FROM memories_fts").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        while let Some(row) = rows.next().unwrap() {
+            let doc: String = row.get(0).unwrap();
+            assert!(!doc.contains("xylophone"));
+        }
+    }
+
+    #[test]
+    fn wrong_key_fails_at_open_via_key_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k.db");
+        let good = StoreKey::from_hex(&"aa".repeat(32)).unwrap();
+        let bad = StoreKey::from_hex(&"bb".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &good).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+        }
+        let err = match SqliteStore::open_with_key(&path, &bad) {
+            Ok(_) => panic!("wrong key must be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("decryption failed"),
+            "wrong key must be rejected: {err}"
+        );
+        // Correct key reopens and decrypts.
+        let reopened = SqliteStore::open_with_key(&path, &good).unwrap();
+        let m = reopened.list_memories(Some("w"), 10).unwrap();
+        assert_eq!(m[0].text, SECRET);
+    }
+
+    #[test]
+    fn encrypted_database_requires_a_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k.db");
+        let key = StoreKey::from_hex(&"cc".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+        }
+        let err = match SqliteStore::open(&path) {
+            Ok(_) => panic!("plain open must refuse an encrypted database"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("encrypted at rest"),
+            "plain open must refuse: {err}"
+        );
+    }
+
+    #[test]
+    fn legacy_plaintext_db_is_upgraded_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        // Build a database with the CURRENT code but plaintext... we cannot
+        // produce a true v1 file without the old schema, so hand-craft one
+        // with the exact v1 layout (memories without fts_tokens, FTS over
+        // `text`, text-based triggers).
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE namespaces (
+                    id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL);
+                CREATE TABLE memories (
+                    id TEXT PRIMARY KEY,
+                    namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+                    text TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', embedding BLOB,
+                    source TEXT NOT NULL DEFAULT 'agent', pinned INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL, last_accessed_at INTEGER NOT NULL);
+                CREATE VIRTUAL TABLE memories_fts USING fts5(
+                    text, content = 'memories', content_rowid = 'rowid');
+                CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, text) VALUES (new.rowid, new.text);
+                END;
+                CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, text)
+                    VALUES ('delete', old.rowid, old.text);
+                END;
+                INSERT INTO namespaces VALUES ('ns-1', 'w', 1);
+                INSERT INTO memories (id, namespace_id, text, tags, created_at, last_accessed_at)
+                    VALUES ('m-1', 'ns-1', 'the orchard launch codes', '[]', 1, 1);
+                "#,
+            )
+            .unwrap();
+        }
+        // Keyed open upgrades: reads decrypt, keyword recall works, file is clean.
+        let key = StoreKey::from_hex(&"d1".repeat(32)).unwrap();
+        let s = SqliteStore::open_with_key(&path, &key).unwrap();
+        let m = s.get_memory("m-1").unwrap().unwrap();
+        assert_eq!(m.text, "the orchard launch codes");
+        let hits = s
+            .recall("w", "orchard", None, &RecallParams::default(), 2)
+            .unwrap();
+        assert_eq!(hits.len(), 1, "keyword recall must survive upgrade");
+        // Marker written.
+        assert_eq!(
+            s.meta_get(META_AT_REST).unwrap().as_deref(),
+            Some(AT_REST_ENC)
+        );
+        // Reopen without key: refused.
+        assert!(SqliteStore::open(&path).is_err());
+        // Reopen with key: still fine.
+        let again = SqliteStore::open_with_key(&path, &key).unwrap();
+        assert_eq!(again.get_memory("m-1").unwrap().unwrap().text, m.text);
+    }
+
+    #[test]
+    fn mixed_legacy_rows_are_encrypted_on_keyed_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.db");
+        let key = StoreKey::from_hex(&"e2".repeat(32)).unwrap();
+        // Plaintext DB via current code, then enable encryption.
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", "plain as day observation"))
+                .unwrap();
+        }
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            // Explicit later timestamp: list_memories orders newest first.
+            s.insert_memory(&NewMemory {
+                created_at: Some(2_000_000_000),
+                ..mem("w", SECRET)
+            })
+            .unwrap();
+        }
+        let db_bytes = std::fs::read(&path).unwrap();
+        let hay = String::from_utf8_lossy(&db_bytes);
+        assert!(
+            !hay.contains("plain as day"),
+            "legacy row must be re-encrypted"
+        );
+        assert!(!hay.contains("launch"), "no plaintext anywhere");
+        let s = SqliteStore::open_with_key(&path, &key).unwrap();
+        let texts = s
+            .list_memories(Some("w"), 10)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.text)
+            .collect::<Vec<_>>();
+        // Newest first: the SECRET memory was created after the legacy row.
+        assert_eq!(
+            texts,
+            vec![SECRET.to_string(), "plain as day observation".to_string()]
         );
     }
 }

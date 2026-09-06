@@ -4,10 +4,13 @@
 //! SQLite implementation (FTS5 keyword index), embedders, and the explainable
 //! hybrid scorer. Everything else in the workspace is a shell around this crate.
 
+pub mod crypto;
 pub mod embed;
 pub mod error;
 pub mod export;
 pub mod models;
+#[cfg(feature = "onnx")]
+pub mod onnx_embed;
 #[cfg(feature = "openai")]
 pub mod openai_embed;
 pub mod scorer;
@@ -20,6 +23,8 @@ pub use error::{RecallError, Result};
 pub use models::{
     Memory, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats, Weights,
 };
+#[cfg(feature = "onnx")]
+pub use onnx_embed::{OnnxEmbedder, OnnxModel};
 pub use scorer::HybridScorer;
 pub use sqlite::SqliteStore;
 pub use store::Store;

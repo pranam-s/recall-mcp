@@ -101,3 +101,61 @@ and waits on `/healthz`. No vite dev server in the e2e path.
 React 19.2.8, Vite 8.2.2, TypeScript 7.0.2 (strict `tsc --noEmit` in the build),
 Tailwind 4.3.3 (CSS-first, `@tailwindcss/vite`), Playwright 1.63.0,
 @axe-core/playwright 4.13.0, Node 24.
+
+## D-013 — Local ONNX embeddings adopted behind the `onnx` feature (spike passed)
+
+The spike (spikes/onnx-spike, this repo) answered the open windows-gnu question
+from ALTERNATIVES.md §3. Attempt 1: `fastembed` default features
+(`ort/download-binaries`) → build failure: `no prebuilt binaries available for
+target x86_64-pc-windows-gnu` (ort 2.0.0-rc.13 ships only windows-MSVC
+prebuilts). Attempt 2: `fastembed` with `default-features = false, features =
+["ort-load-dynamic", "hf-hub-rustls-tls"]` plus the official
+`onnxruntime-win-x64-1.28.0.dll` loaded at runtime via `ORT_DYLIB_PATH` (the
+MSVC-built DLL is C ABI; LoadLibrary needs no GNU link step) — **works**:
+rustc 1.98.1, stable-x86_64-pc-windows-gnu, all-MiniLM-L6-v2-Q, 384-dim
+L2-normalized vectors, paraphrase-vs-unrelated cosine 0.759 vs 0.041,
+same-batch-shape embeddings bit-identical, 3 texts in ~8.5 ms. Golden-set eval
+with the same 0.85 gate: **hit-rate@5 = 1.000 (50/50)** vs HashEmbedder's
+0.980 — the known lexical miss ("which integration do leavers miss most") is
+fixed by real semantics. Decision: `OnnxEmbedder` (`fastembed` 6.x,
+non-default `onnx` cargo feature, default model all-MiniLM-L6-v2-Q) with the
+`Embedder` trait contract preserved (empty text → zero vector; inference
+serialized behind a mutex; failures log and yield a zero vector). HashEmbedder
+stays the default (deterministic, zero-download); batch-size is fixed at one
+text per call to keep embeddings batch-shape-stable. Documented runtime
+requirements: `ORT_DYLIB_PATH` → `onnxruntime.dll` 1.28.0 (download from the
+onnxruntime GitHub releases), first model fetch from Hugging Face (rustls).
+
+## D-014 — Encryption at rest: AEAD over `memories.text` + keyed FTS token digests
+
+Competitor research (COMPETITORS.md rec #1) made plaintext single-file storage
+a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
+
+- Key: 256-bit, from `RECALL_MCP_KEY` (64 hex chars) or `RECALL_MCP_KEY_FILE`;
+  auto-enabled when present (no cargo feature — it is a runtime deployment
+  choice). ChaCha20-Poly1305 (RustCrypto `chacha20poly1305` 0.11), random
+  12-byte nonce per record, AAD binding ciphertext to the row id
+  (`recall-mcp:v1:text:<id>`), stored as `enc:v1:<base64(nonce||ct||tag)>`.
+- Keyword search survives encryption: the FTS5 index is built over
+  `memories.fts_tokens`, which holds per-token HMAC-SHA256 digests (truncated
+  to 128 bits) of the text under the same key. BM25 sees the same token
+  multiplicities; queries are digested with the same key; nothing reversible
+  is on disk. Token digests are deterministic, so two identical texts produce
+  identical FTS documents (a deliberate, documented property).
+- Migration: schema v2 adds `fts_tokens` + `store_meta`; legacy databases are
+  upgraded in place on open (rebuild of the FTS index over the new column) and
+  a keyed first open re-encrypts all plaintext rows in one transaction and
+  stores a key-check blob, so a wrong key fails at open instead of corrupting
+  reads. Fresh keyed databases never write plaintext. `VACUUM` runs after the
+  legacy in-place upgrade; remnants of the plaintext era can persist in
+  freelist pages of databases encrypted in place — for strict guarantees,
+  export into a fresh keyed database.
+- Scope: `memories.text` only. Namespace names, tags, source, and embeddings
+  (1 KB f32 sketches — statistically weak leak) remain plaintext; exports are
+  plaintext JSON by design (backup format). Documented in README security
+  notes rather than hidden.
+- Alternative rejected: SQLCipher (whole-file encryption) — changes the file
+  format for every user (unencrypted DBs too), drags an OpenSSL-shaped
+  dependency onto windows-gnu, and still leaves plaintext in the FTS content
+  table unless the index is encrypted as well; application-level AEAD covers
+  the actual sensitive column with none of that.

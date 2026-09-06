@@ -14,6 +14,8 @@ pub enum RecallError {
     InvalidInput(String),
     #[error("embedder error: {0}")]
     Embedder(String),
+    #[error("encryption error: {0}")]
+    Crypto(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]
@@ -49,6 +51,10 @@ mod tests {
         assert_eq!(
             RecallError::Embedder("boom".into()).to_string(),
             "embedder error: boom"
+        );
+        assert_eq!(
+            RecallError::Crypto("bad key".into()).to_string(),
+            "encryption error: bad key"
         );
         let io_err: RecallError = std::io::Error::other("nope").into();
         assert!(io_err.to_string().contains("nope"));

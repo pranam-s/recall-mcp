@@ -31,7 +31,7 @@ Prereqs: Rust (GNU toolchain used here; rustup override included in the repo),
 gcc for bundled SQLite, Node 24.
 
 ```bash
-# 1. Run the whole test suite (66 tests: unit + integration + MCP conformance + eval)
+# 1. Run the whole test suite (80 tests: unit + integration + MCP conformance + eval)
 cargo test --workspace
 
 # 2. Serve REST + MCP + web UI (creates recall.db if missing)
@@ -59,6 +59,28 @@ cd web && npm install && npm run build && npx playwright test
   (or `--api-key`). `/v1/*` and `/mcp` then require `Authorization: Bearer` or
   `X-API-Key`; without a key the server is open by design — it is a local,
   single-user tool. `/healthz` and `/openapi.json` always stay open.
+
+### Encryption at rest (optional, per database)
+
+Set `RECALL_MCP_KEY` (64 hex chars = 256-bit key, or `RECALL_MCP_KEY_FILE`
+pointing at a file containing them) and every store the CLI/server opens is
+encrypted at rest: memory text is sealed with ChaCha20-Poly1305 and the keyword
+index is built from keyed HMAC token digests, so plaintext never touches disk —
+keyword search still works. Databases created or first opened with a key are
+upgraded in place (plaintext rows are re-encrypted on first keyed open); an
+encrypted database refuses to open without the key. Generate a key with:
+`openssl rand -hex 32`. Caveats (details in D-014): `export` output is
+plaintext JSON by design, and namespace names/tags/embeddings are not encrypted.
+
+### Local semantic embeddings (optional `onnx` feature)
+
+The default `HashEmbedder` is lexical. For semantic matching fully offline,
+build with `--features onnx` (`OnnxEmbedder`, all-MiniLM-L6-v2 quantized,
+384-dim): the model downloads once from Hugging Face into
+`.fastembed_cache/`, and ONNX Runtime is loaded at runtime — set
+`ORT_DYLIB_PATH` to `onnxruntime.dll` (windows-gnu has no ort prebuilt; see
+D-013). On the golden set, HashEmbedder scores 0.980 hit-rate@5, the ONNX
+embedder 1.000 (docs/EVALUATION.md).
 
 ## Architecture
 

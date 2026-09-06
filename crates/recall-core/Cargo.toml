@@ -13,6 +13,15 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+base64 = "0.22"
+chacha20poly1305 = "0.11"
+hex = "0.4"
+hmac = "0.13"
+sha2 = "0.11"
+fastembed = { version = "6", default-features = false, features = [
+    "ort-load-dynamic",
+    "hf-hub-rustls-tls",
+], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
 
 [dev-dependencies]
@@ -22,3 +31,6 @@ tempfile = "3"
 default = []
 # Optional OpenAI-compatible embedding client (ADR-003).
 openai = ["dep:reqwest"]
+# Optional local ONNX embeddings via fastembed/ort (D-013). Requires
+# onnxruntime.dll at runtime (ORT_DYLIB_PATH) — see docs/adr/DECISIONS.md.
+onnx = ["dep:fastembed"]

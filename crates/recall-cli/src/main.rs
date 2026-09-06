@@ -82,8 +82,40 @@ enum Command {
 }
 
 fn open_store(db: &PathBuf) -> Result<SharedStore> {
-    let store = SqliteStore::open(db).with_context(|| format!("open database {}", db.display()))?;
+    // Encryption at rest (D-014): when a key is configured, the store is
+    // opened in keyed mode — new memories are AEAD-encrypted on disk and
+    // existing plaintext databases are upgraded in place.
+    let store = match encryption_key()? {
+        Some(key) => SqliteStore::open_with_key(db, &key),
+        None => SqliteStore::open(db),
+    }
+    .with_context(|| format!("open database {}", db.display()))?;
     Ok(shared(store))
+}
+
+/// Key from `RECALL_MCP_KEY` (64 hex chars) or a file path in
+/// `RECALL_MCP_KEY_FILE` whose contents are the 64-hex-char key. A malformed
+/// key is an error, never a silent fallback to plaintext.
+fn encryption_key() -> Result<Option<recall_core::crypto::StoreKey>> {
+    let from_env = std::env::var("RECALL_MCP_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty());
+    let from_file = if from_env.is_some() {
+        None
+    } else {
+        match std::env::var("RECALL_MCP_KEY_FILE") {
+            Ok(path) if !path.trim().is_empty() => {
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("read RECALL_MCP_KEY_FILE {path}"))?;
+                Some(text)
+            }
+            _ => None,
+        }
+    };
+    match from_env.or(from_file) {
+        Some(raw) => Ok(Some(recall_core::crypto::StoreKey::from_hex(raw.trim())?)),
+        None => Ok(None),
+    }
 }
 
 fn print_json(value: serde_json::Value) -> Result<()> {
