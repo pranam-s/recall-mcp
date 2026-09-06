@@ -45,12 +45,30 @@ pub struct RecallToolParams {
     /// Flat boost applied to pinned memories (default 0.2).
     #[serde(default)]
     pub pinned_boost: Option<f64>,
+    /// Only return memories carrying ALL of these tags (exact match).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ForgetParam {
     /// Id of the memory to delete.
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateMemoryParams {
+    /// Id of the memory to update.
+    pub id: String,
+    /// New text (re-embedded automatically). Omit to keep the current text.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// New tags; omitted means tags stay unchanged.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Change the pinned flag; omitted means unchanged.
+    #[serde(default)]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -148,6 +166,7 @@ impl RecallTools {
         if let Some(boost) = params.pinned_boost {
             tool_params.pinned_boost = boost;
         }
+        tool_params.tags = params.tags;
         tool_params.validate().map_err(Self::domain_err)?;
         let query_embedding = self.state.embedder.embed(&params.query);
         let hits = self
@@ -177,6 +196,33 @@ impl RecallTools {
         Self::tool_json(serde_json::json!({ "id": params.id, "deleted": deleted }))
     }
 
+    #[tool(
+        description = "Update a memory in place: revise its text (re-embedded automatically), replace its tags, or change its pinned flag. Only the provided fields change; the id and creation time are preserved."
+    )]
+    fn update_memory(
+        &self,
+        Parameters(params): Parameters<UpdateMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if params.text.as_deref().is_some_and(|t| t.trim().is_empty()) {
+            return Err(McpError::invalid_params("text must not be empty", None));
+        }
+        let mut update = recall_core::MemoryUpdate {
+            text: params.text,
+            tags: params.tags,
+            pinned: params.pinned,
+            source: None,
+            embedding: None,
+        };
+        if let Some(text) = &update.text {
+            update.embedding = Some(self.state.embedder.embed(text));
+        }
+        let memory = self
+            .state
+            .with_store(|store| store.update_memory(&params.id, &update))
+            .map_err(Self::domain_err)?;
+        Self::tool_json(&memory)
+    }
+
     #[tool(description = "List memories in a namespace, newest first.")]
     fn list_memories(
         &self,
@@ -195,7 +241,7 @@ impl RecallTools {
     router = self.tool_router,
     name = "recall-mcp",
     version = "0.1.0",
-    instructions = "Local-first semantic memory broker. Use remember to persist decisions/observations, recall to retrieve ranked memories with score breakdowns, forget to delete, and list_memories to browse a namespace. Namespaces isolate workspaces."
+    instructions = "Local-first semantic memory broker. Use remember to persist decisions/observations, recall to retrieve ranked memories with score breakdowns (optionally filtered by tags), update_memory to revise an existing memory, forget to delete, and list_memories to browse a namespace. Namespaces isolate workspaces."
 )]
 impl ServerHandler for RecallTools {}
 

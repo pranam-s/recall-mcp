@@ -21,7 +21,8 @@ pub mod util;
 pub use embed::{Embedder, HashEmbedder};
 pub use error::{RecallError, Result};
 pub use models::{
-    Memory, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats, Weights,
+    Memory, MemoryUpdate, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats,
+    Weights,
 };
 #[cfg(feature = "onnx")]
 pub use onnx_embed::{OnnxEmbedder, OnnxModel};

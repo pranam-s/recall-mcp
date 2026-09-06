@@ -159,3 +159,35 @@ a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
   dependency onto windows-gnu, and still leaves plaintext in the FTS content
   table unless the index is encrypted as well; application-level AEAD covers
   the actual sensitive column with none of that.
+
+## D-015 — Memory update in place + ALL-of tag filter for recall
+
+Update semantics: **in-place edit, not append**. `Store::update_memory(id,
+MemoryUpdate)` changes only the fields present on the update; `id`,
+`created_at`, and `last_accessed_at` are preserved. Rationale: agents quote a
+memory id they just stored, so a supersede-by-id flow is one round trip; an
+append-style log needs consolidation reads (v2 candidate alongside
+COMPETITORS.md rec #4) and currently has no consumer. Policy details:
+
+- Text change without an explicit embedding **clears** the stored vector — a
+  stale vector that no longer matches the text is worse than no vector; the
+  server and CLI layers re-embed automatically before updating, so API/MCP/CLI
+  callers always keep embeddings fresh.
+- Blank replacement text and empty updates are `invalid input`; unknown ids are
+  `memory not found`.
+- FTS5 stays exact via the (new) `memories_fts_update` trigger, guarded with
+  `WHEN old.fts_tokens IS NOT new.fts_tokens`, so access-time
+  `last_accessed_at` refreshes never churn the index. Works identically in
+  encrypted mode because both the ciphertext and the token digest column are
+  rewritten together (D-014).
+
+Surfaces: MCP tool `update_memory` (five tools now), REST
+`PATCH /v1/memories/{id}`, CLI `update`.
+
+Tag filter: `recall` accepts a tag list with **ALL-of (AND) semantics** —
+exact, case-sensitive string match against the stored tag arrays, enforced as a
+correlated `json_each` count in both the FTS candidate pass and the vector scan
+pass, so `k` applies *after* filtering. AND (not OR) chosen because recall is
+for narrowing within a namespace; OR users can issue multiple recalls and merge
+with the score breakdowns intact. `RecallParams` dropped `Copy` for the
+`Vec<String>` field — it is only ever passed by reference.

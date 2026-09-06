@@ -93,7 +93,7 @@ async fn conformance_initialize_tools_list_call_over_http() {
         "tools capability must be advertised"
     );
 
-    // 2) tools/list — exactly the four documented tools, each with an input schema.
+    // 2) tools/list — exactly the five documented tools, each with an input schema.
     let (status, body) = rpc(
         &app,
         json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
@@ -105,7 +105,16 @@ async fn conformance_initialize_tools_list_call_over_http() {
         .expect("tools array");
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort();
-    assert_eq!(names, vec!["forget", "list_memories", "recall", "remember"]);
+    assert_eq!(
+        names,
+        vec![
+            "forget",
+            "list_memories",
+            "recall",
+            "remember",
+            "update_memory"
+        ]
+    );
     for tool in tools {
         assert!(
             tool["inputSchema"].is_object(),
@@ -141,6 +150,47 @@ async fn conformance_initialize_tools_list_call_over_http() {
     assert_eq!(hits.as_array().unwrap().len(), 1);
     assert_eq!(hits[0]["id"], memory_id.as_str());
     assert!(hits[0]["breakdown"]["total"].as_f64().unwrap() > 0.0);
+
+    // 4b) tools/call update_memory -> text revised, tags replaced.
+    let (_, body) = rpc(
+        &app,
+        tool_call(
+            10,
+            "update_memory",
+            json!({"id": memory_id, "text": "the transport now speaks json-rpc fluently", "tags": ["mcp", "updated"]}),
+        ),
+    )
+    .await;
+    let updated = tool_text(unwrap_result(&body));
+    assert_eq!(
+        updated["text"],
+        "the transport now speaks json-rpc fluently"
+    );
+    assert_eq!(updated["tags"], json!(["mcp", "updated"]));
+    assert_eq!(updated["id"], memory_id.as_str());
+
+    // 4c) recall with a tag filter finds the updated memory; the wrong filter finds nothing.
+    let (_, body) = rpc(
+        &app,
+        tool_call(
+            11,
+            "recall",
+            json!({"namespace": "conformance", "query": "json-rpc", "tags": ["updated"]}),
+        ),
+    )
+    .await;
+    let hits = tool_text(unwrap_result(&body));
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    let (_, body) = rpc(
+        &app,
+        tool_call(
+            12,
+            "recall",
+            json!({"namespace": "conformance", "query": "json-rpc", "tags": ["unrelated"]}),
+        ),
+    )
+    .await;
+    assert_eq!(tool_text(unwrap_result(&body)).as_array().unwrap().len(), 0);
 
     // 5) tools/call list_memories -> still present.
     let (_, body) = rpc(

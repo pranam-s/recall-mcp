@@ -48,6 +48,36 @@ pub struct NewMemory {
     pub embedding: Option<Vec<f32>>,
 }
 
+/// Payload for updating an existing memory in place (D-015). Every field is
+/// optional; `None` means "leave unchanged". At least one field must be set.
+/// If `text` changes and `embedding` is `None`, the store clears the stored
+/// embedding rather than keep a vector that no longer matches the text —
+/// callers with an embedder supply the fresh vector.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MemoryUpdate {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    #[serde(default)]
+    pub embedding: Option<Vec<f32>>,
+}
+
+impl MemoryUpdate {
+    /// Whether any field would actually change something.
+    pub fn is_empty(&self) -> bool {
+        self.text.is_none()
+            && self.tags.is_none()
+            && self.source.is_none()
+            && self.pinned.is_none()
+            && self.embedding.is_none()
+    }
+}
+
 /// Score decomposition for one recalled memory. Exactly what the UI table renders.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScoreBreakdown {
@@ -121,7 +151,7 @@ impl Weights {
 }
 
 /// Parameters for a recall query.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallParams {
     /// Number of hits to return.
     #[serde(default = "default_k")]
@@ -140,6 +170,10 @@ pub struct RecallParams {
     /// Max rows scanned for the vector pass (brute-force cosine; see ADR-002).
     #[serde(default = "default_scan_cap")]
     pub scan_cap: usize,
+    /// Restrict recall to memories carrying ALL of these tags (exact string
+    /// match, case-sensitive). Empty = no tag filter.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_k() -> usize {
@@ -167,6 +201,7 @@ impl Default for RecallParams {
             pinned_boost: 0.2,
             candidate_cap: 200,
             scan_cap: 10_000,
+            tags: Vec::new(),
         }
     }
 }
@@ -349,5 +384,30 @@ mod tests {
         assert_eq!(m.created_at, None);
         assert_eq!(m.id, None);
         assert_eq!(m.embedding, None);
+    }
+
+    #[test]
+    fn memory_update_defaults_and_emptiness() {
+        let u: MemoryUpdate = serde_json::from_str("{}").unwrap();
+        assert!(u.is_empty(), "no fields set");
+        let u: MemoryUpdate = serde_json::from_str(r#"{"pinned":true}"#).unwrap();
+        assert!(!u.is_empty());
+        assert_eq!(u.pinned, Some(true));
+        let u: MemoryUpdate =
+            serde_json::from_str(r#"{"text":"rewritten","tags":["a","b"]}"#).unwrap();
+        assert_eq!(u.text.as_deref(), Some("rewritten"));
+        assert_eq!(
+            u.tags.as_deref(),
+            Some(&["a".to_string(), "b".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn recall_params_tags_default_to_no_filter() {
+        let p: RecallParams = serde_json::from_str("{}").unwrap();
+        assert!(p.tags.is_empty());
+        let p: RecallParams = serde_json::from_str(r#"{"k":3,"tags":["ops","rust"]}"#).unwrap();
+        assert_eq!(p.tags, vec!["ops", "rust"]);
+        assert!(p.validate().is_ok());
     }
 }

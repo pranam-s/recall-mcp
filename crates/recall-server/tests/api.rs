@@ -265,6 +265,116 @@ async fn recall_returns_explainable_ranked_hits() {
 }
 
 #[tokio::test]
+async fn memory_update_and_recall_tag_filter() {
+    let app = app_with(None);
+
+    // Seed a namespace and two memories.
+    let (status, _) = json_response(
+        app.clone(),
+        request("POST", "/v1/namespaces", Some(json!({"name": "upd"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, mem_a) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/memories",
+            Some(json!({
+                "namespace": "upd",
+                "text": "postgres wal tuning notes",
+                "tags": ["db", "postgres"]
+            })),
+        ),
+    )
+    .await;
+    let id_a = mem_a["id"].as_str().unwrap().to_string();
+    let (_, mem_b) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/memories",
+            Some(json!({
+                "namespace": "upd",
+                "text": "rust async runtime deep dive",
+                "tags": ["rust"]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(mem_b["tags"], json!(["rust"]));
+
+    // PATCH: revise text and tags; the record embeds again server-side.
+    let (status, updated) = json_response(
+        app.clone(),
+        request(
+            "PATCH",
+            &format!("/v1/memories/{id_a}"),
+            Some(json!({
+                "text": "postgres vacuum and autovacuum tuning",
+                "tags": ["db", "maintenance"]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "patch failed: {updated}");
+    assert_eq!(updated["id"], id_a.as_str());
+    assert_eq!(updated["text"], "postgres vacuum and autovacuum tuning");
+    assert_eq!(updated["tags"], json!(["db", "maintenance"]));
+    assert!(updated["embedding"].is_array(), "text change must re-embed");
+
+    // PATCH with unknown id -> 404; blank text -> 400; empty body -> 400.
+    let (status, _) = json_response(
+        app.clone(),
+        request("PATCH", "/v1/memories/ghost", Some(json!({"pinned": true}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = json_response(
+        app.clone(),
+        request(
+            "PATCH",
+            &format!("/v1/memories/{id_a}"),
+            Some(json!({"text": "  "})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = json_response(
+        app.clone(),
+        request("PATCH", &format!("/v1/memories/{id_a}"), Some(json!({}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Tag filter on recall: ALL-of semantics.
+    let (status, hits) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/recall",
+            Some(json!({"namespace": "upd", "query": "postgres", "tags": ["db"]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    assert_eq!(hits[0]["id"], id_a.as_str());
+
+    // No memory carries both tags anymore after the tag replacement.
+    let (_, hits) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/recall",
+            Some(json!({"namespace": "upd", "query": "postgres", "tags": ["db", "postgres"]})),
+        ),
+    )
+    .await;
+    assert_eq!(hits.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn stats_and_healthz_and_openapi() {
     let app = app_with(None);
     json_response(

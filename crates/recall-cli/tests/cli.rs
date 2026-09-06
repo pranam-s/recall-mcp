@@ -112,6 +112,86 @@ fn cli_rejects_unknown_namespace_on_strict_paths_and_bad_queries() {
     assert!(!out.status.success());
 }
 
+#[test]
+fn cli_update_and_tag_filtered_recall() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("upd.db");
+    let db_str = db.to_str().unwrap();
+
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--namespace",
+            "ops",
+            "--text",
+            "postgres wal checkpoints every 5 minutes",
+            "--tags",
+            "db,postgres",
+        ],
+    );
+    assert!(out.status.success(), "remember failed: {}", out.stdout);
+    let memory: Value = serde_json::from_str(&out.stdout).unwrap();
+    let id = memory["id"].as_str().unwrap().to_string();
+
+    // Update text in place; tags replaced, id preserved.
+    let out = run(
+        db_str,
+        &[
+            "update",
+            "--id",
+            &id,
+            "--text",
+            "postgres checkpoint tuning moved to weekly review",
+            "--tags",
+            "db,tuning",
+        ],
+    );
+    assert!(out.status.success(), "update failed: {}", out.stdout);
+    let updated: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(updated["id"], id.as_str());
+    assert_eq!(updated["tags"], serde_json::json!(["db", "tuning"]));
+
+    // Tag-filtered recall hits the updated text; the stale tag matches nothing.
+    let out = run(
+        db_str,
+        &[
+            "recall",
+            "--namespace",
+            "ops",
+            "--query",
+            "postgres checkpoints",
+            "--tags",
+            "db",
+        ],
+    );
+    assert!(out.status.success(), "recall failed: {}", out.stdout);
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    assert!(
+        hits[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("checkpoint tuning")
+    );
+
+    let out = run(
+        db_str,
+        &[
+            "recall",
+            "--namespace",
+            "ops",
+            "--query",
+            "postgres checkpoints",
+            "--tags",
+            "postgres",
+        ],
+    );
+    assert!(out.status.success(), "recall failed: {}", out.stdout);
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 0, "old tag must be gone");
+}
+
 /// Encryption at rest (D-014) end-to-end through the real binary: with
 /// `RECALL_MCP_KEY` set, the stored database file must not contain the
 /// memory text, while the CLI still round-trips it; without the key the

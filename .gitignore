@@ -9,4 +9,4 @@ test-results/
 .env
 spikes/onnx-spike/target/
 spikes/onnx-spike/ort-bin/
-spikes/onnx-spike/.fastembed_cache/
+.fastembed_cache/

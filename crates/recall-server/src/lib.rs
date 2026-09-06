@@ -50,7 +50,10 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
             "/v1/memories",
             post(api::create_memory).get(api::list_memories),
         )
-        .route("/v1/memories/{id}", delete(api::delete_memory))
+        .route(
+            "/v1/memories/{id}",
+            delete(api::delete_memory).patch(api::update_memory),
+        )
         .route("/v1/recall", post(api::recall))
         .route("/v1/stats", get(api::stats))
         .layer(auth.clone());

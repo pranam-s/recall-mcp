@@ -5,7 +5,7 @@
 //! cross-thread sharing goes through [`crate::SharedStore`] (`Arc<Mutex<dyn Store>>`).
 
 use crate::error::Result;
-use crate::models::{Memory, Namespace, NewMemory, RecallHit, RecallParams, Stats};
+use crate::models::{Memory, MemoryUpdate, Namespace, NewMemory, RecallHit, RecallParams, Stats};
 
 pub trait Store: Send {
     /// Create a namespace; errors with [`crate::error::RecallError::DuplicateNamespace`]
@@ -21,6 +21,13 @@ pub trait Store: Send {
     /// and is stored as a BLOB.
     fn insert_memory(&self, memory: &NewMemory) -> Result<Memory>;
     fn get_memory(&self, id: &str) -> Result<Option<Memory>>;
+    /// Update a memory in place (D-015): only the fields set on `update`
+    /// change; `created_at` and `last_accessed_at` are preserved. Errors with
+    /// [`crate::error::RecallError::MemoryNotFound`] for an unknown id and
+    /// [`crate::error::RecallError::InvalidInput`] for an empty update or
+    /// blank replacement text. When `text` changes without `embedding`, the
+    /// stored embedding is cleared (a stale vector is worse than none).
+    fn update_memory(&self, id: &str, update: &MemoryUpdate) -> Result<Memory>;
     /// `Ok(true)` when a row was deleted, `Ok(false)` when the id was unknown.
     fn delete_memory(&self, id: &str) -> Result<bool>;
     /// Newest first. `namespace` filters; `limit` must be > 0.

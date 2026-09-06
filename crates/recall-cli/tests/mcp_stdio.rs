@@ -109,7 +109,16 @@ fn conformance_initialize_tools_list_call_over_stdio() {
         .expect("tools array");
     let mut names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort();
-    assert_eq!(names, vec!["forget", "list_memories", "recall", "remember"]);
+    assert_eq!(
+        names,
+        vec![
+            "forget",
+            "list_memories",
+            "recall",
+            "remember",
+            "update_memory"
+        ]
+    );
 
     // 3) tools/call remember (auto-creates the namespace)
     let response = session.request(&tool_call(

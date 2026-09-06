@@ -76,6 +76,20 @@
           "404": { "$ref": "#/components/responses/Error" },
           "401": { "$ref": "#/components/responses/Error" }
         }
+      },
+      "patch": {
+        "summary": "Update a memory in place (text is re-embedded automatically)",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryUpdate" } } }
+        },
+        "responses": {
+          "200": { "description": "Updated memory", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Memory" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
       }
     },
     "/v1/recall": {
@@ -102,7 +116,13 @@
                       "recency": { "type": "number", "default": 0.1 }
                     }
                   },
-                  "pinned_boost": { "type": "number", "default": 0.2 }
+                  "pinned_boost": { "type": "number", "default": 0.2 },
+                  "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": [],
+                    "description": "Only return memories carrying ALL of these tags (exact match)"
+                  }
                 }
               }
             }
@@ -131,7 +151,7 @@
     "/mcp": {
       "post": {
         "summary": "MCP streamable-HTTP transport",
-        "description": "JSON-RPC endpoint exposing tools remember, recall, forget, list_memories (MCP spec 2026-07-28, stateless mode). Same API-key requirement as /v1/*.",
+        "description": "JSON-RPC endpoint exposing tools remember, recall, update_memory, forget, list_memories (MCP spec 2026-07-28, stateless mode). Same API-key requirement as /v1/*.",
         "responses": { "200": { "description": "JSON-RPC response" } }
       }
     }
@@ -180,6 +200,16 @@
           "created_at": { "type": ["integer", "null"] },
           "id": { "type": ["string", "null"] },
           "embedding": { "type": ["array", "null"], "items": { "type": "number" } }
+        }
+      },
+      "MemoryUpdate": {
+        "type": "object",
+        "description": "Partial update: omitted fields stay unchanged. A changed text is re-embedded by the server.",
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "source": { "type": "string" },
+          "pinned": { "type": "boolean" }
         }
       },
       "ScoreBreakdown": {

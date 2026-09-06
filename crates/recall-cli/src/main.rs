@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use recall_core::export::{ExportData, export, import};
 use recall_core::{
-    Embedder, HashEmbedder, NewMemory, RecallParams, SharedStore, SqliteStore, shared, unix_now,
+    Embedder, HashEmbedder, MemoryUpdate, NewMemory, RecallParams, SharedStore, SqliteStore,
+    shared, unix_now,
 };
 use recall_server::{ServerConfig, build_router};
 
@@ -67,6 +68,24 @@ enum Command {
         /// Recency decay constant in days; 0 disables the recency term.
         #[arg(long, default_value_t = 30.0)]
         tau_days: f64,
+        /// Only return memories carrying ALL of these tags.
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+    },
+    /// Update a memory in place (only the given fields change; prints the record).
+    Update {
+        /// Id of the memory to update.
+        #[arg(long)]
+        id: String,
+        /// New text (re-embedded automatically).
+        #[arg(long)]
+        text: Option<String>,
+        /// Replacement tags (replaces the whole set).
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+        /// Change the pinned flag.
+        #[arg(long)]
+        pinned: Option<bool>,
     },
     /// Export the whole store to a JSON file.
     Export {
@@ -231,6 +250,7 @@ async fn main() -> Result<()> {
             query,
             k,
             tau_days,
+            tags,
         } => {
             let store = open_store(&db)?;
             let embedder: Arc<dyn Embedder> = Arc::new(HashEmbedder::new_256());
@@ -241,6 +261,7 @@ async fn main() -> Result<()> {
                 } else {
                     Some(*tau_days)
                 },
+                tags: tags.clone(),
                 ..RecallParams::default()
             };
             let query_embedding = embedder.embed(query);
@@ -252,6 +273,29 @@ async fn main() -> Result<()> {
                 unix_now(),
             )?;
             print_json(serde_json::to_value(&hits)?)
+        }
+        Command::Update {
+            id,
+            text,
+            tags,
+            pinned,
+        } => {
+            let store = open_store(&db)?;
+            let mut update = MemoryUpdate {
+                text: text.clone(),
+                tags: tags.clone(),
+                pinned: *pinned,
+                source: None,
+                embedding: None,
+            };
+            if let Some(t) = &update.text {
+                update.embedding = Some(HashEmbedder::new_256().embed(t));
+            }
+            let memory = store
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .update_memory(id, &update)?;
+            print_json(serde_json::to_value(&memory)?)
         }
         Command::Export { out } => {
             let store = open_store(&db)?;

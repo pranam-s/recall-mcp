@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use recall_core::{NewMemory, RecallError, RecallHit, RecallParams, Weights};
+use recall_core::{Memory, MemoryUpdate, NewMemory, RecallError, RecallHit, RecallParams, Weights};
 use serde::Deserialize;
 
 use crate::error::HttpError;
@@ -88,6 +88,39 @@ pub async fn delete_memory(
     }
 }
 
+/// Request body for `PATCH /v1/memories/{id}` — every field optional.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMemoryRequest {
+    pub text: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub source: Option<String>,
+    pub pinned: Option<bool>,
+}
+
+pub async fn update_memory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateMemoryRequest>,
+) -> Result<Json<Memory>, HttpError> {
+    if body.text.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        return Err(RecallError::InvalidInput("text must not be empty".into()).into());
+    }
+    let mut update = MemoryUpdate {
+        text: body.text,
+        tags: body.tags,
+        source: body.source,
+        pinned: body.pinned,
+        embedding: None,
+    };
+    // Re-embed when the text changes (same policy as create).
+    if let Some(text) = &update.text {
+        update.embedding = Some(state.embedder.embed(text));
+    }
+    let memory = state.with_store(|store| store.update_memory(&id, &update))?;
+    tracing::info!(memory_id = %memory.id, "updated memory via API");
+    Ok(Json(memory))
+}
+
 /// Standard serde helper: distinguish absent (`None`) from explicit `null` (`Some(None)`).
 fn deserialize_double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
 where
@@ -108,6 +141,8 @@ pub struct RecallRequest {
     pub tau_days: Option<Option<f64>>,
     pub weights: Option<Weights>,
     pub pinned_boost: Option<f64>,
+    /// Restrict hits to memories carrying ALL of these tags.
+    pub tags: Option<Vec<String>>,
 }
 
 pub async fn recall(
@@ -126,6 +161,9 @@ pub async fn recall(
     }
     if let Some(boost) = body.pinned_boost {
         params.pinned_boost = boost;
+    }
+    if let Some(tags) = body.tags {
+        params.tags = tags;
     }
     params.validate().map_err(HttpError)?;
 

@@ -14,7 +14,9 @@ use tracing::debug;
 
 use crate::crypto::{StoreKey, key_check_context, text_context};
 use crate::error::{RecallError, Result};
-use crate::models::{Memory, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats};
+use crate::models::{
+    Memory, MemoryUpdate, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats,
+};
 use crate::scorer::{HybridScorer, RawScore};
 use crate::store::Store;
 use crate::util::{blob_to_f32, f32_to_blob, tokenize};
@@ -99,6 +101,25 @@ pub fn build_fts_query(query: &str, key: Option<&StoreKey>) -> Option<String> {
             })
             .collect::<Vec<_>>()
             .join(" OR "),
+    )
+}
+
+/// SQL fragment enforcing the required-tag filter (AND semantics): the
+/// correlated `json_each` count must equal the number of required tags.
+/// `alias` is the `memories` table alias in the enclosing query; placeholders
+/// are numbered from `start_index` (1-based). Empty tag list → empty fragment.
+fn tag_filter_sql(alias: &str, tags: &[String], start_index: usize) -> String {
+    if tags.is_empty() {
+        return String::new();
+    }
+    let placeholders = (start_index..start_index + tags.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        " AND (SELECT COUNT(DISTINCT je.value) FROM json_each({alias}.tags) AS je \
+         WHERE je.value IN ({placeholders})) = {}",
+        tags.len()
     )
 }
 
@@ -551,6 +572,62 @@ impl Store for SqliteStore {
         }
     }
 
+    fn update_memory(&self, id: &str, update: &MemoryUpdate) -> Result<Memory> {
+        if update.is_empty() {
+            return Err(RecallError::InvalidInput(
+                "update must set at least one field".into(),
+            ));
+        }
+        if update.text.as_deref().is_some_and(|t| t.trim().is_empty()) {
+            return Err(RecallError::InvalidInput(
+                "memory text must not be empty".into(),
+            ));
+        }
+        let existing = self
+            .get_memory(id)?
+            .ok_or_else(|| RecallError::MemoryNotFound(id.to_string()))?;
+
+        let new_text = match &update.text {
+            Some(t) => t.trim().to_string(),
+            None => existing.text.clone(),
+        };
+        let new_tags = update.tags.clone().unwrap_or_else(|| existing.tags.clone());
+        let new_source = update
+            .source
+            .clone()
+            .unwrap_or_else(|| existing.source.clone());
+        let new_pinned = update.pinned.unwrap_or(existing.pinned);
+        // A changed text invalidates the stored vector unless a fresh one is
+        // supplied (callers with an embedder re-embed before updating).
+        let new_embedding = match (&update.embedding, &update.text) {
+            (Some(e), _) => Some(e.clone()),
+            (None, Some(_)) => None,
+            (None, None) => existing.embedding.clone(),
+        };
+        let tags_json = serde_json::to_string(&new_tags)?;
+        let (stored_text, fts_tokens) = self.stored_text(id, &new_text);
+        let embedding_blob = new_embedding.as_deref().map(f32_to_blob);
+        let changed = self.conn.execute(
+            "UPDATE memories SET text = ?1, fts_tokens = ?2, tags = ?3, source = ?4,
+             pinned = ?5, embedding = ?6 WHERE id = ?7",
+            params![
+                stored_text,
+                fts_tokens,
+                tags_json,
+                new_source,
+                i64::from(new_pinned),
+                embedding_blob,
+                id
+            ],
+        )?;
+        if changed == 0 {
+            return Err(RecallError::MemoryNotFound(id.to_string()));
+        }
+        debug!(memory_id = id, "updated memory");
+        self.get_memory(id)?
+            .ok_or_else(|| RecallError::MemoryNotFound(id.to_string()))
+    }
+
     fn delete_memory(&self, id: &str) -> Result<bool> {
         let n = self
             .conn
@@ -607,18 +684,30 @@ impl Store for SqliteStore {
             .namespace_id(namespace)?
             .ok_or_else(|| RecallError::NamespaceNotFound(namespace.to_string()))?;
 
+        // Tag filter (D-015): ALL required tags must be present (exact,
+        // case-sensitive match). Tags are stored as JSON arrays, so the
+        // check is a correlated `json_each` count per row.
+        let mut required_tags = p.tags.clone();
+        required_tags.sort();
+        required_tags.dedup();
+
         // Pass 1 — keyword candidates from FTS5 (bm25, more negative = better).
         let mut keyword: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
         if let Some(fts_query) = build_fts_query(query, self.key.as_ref()) {
-            let mut stmt = self.conn.prepare(
+            let tag_sql = tag_filter_sql("m", &required_tags, 3);
+            let sql = format!(
                 "SELECT m.id, bm25(memories_fts) AS rank_score
                  FROM memories_fts
                  JOIN memories m ON m.rowid = memories_fts.rowid
-                 WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2
+                 WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2{tag_sql}
                  ORDER BY rank_score
-                 LIMIT ?3",
-            )?;
-            let rows = stmt.query_map(params![fts_query, ns, p.candidate_cap as i64], |r| {
+                 LIMIT {}",
+                p.candidate_cap
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut bind: Vec<String> = vec![fts_query, ns.clone()];
+            bind.extend(required_tags.iter().cloned());
+            let rows = stmt.query_map(rusqlite::params_from_iter(bind.iter()), |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
             })?;
             for row in rows {
@@ -633,10 +722,16 @@ impl Store for SqliteStore {
         let mut rows_by_id: std::collections::HashMap<String, Memory> =
             std::collections::HashMap::new();
         {
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1 LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(params![ns, p.scan_cap as i64], memory_row)?;
+            let tag_sql = tag_filter_sql("memories", &required_tags, 2);
+            let sql = format!(
+                "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1{tag_sql}
+                 LIMIT {}",
+                p.scan_cap
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut bind: Vec<String> = vec![ns];
+            bind.extend(required_tags.iter().cloned());
+            let rows = stmt.query_map(rusqlite::params_from_iter(bind.iter()), memory_row)?;
             for row in rows {
                 let m = row?.into_memory(self.key.as_ref())?;
                 rows_by_id.insert(m.id.clone(), m);
@@ -1505,5 +1600,215 @@ mod tests {
             texts,
             vec![SECRET.to_string(), "plain as day observation".to_string()]
         );
+    }
+
+    // ---- Update path (D-015) ----
+
+    #[test]
+    fn update_memory_changes_only_requested_fields_and_keeps_fts_exact() {
+        let s = store();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let m = s
+            .insert_memory(&NewMemory {
+                tags: vec!["old".into()],
+                embedding: Some(e.embed("original text about ferries")),
+                created_at: Some(1_000),
+                ..mem("w", "original text about ferries")
+            })
+            .unwrap();
+
+        // Text-only update: embedding cleared (stale vector worse than none),
+        // tags/source/pinned/created_at preserved, FTS reindexed.
+        let updated = s
+            .update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    text: Some("rewritten text about catamarans".into()),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.text, "rewritten text about catamarans");
+        assert_eq!(updated.tags, vec!["old"]);
+        assert_eq!(updated.created_at, 1_000);
+        assert_eq!(updated.embedding, None, "stale embedding must be dropped");
+
+        // Keyword recall follows the new text, not the old one.
+        assert_eq!(
+            s.recall("w", "catamarans", None, &RecallParams::default(), 1)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            s.recall("w", "ferries", None, &RecallParams::default(), 1)
+                .unwrap()
+                .is_empty()
+        );
+
+        // Tags-only update keeps the embedding and updates tags.
+        let retagged = s
+            .update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    tags: Some(vec!["boats".into(), "new".into()]),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(retagged.tags, vec!["boats", "new"]);
+        assert_eq!(retagged.text, "rewritten text about catamarans");
+
+        // Pinned-only update.
+        let pinned = s
+            .update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    pinned: Some(true),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert!(pinned.pinned);
+
+        // Explicit embedding survives a text update.
+        let v = e.embed("catamarans");
+        let reembedded = s
+            .update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    text: Some("catamarans again".into()),
+                    embedding: Some(v.clone()),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(reembedded.embedding, Some(v));
+    }
+
+    #[test]
+    fn update_memory_validates_empty_text_and_unknown_ids() {
+        let s = store();
+        ns(&s, "w");
+        let m = s.insert_memory(&mem("w", "keep me")).unwrap();
+        assert!(matches!(
+            s.update_memory(
+                "ghost",
+                &MemoryUpdate {
+                    pinned: Some(true),
+                    ..MemoryUpdate::default()
+                }
+            )
+            .unwrap_err(),
+            RecallError::MemoryNotFound(_)
+        ));
+        assert!(matches!(
+            s.update_memory(&m.id, &MemoryUpdate::default())
+                .unwrap_err(),
+            RecallError::InvalidInput(_)
+        ));
+        assert!(matches!(
+            s.update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    text: Some("   ".into()),
+                    ..MemoryUpdate::default()
+                }
+            )
+            .unwrap_err(),
+            RecallError::InvalidInput(_)
+        ));
+        // The failed updates changed nothing.
+        assert_eq!(s.get_memory(&m.id).unwrap().unwrap().text, "keep me");
+    }
+
+    #[test]
+    fn update_memory_works_in_keyed_mode() {
+        let s = keyed();
+        ns(&s, "w");
+        let m = s.insert_memory(&mem("w", SECRET)).unwrap();
+        let updated = s
+            .update_memory(
+                &m.id,
+                &MemoryUpdate {
+                    text: Some("the codes moved to the boathouse".into()),
+                    tags: Some(vec!["secret".into()]),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.text, "the codes moved to the boathouse");
+        // Keyword recall tracks the new text through the digested index.
+        let hits = s
+            .recall("w", "boathouse", None, &RecallParams::default(), 1)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].breakdown.bm25 > 0.0);
+        assert!(
+            s.recall("w", "orchard", None, &RecallParams::default(), 1)
+                .unwrap()
+                .is_empty()
+        );
+        // And the file (in-memory here: index) holds no plaintext.
+        let mut stmt = s.conn.prepare("SELECT fts_tokens FROM memories").unwrap();
+        let tokens: String = stmt.query_row([], |r| r.get(0)).unwrap();
+        assert!(!tokens.contains("boathouse"));
+    }
+
+    #[test]
+    fn recall_filters_by_all_required_tags() {
+        let s = store();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let mk = |text: &str, tags: &[&str]| {
+            s.insert_memory(&NewMemory {
+                tags: tags.iter().map(|t| t.to_string()).collect(),
+                embedding: Some(e.embed(text)),
+                ..mem("w", text)
+            })
+            .unwrap();
+        };
+        mk("rust async runtime deep dive", &["rust", "async"]);
+        mk("rust ownership explained", &["rust"]);
+        mk("typescript build tooling", &["ts"]);
+
+        let p = RecallParams::default();
+        // No filter: everything.
+        assert_eq!(s.recall("w", "rust", None, &p, 1).unwrap().len(), 2);
+        // Single tag filter.
+        let only_rust = RecallParams {
+            tags: vec!["rust".into()],
+            ..Default::default()
+        };
+        assert_eq!(s.recall("w", "rust", None, &only_rust, 1).unwrap().len(), 2);
+        // AND semantics: both tags must be present.
+        let both = RecallParams {
+            tags: vec!["rust".into(), "async".into()],
+            ..Default::default()
+        };
+        let hits = s.recall("w", "rust runtime", None, &both, 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memory.text, "rust async runtime deep dive");
+        // Vector pass honors the filter too: query tokens overlap both rust
+        // memories, but the tag filter narrows candidates to the AND match.
+        let q = e.embed("rust async patterns");
+        let hits = s
+            .recall("w", "rust async patterns", Some(&q), &both, 1)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memory.text, "rust async runtime deep dive");
+        // Non-matching combination yields nothing.
+        let mixed = RecallParams {
+            tags: vec!["rust".into(), "ts".into()],
+            ..Default::default()
+        };
+        assert!(s.recall("w", "rust", None, &mixed, 1).unwrap().is_empty());
+        // Duplicate required tags behave like one.
+        let dup = RecallParams {
+            tags: vec!["rust".into(), "rust".into()],
+            ..Default::default()
+        };
+        assert_eq!(s.recall("w", "rust", None, &dup, 1).unwrap().len(), 2);
     }
 }
