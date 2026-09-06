@@ -116,3 +116,101 @@ fn p95_recall_latency_on_10k_memories_stays_under_budget() {
         "p95 recall latency {p95:.3} ms breached the {P95_BUDGET_MS} ms PRD budget"
     );
 }
+
+/// Diagnostic (ignored, release): where the recall millisecond budget goes on
+/// the same 10k fixture. Times the storage phases of a hybrid query in
+/// isolation so optimization and remediation decisions rest on measurements.
+///
+/// ```text
+/// cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "diagnostic over the 10k fixture; run with --ignored (release mode)"]
+fn recall_cost_breakdown_on_10k_memories() {
+    use recall_core::Store as _;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SqliteStore::open(dir.path().join("breakdown.db")).expect("open store");
+    let embedder = HashEmbedder::new_256();
+    store.create_namespace("bench").expect("namespace");
+    for i in 0..CORPUS_SIZE {
+        let topics = [
+            "deploy",
+            "database",
+            "incident review",
+            "design decision",
+            "meeting notes",
+            "onboarding",
+            "performance",
+            "security audit",
+            "release checklist",
+            "customer feedback",
+        ];
+        let text = format!(
+            "{} note {}: follow up with the platform team about {}",
+            topics[i % topics.len()],
+            i,
+            topics[(i * 7) % topics.len()]
+        );
+        store
+            .insert_memory(&NewMemory {
+                namespace: "bench".into(),
+                embedding: Some(embedder.embed(&text)),
+                ..NewMemory {
+                    namespace: "bench".into(),
+                    text,
+                    tags: vec![],
+                    source: None,
+                    pinned: false,
+                    created_at: None,
+                    id: None,
+                    embedding: None,
+                }
+            })
+            .expect("insert");
+    }
+
+    let query = "incident review note 42 root cause";
+    let q = embedder.embed(query);
+    let now = recall_core::unix_now();
+    let params = RecallParams::default();
+
+    // Full recall (both passes + scoring + refresh).
+    let mut full = std::time::Duration::ZERO;
+    for _ in 0..200 {
+        let t0 = Instant::now();
+        let _ = store
+            .recall("bench", query, Some(&q), &params, now)
+            .unwrap();
+        full += t0.elapsed();
+    }
+    println!(
+        "hybrid recall           : {:>8.3} ms/call",
+        full.as_secs_f64() * 1000.0 / 200.0
+    );
+
+    // Vector pass alone: SQL scan over the namespace (Rust-side excluded by
+    // timing a bare COUNT over the same rows for the floor).
+    let t0 = Instant::now();
+    let mut n = 0usize;
+    for _ in 0..200 {
+        n = store
+            .list_memories(Some("bench"), CORPUS_SIZE)
+            .unwrap()
+            .len();
+    }
+    println!(
+        "full-row materialization: {:>8.3} ms/call (rows={n}; the pre-D-016 vector pass)",
+        t0.elapsed().as_secs_f64() * 1000.0 / 200.0
+    );
+
+    // Keyword-only recall (FTS pass + candidate fetch, no vector scan).
+    let t0 = Instant::now();
+    for _ in 0..200 {
+        let _ = store.recall("bench", query, None, &params, now).unwrap();
+    }
+    println!(
+        "keyword-only recall     : {:>8.3} ms/call",
+        t0.elapsed().as_secs_f64() * 1000.0 / 200.0
+    );
+}

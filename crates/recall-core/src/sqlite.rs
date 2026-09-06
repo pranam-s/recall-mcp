@@ -25,6 +25,12 @@ const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA synchronous = NORMAL;
+-- Hot-path knobs for large stores (D-016): the recall scan reads every
+-- embedding BLOB in a namespace, so a bigger page cache and memory-mapped
+-- I/O keep the 10k-row scan off the OS read path. Both are session-level
+-- and never change query semantics.
+PRAGMA cache_size = -8000;
+PRAGMA mmap_size = 134217728;
 
 CREATE TABLE IF NOT EXISTS store_meta (
     key   TEXT PRIMARY KEY,
@@ -121,6 +127,45 @@ fn tag_filter_sql(alias: &str, tags: &[String], start_index: usize) -> String {
          WHERE je.value IN ({placeholders})) = {}",
         tags.len()
     )
+}
+
+/// One vector-pass survivor before its full row is fetched (D-016). Carries
+/// exactly what candidate selection needs — rowid, similarity, and the total
+/// the row scores if it stays outside the keyword set (there bm25 is 0, so
+/// `HybridScorer` on these inputs IS the final total). Ids are resolved after
+/// selection; `rowid` is only the last-resort tie-break, which merely orders
+/// bit-identical duplicates (same total and timestamp) by insertion order.
+struct VectorCandidate {
+    rowid: i64,
+    cosine: f64,
+    vector_only_total: f64,
+    created_at: i64,
+}
+
+impl PartialEq for VectorCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+impl Eq for VectorCandidate {}
+
+impl Ord for VectorCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // The final ranking comparator (total desc, created_at desc),
+        // inverted: the WORST candidate compares greatest, so a capped
+        // max-heap evicts the weakest survivor in O(log k).
+        other
+            .vector_only_total
+            .partial_cmp(&self.vector_only_total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| other.created_at.cmp(&self.created_at))
+    }
+}
+
+impl PartialOrd for VectorCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 pub struct SqliteStore {
@@ -692,11 +737,12 @@ impl Store for SqliteStore {
         required_tags.dedup();
 
         // Pass 1 — keyword candidates from FTS5 (bm25, more negative = better).
-        let mut keyword: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        // Keyed by rowid; ids are resolved when the surviving rows are fetched.
+        let mut keyword: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         if let Some(fts_query) = build_fts_query(query, self.key.as_ref()) {
             let tag_sql = tag_filter_sql("m", &required_tags, 3);
             let sql = format!(
-                "SELECT m.id, bm25(memories_fts) AS rank_score
+                "SELECT m.rowid, bm25(memories_fts) AS rank_score
                  FROM memories_fts
                  JOIN memories m ON m.rowid = memories_fts.rowid
                  WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2{tag_sql}
@@ -708,69 +754,151 @@ impl Store for SqliteStore {
             let mut bind: Vec<String> = vec![fts_query, ns.clone()];
             bind.extend(required_tags.iter().cloned());
             let rows = stmt.query_map(rusqlite::params_from_iter(bind.iter()), |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+                Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
             })?;
             for row in rows {
-                let (id, rank) = row?;
-                keyword.insert(id, -rank);
+                let (rowid, rank) = row?;
+                keyword.insert(rowid, -rank);
             }
         }
         let max_bm25 = keyword.values().copied().fold(0.0f64, f64::max);
 
-        // Pass 2 — brute-force cosine over the namespace (exact, explainable; ADR-002).
+        // Pass 2 — brute-force cosine over the namespace (exact, explainable;
+        // ADR-002 as amended by D-016). The scan is slim (rowid + embedding +
+        // created_at + pinned only) and the similarity is computed straight
+        // from the borrowed BLOB (`get_raw`) without any per-row allocation;
+        // the query norm is hoisted out of the loop. Text and tags are
+        // fetched afterwards, for the surviving candidates only.
+        //
+        // Selection stays exact: outside the keyword set bm25 is 0, so a
+        // row's vector-only total IS its final total; rows beyond the top-`k`
+        // by that measure sort strictly below the heap's weakest member under
+        // the final ranking comparator and can never enter the top-`k`.
         let query_vec: Option<&[f32]> = query_embedding.filter(|v| !v.is_empty());
-        let mut rows_by_id: std::collections::HashMap<String, Memory> =
-            std::collections::HashMap::new();
-        {
-            let tag_sql = tag_filter_sql("memories", &required_tags, 2);
-            let sql = format!(
-                "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1{tag_sql}
-                 LIMIT {}",
-                p.scan_cap
-            );
-            let mut stmt = self.conn.prepare(&sql)?;
-            let mut bind: Vec<String> = vec![ns];
-            bind.extend(required_tags.iter().cloned());
-            let rows = stmt.query_map(rusqlite::params_from_iter(bind.iter()), memory_row)?;
-            for row in rows {
-                let m = row?.into_memory(self.key.as_ref())?;
-                rows_by_id.insert(m.id.clone(), m);
-            }
-        }
-        let mut vector: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-        if let Some(qv) = query_vec {
-            for (id, m) in &rows_by_id {
-                if let Some(mv) = &m.embedding {
-                    let sim = crate::util::cosine(qv, mv);
-                    if sim != 0.0 {
-                        vector.insert(id.clone(), sim);
-                    }
-                }
-            }
-        }
-
-        // Merge candidate sets and score.
         let scorer = HybridScorer {
             weights: p.weights,
             tau_days: p.tau_days,
             pinned_boost: p.pinned_boost,
         };
+        let mut vector: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+        let mut best_vector_only: std::collections::BinaryHeap<VectorCandidate> =
+            std::collections::BinaryHeap::with_capacity(p.k);
+        if let Some(qv) = query_vec {
+            let query_norm_sqrt = crate::util::f32_norm_sqrt(qv);
+            let tag_sql = tag_filter_sql("memories", &required_tags, 2);
+            let sql = format!(
+                "SELECT rowid, embedding, created_at, pinned FROM memories
+                 WHERE namespace_id = ?1{tag_sql}
+                 LIMIT {}",
+                p.scan_cap
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut bind: Vec<String> = vec![ns.clone()];
+            bind.extend(required_tags.iter().cloned());
+            let mut rows = stmt.query(rusqlite::params_from_iter(bind.iter()))?;
+            while let Some(row) = rows.next()? {
+                let rowid: i64 = row.get(0)?;
+                let created_at: i64 = row.get(2)?;
+                let pinned = row.get::<_, i64>(3)? != 0;
+                // Borrowed blob: no per-row Vec allocation on the scan path.
+                let embedding = row.get_ref(1)?;
+                let sim = match &embedding {
+                    rusqlite::types::ValueRef::Blob(bytes) => {
+                        crate::util::cosine_f32_blob_with_query_norm(qv, query_norm_sqrt, bytes)
+                    }
+                    _ => continue,
+                };
+                if sim == 0.0 {
+                    continue;
+                }
+                if keyword.contains_key(&rowid) {
+                    // Keyword rows are candidates regardless of vector rank.
+                    vector.insert(rowid, sim);
+                    continue;
+                }
+                let vector_only_total = scorer
+                    .score(
+                        crate::scorer::RawScore {
+                            bm25_normalized: 0.0,
+                            cosine: sim,
+                            created_at,
+                            pinned,
+                        },
+                        now,
+                    )
+                    .total;
+                let candidate = VectorCandidate {
+                    rowid,
+                    cosine: sim,
+                    vector_only_total,
+                    created_at,
+                };
+                if best_vector_only.len() < p.k {
+                    best_vector_only.push(candidate);
+                } else if *best_vector_only
+                    .peek()
+                    .expect("k >= 1 keeps the heap non-empty")
+                    > candidate
+                {
+                    best_vector_only.pop();
+                    best_vector_only.push(candidate);
+                }
+            }
+        }
+        for candidate in best_vector_only {
+            vector.insert(candidate.rowid, candidate.cosine);
+        }
+
+        // Full rows (text, tags, source, …) for the surviving candidates only,
+        // resolved back from rowids to domain ids.
+        let mut rows_by_id: std::collections::HashMap<String, Memory> =
+            std::collections::HashMap::new();
+        let mut candidate_rowids: std::collections::HashSet<&i64> = keyword.keys().collect();
+        candidate_rowids.extend(vector.keys());
+        let fetch_ids: Vec<i64> = candidate_rowids.iter().map(|rid| **rid).collect();
+        let mut rowid_to_id: std::collections::HashMap<i64, String> =
+            std::collections::HashMap::with_capacity(fetch_ids.len());
+        // Chunked `IN` fetch keeps the placeholder count portable regardless
+        // of `candidate_cap` (SQLite's host-parameter limit varies by build).
+        for chunk in fetch_ids.chunks(500) {
+            let placeholders = (1..=chunk.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT rowid, {MEMORY_COLUMNS} FROM memories WHERE rowid IN ({placeholders})"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let mut rows = stmt.query(rusqlite::params_from_iter(chunk.iter()))?;
+            while let Some(row) = rows.next()? {
+                let rowid: i64 = row.get(0)?;
+                let memory = memory_row(row)?.into_memory(self.key.as_ref())?;
+                rowid_to_id.insert(rowid, memory.id.clone());
+                rows_by_id.insert(memory.id.clone(), memory);
+            }
+        }
+
+        // Resolve the pass maps from rowids to domain ids (rows deleted
+        // between passes were never fetched and drop out here).
+        let keyword_by_id: std::collections::HashMap<&str, f64> = keyword
+            .iter()
+            .filter_map(|(rowid, rank)| rowid_to_id.get(rowid).map(|id| (id.as_str(), *rank)))
+            .collect();
+        let vector_by_id: std::collections::HashMap<&str, f64> = vector
+            .iter()
+            .filter_map(|(rowid, sim)| rowid_to_id.get(rowid).map(|id| (id.as_str(), *sim)))
+            .collect();
+
+        // Merge candidate sets and score. Every fetched row is a candidate.
         let mut hits: Vec<RecallHit> = Vec::new();
-        let mut candidate_ids: std::collections::HashSet<&String> = keyword.keys().collect();
-        candidate_ids.extend(vector.keys());
-        for id in candidate_ids {
-            let memory = match rows_by_id.get(id) {
-                Some(m) => m,
-                // A deleted row between passes is simply skipped.
-                None => continue,
-            };
-            let raw_bm25 = keyword.get(id).copied().unwrap_or(0.0);
+        for (id, memory) in &rows_by_id {
+            let raw_bm25 = keyword_by_id.get(id.as_str()).copied().unwrap_or(0.0);
             let bm25_normalized = if max_bm25 > 0.0 {
                 raw_bm25 / max_bm25
             } else {
                 0.0
             };
-            let cosine = vector.get(id).copied().unwrap_or(0.0);
+            let cosine = vector_by_id.get(id.as_str()).copied().unwrap_or(0.0);
             let breakdown = scorer.score(
                 RawScore {
                     bm25_normalized,
@@ -797,11 +925,20 @@ impl Store for SqliteStore {
         hits.truncate(p.k);
 
         if !hits.is_empty() {
+            let placeholders = (2..=hits.len() + 1)
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql =
+                format!("UPDATE memories SET last_accessed_at = ?1 WHERE id IN ({placeholders})");
+            let mut bind: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Integer(now)];
+            bind.extend(
+                hits.iter()
+                    .map(|h| rusqlite::types::Value::Text(h.memory.id.clone())),
+            );
+            self.conn
+                .execute(&sql, rusqlite::params_from_iter(bind.iter()))?;
             for hit in &mut hits {
-                self.conn.execute(
-                    "UPDATE memories SET last_accessed_at = ?1 WHERE id = ?2",
-                    params![now, hit.memory.id],
-                )?;
                 // Keep the returned view consistent with the database.
                 hit.memory.last_accessed_at = now;
             }
@@ -1754,6 +1891,73 @@ mod tests {
         let mut stmt = s.conn.prepare("SELECT fts_tokens FROM memories").unwrap();
         let tokens: String = stmt.query_row([], |r| r.get(0)).unwrap();
         assert!(!tokens.contains("boathouse"));
+    }
+
+    #[test]
+    fn recall_vector_pass_returns_true_topk_by_cosine_at_scale() {
+        // D-016 exactness: with vector-only weights, the bounded candidate
+        // heap must return exactly the brute-force top-k by cosine — no
+        // near-miss rows lost to the eviction.
+        let s = store();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let now = 1_000_000;
+        let mut texts = Vec::new();
+        for i in 0..300 {
+            let text = format!("topic {i} payload {}", ["alpha", "beta", "gamma"][i % 3]);
+            texts.push(text.clone());
+            s.insert_memory(&NewMemory {
+                created_at: Some(now - i as i64),
+                embedding: Some(e.embed(&text)),
+                ..mem("w", &text)
+            })
+            .unwrap();
+        }
+        let query = "topic 42 alpha";
+        let q = e.embed(query);
+        let weights = Weights {
+            bm25: 0.0,
+            vector: 1.0,
+            recency: 0.0,
+        };
+        let p = RecallParams {
+            k: 7,
+            weights,
+            tau_days: None,
+            pinned_boost: 0.0,
+            ..Default::default()
+        };
+        let hits = s.recall("w", query, Some(&q), &p, now).unwrap();
+        assert_eq!(hits.len(), 7);
+
+        // Reference ranking: brute-force cosine over all 300 stored vectors,
+        // same tie-breaks as the final sort (total desc = cosine desc here,
+        // created_at desc, id asc).
+        let all = s.list_memories(Some("w"), 1_000).unwrap();
+        let mut scored: Vec<(f64, i64, String)> = all
+            .into_iter()
+            .map(|m| {
+                (
+                    crate::util::cosine(&q, m.embedding.as_deref().unwrap()),
+                    m.created_at,
+                    m.id,
+                )
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap()
+                .then(b.1.cmp(&a.1))
+                .then(a.2.cmp(&b.2))
+        });
+        let expected: Vec<String> = scored.iter().take(7).map(|(_, _, id)| id.clone()).collect();
+        let got: Vec<String> = hits.iter().map(|h| h.memory.id.clone()).collect();
+        assert_eq!(got, expected, "heap must reproduce the exact top-k");
+        // Returned cosines must be non-increasing (correct rank order).
+        let cosines: Vec<f64> = hits.iter().map(|h| h.breakdown.vector).collect();
+        for pair in cosines.windows(2) {
+            assert!(pair[0] >= pair[1]);
+        }
     }
 
     #[test]
