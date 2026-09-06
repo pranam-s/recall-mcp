@@ -680,18 +680,23 @@ impl Store for SqliteStore {
         Ok(n > 0)
     }
 
-    fn list_memories(&self, namespace: Option<&str>, limit: usize) -> Result<Vec<Memory>> {
+    fn list_memories(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>> {
         if limit == 0 {
             return Err(RecallError::InvalidInput("limit must be > 0".into()));
         }
         let sql = match namespace {
             Some(_) => format!(
                 "SELECT {MEMORY_COLUMNS} FROM memories WHERE namespace_id = ?1
-                 ORDER BY created_at DESC, id ASC LIMIT ?2"
+                 ORDER BY created_at DESC, id ASC LIMIT ?2 OFFSET ?3"
             ),
             None => format!(
                 "SELECT {MEMORY_COLUMNS} FROM memories
-                 ORDER BY created_at DESC, id ASC LIMIT ?1"
+                 ORDER BY created_at DESC, id ASC LIMIT ?1 OFFSET ?2"
             ),
         };
         let ns = match namespace {
@@ -703,14 +708,33 @@ impl Store for SqliteStore {
         };
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = match ns {
-            Some(ns) => stmt.query_map(params![ns, limit as i64], memory_row)?,
-            None => stmt.query_map(params![limit as i64], memory_row)?,
+            Some(ns) => stmt.query_map(params![ns, limit as i64, offset as i64], memory_row)?,
+            None => stmt.query_map(params![limit as i64, offset as i64], memory_row)?,
         };
         let mut out = Vec::new();
         for row in rows {
             out.push(row?.into_memory(self.key.as_ref())?);
         }
         Ok(out)
+    }
+
+    fn count_memories(&self, namespace: Option<&str>) -> Result<u64> {
+        let count = match namespace {
+            Some(name) => {
+                let ns = self
+                    .namespace_id(name)?
+                    .ok_or_else(|| RecallError::NamespaceNotFound(name.to_string()))?;
+                self.conn.query_row(
+                    "SELECT COUNT(*) FROM memories WHERE namespace_id = ?1",
+                    params![ns],
+                    |r| r.get::<_, i64>(0),
+                )?
+            }
+            None => self
+                .conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get::<_, i64>(0))?,
+        };
+        Ok(count as u64)
     }
 
     fn recall(
@@ -945,6 +969,24 @@ impl Store for SqliteStore {
         }
         debug!(namespace, hits = hits.len(), "recall complete");
         Ok(hits)
+    }
+
+    fn checkpoint_wal(&self) -> Result<()> {
+        // TRUNCATE also shrinks the WAL file back to zero bytes.
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    fn vacuum(&self) -> Result<()> {
+        self.conn.execute_batch("VACUUM")?;
+        Ok(())
+    }
+
+    fn vacuum_into(&self, path: &std::path::Path) -> Result<()> {
+        let target = path.as_os_str().to_string_lossy().to_string();
+        self.conn.execute("VACUUM INTO ?1", params![target])?;
+        Ok(())
     }
 
     fn stats(&self) -> Result<Stats> {
@@ -1189,21 +1231,95 @@ mod tests {
         })
         .unwrap();
 
-        let all_a = s.list_memories(Some("a"), 10).unwrap();
+        let all_a = s.list_memories(Some("a"), 10, 0).unwrap();
         assert_eq!(
             all_a.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["new a", "old a"]
         );
-        let all = s.list_memories(None, 10).unwrap();
+        let all = s.list_memories(None, 10, 0).unwrap();
         assert_eq!(all.len(), 3);
-        let one = s.list_memories(None, 1).unwrap();
+        let one = s.list_memories(None, 1, 0).unwrap();
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].text, "new a");
         assert!(matches!(
-            s.list_memories(Some("ghost"), 5).unwrap_err(),
+            s.list_memories(Some("ghost"), 5, 0).unwrap_err(),
             RecallError::NamespaceNotFound(_)
         ));
-        assert!(s.list_memories(None, 0).is_err());
+        assert!(s.list_memories(None, 0, 0).is_err());
+    }
+
+    #[test]
+    fn list_memories_paginates_with_offset_and_count_matches() {
+        let s = store();
+        ns(&s, "w");
+        for i in 0..7 {
+            s.insert_memory(&NewMemory {
+                created_at: Some(i),
+                ..mem("w", &format!("note {i}"))
+            })
+            .unwrap();
+        }
+        let page1 = s.list_memories(Some("w"), 3, 0).unwrap();
+        let page2 = s.list_memories(Some("w"), 3, 3).unwrap();
+        let page3 = s.list_memories(Some("w"), 3, 6).unwrap();
+        let texts =
+            |page: &[Memory]| -> Vec<String> { page.iter().map(|m| m.text.clone()).collect() };
+        // Newest first: 6..4, then 3..1, then the last row.
+        assert_eq!(texts(&page1), ["note 6", "note 5", "note 4"]);
+        assert_eq!(texts(&page2), ["note 3", "note 2", "note 1"]);
+        assert_eq!(texts(&page3), ["note 0"]);
+        // Pagination covers the set exactly once.
+        let mut seen: Vec<String> = Vec::new();
+        for page in [&page1, &page2, &page3] {
+            seen.extend(texts(page));
+        }
+        seen.sort();
+        assert_eq!(seen.len(), 7);
+        seen.dedup();
+        assert_eq!(seen.len(), 7, "pages must not overlap");
+        assert_eq!(s.count_memories(Some("w")).unwrap(), 7);
+        assert_eq!(s.count_memories(None).unwrap(), 7);
+        assert!(matches!(
+            s.count_memories(Some("ghost")).unwrap_err(),
+            RecallError::NamespaceNotFound(_)
+        ));
+    }
+
+    #[test]
+    fn maintenance_checkpoints_vacuums_and_backs_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("maint.db");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", "backup me")).unwrap();
+            s.checkpoint_wal().unwrap();
+            s.vacuum().unwrap();
+        }
+        // Backup into a fresh file, then open it independently.
+        let backup = dir.path().join("backup.db");
+        let s = SqliteStore::open(&path).unwrap();
+        s.vacuum_into(&backup).unwrap();
+        let restored = SqliteStore::open(&backup).unwrap();
+        let listed = restored.list_memories(Some("w"), 10, 0).unwrap();
+        assert_eq!(listed[0].text, "backup me");
+        // An existing target is refused, not overwritten.
+        assert!(s.vacuum_into(&backup).is_err());
+        // Keyed stores produce keyed backups.
+        let key = StoreKey::from_hex(&"b4".repeat(32)).unwrap();
+        let keyed_path = dir.path().join("keyed.db");
+        let ks = SqliteStore::open_with_key(&keyed_path, &key).unwrap();
+        ns(&ks, "w");
+        ks.insert_memory(&mem("w", SECRET)).unwrap();
+        let keyed_backup = dir.path().join("keyed-backup.db");
+        ks.vacuum_into(&keyed_backup).unwrap();
+        let reopened = SqliteStore::open_with_key(&keyed_backup, &key).unwrap();
+        assert_eq!(
+            reopened.list_memories(Some("w"), 10, 0).unwrap()[0].text,
+            SECRET
+        );
+        // The backup refuses an unkeyed open, proving it is encrypted.
+        assert!(SqliteStore::open(&keyed_backup).is_err());
     }
 
     #[test]
@@ -1526,7 +1642,7 @@ mod tests {
         let m = s.insert_memory(&mem("w", SECRET)).unwrap();
         assert_eq!(m.text, SECRET);
         assert_eq!(s.get_memory(&m.id).unwrap().unwrap().text, SECRET);
-        let listed = s.list_memories(Some("w"), 10).unwrap();
+        let listed = s.list_memories(Some("w"), 10, 0).unwrap();
         assert_eq!(listed[0].text, SECRET);
         assert_eq!(
             s.meta_get(META_AT_REST).unwrap().as_deref(),
@@ -1616,7 +1732,7 @@ mod tests {
         );
         // Correct key reopens and decrypts.
         let reopened = SqliteStore::open_with_key(&path, &good).unwrap();
-        let m = reopened.list_memories(Some("w"), 10).unwrap();
+        let m = reopened.list_memories(Some("w"), 10, 0).unwrap();
         assert_eq!(m[0].text, SECRET);
     }
 
@@ -1727,7 +1843,7 @@ mod tests {
         assert!(!hay.contains("launch"), "no plaintext anywhere");
         let s = SqliteStore::open_with_key(&path, &key).unwrap();
         let texts = s
-            .list_memories(Some("w"), 10)
+            .list_memories(Some("w"), 10, 0)
             .unwrap()
             .into_iter()
             .map(|m| m.text)
@@ -1933,7 +2049,7 @@ mod tests {
         // Reference ranking: brute-force cosine over all 300 stored vectors,
         // same tie-breaks as the final sort (total desc = cosine desc here,
         // created_at desc, id asc).
-        let all = s.list_memories(Some("w"), 1_000).unwrap();
+        let all = s.list_memories(Some("w"), 1_000, 0).unwrap();
         let mut scored: Vec<(f64, i64, String)> = all
             .into_iter()
             .map(|m| {

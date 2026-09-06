@@ -4,6 +4,7 @@
 //! SQLite implementation (FTS5 keyword index), embedders, and the explainable
 //! hybrid scorer. Everything else in the workspace is a shell around this crate.
 
+pub mod capture;
 pub mod crypto;
 pub mod embed;
 pub mod error;

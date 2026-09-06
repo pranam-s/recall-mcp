@@ -19,6 +19,7 @@ fn app_with(api_key: Option<String>) -> axum::Router {
         &ServerConfig {
             api_key,
             web_dir: None,
+            ..Default::default()
         },
     )
 }
@@ -460,4 +461,158 @@ async fn api_key_auth_is_enforced_when_configured() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_memories_paginates_with_total_count_header() {
+    let app = app_with(None);
+    json_response(
+        app.clone(),
+        request("POST", "/v1/namespaces", Some(json!({"name": "paged"}))),
+    )
+    .await;
+    for i in 0..5 {
+        let (status, _) = json_response(
+            app.clone(),
+            request(
+                "POST",
+                "/v1/memories",
+                Some(json!({"namespace": "paged", "text": format!("note {i}"), "created_at": i})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let res = app
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/v1/memories?namespace=paged&limit=2&offset=0",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()
+            .get("x-total-count")
+            .and_then(|v| v.to_str().ok()),
+        Some("5"),
+        "X-Total-Count must carry the unpaginated total"
+    );
+    let (status, page1) = json_response(
+        app.clone(),
+        request("GET", "/v1/memories?namespace=paged&limit=2&offset=0", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page1.as_array().unwrap().len(), 2);
+    let (status, page3) = json_response(
+        app.clone(),
+        request("GET", "/v1/memories?namespace=paged&limit=2&offset=4", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page3.as_array().unwrap().len(), 1);
+    // Pages tile the set without overlap (newest first).
+    let ids: Vec<&str> = page1
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(page3.as_array().unwrap())
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 3);
+    let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), 3, "pages must not overlap");
+}
+
+#[tokio::test]
+async fn capture_ingests_and_auto_chunks_a_transcript() {
+    let app = app_with(None);
+    let long = "This decision matters. ".repeat(80); // ~1760 chars
+    let (status, report) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/capture",
+            Some(json!({
+                "namespace": "session-42",
+                "transcript": [
+                    {"role": "user", "content": "please deploy the payments service on friday", "at": 1_786_000_000},
+                    {"role": "assistant", "content": long}
+                ],
+                "tags": ["session:42"]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{report}");
+    assert_eq!(report["namespace"], "session-42");
+    let captured = report["captured"].as_u64().unwrap();
+    assert!(captured >= 3, "long message must be chunked: {report}");
+    assert_eq!(
+        report["memories"].as_array().unwrap().len() as u64,
+        captured
+    );
+    // Every memory carries the session tag; roles became role:* tags.
+    for memory in report["memories"].as_array().unwrap() {
+        let tags: Vec<&str> = memory["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(tags.contains(&"session:42"), "{tags:?}");
+        assert!(tags.contains(&"role:user") || tags.contains(&"role:assistant"));
+        assert_eq!(memory["source"], "capture");
+        assert_eq!(
+            memory["namespace_id"],
+            report["memories"][0]["namespace_id"]
+        );
+    }
+
+    // Empty transcript and blank namespace are rejected.
+    let (status, _) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/capture",
+            Some(json!({"namespace": "x", "transcript": []})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/capture",
+            Some(json!({"namespace": "  ", "transcript": [{"content": "hi"}]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Captured text is retrievable through the normal hybrid recall path.
+    let (status, hits) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/recall",
+            Some(json!({"namespace": "session-42", "query": "deploy payments friday"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        hits.as_array().unwrap().iter().any(|h| {
+            h["text"]
+                .as_str()
+                .unwrap()
+                .contains("deploy the payments service")
+        }),
+        "captured memory must be recallable: {hits}"
+    );
 }

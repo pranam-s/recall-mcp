@@ -45,6 +45,17 @@ pub fn unauthorized(detail: &str) -> Response {
         .into_response()
 }
 
+/// Rejection used by the rate-limit middleware, with the standard
+/// `Retry-After` hint in whole seconds.
+pub fn too_many_requests(retry_after_secs: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [("Retry-After", retry_after_secs.max(1).to_string())],
+        Json(serde_json::json!({ "error": "rate limit exceeded" })),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

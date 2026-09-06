@@ -249,3 +249,76 @@ fn cli_encrypts_at_rest_when_key_is_set() {
     let out = run(db_str, &["export"]);
     assert!(!out.status.success(), "unkeyed open must be refused");
 }
+
+#[test]
+fn cli_backup_and_vacuum_maintain_the_store() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("maint.db");
+    let db_str = db.to_str().unwrap();
+    let backup = dir.path().join("snapshot.db");
+    let backup_str = backup.to_str().unwrap();
+
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--namespace",
+            "maint",
+            "--text",
+            "backup this observation",
+        ],
+    );
+    assert!(out.status.success(), "remember failed: {}", out.stdout);
+
+    // Hot backup into a new file; reports counts as JSON.
+    let out = run(db_str, &["backup", "--out", backup_str]);
+    assert!(out.status.success(), "backup failed: {}", out.stdout);
+    let report: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(report["total_memories"], 1);
+    assert_eq!(report["total_namespaces"], 1);
+    assert!(backup.exists());
+
+    // Refuses to overwrite an existing target.
+    let out = run(db_str, &["backup", "--out", backup_str]);
+    assert!(!out.status.success(), "backup must not overwrite");
+
+    // The backup is a working store: recall against it succeeds.
+    let out = run(
+        backup_str,
+        &[
+            "recall",
+            "--namespace",
+            "maint",
+            "--query",
+            "backup observation",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "recall on backup failed: {}",
+        out.stdout
+    );
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+
+    // In-place vacuum works and keeps the data.
+    let out = run(db_str, &["vacuum"]);
+    assert!(out.status.success(), "vacuum failed: {}", out.stdout);
+    let report: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(report["total_memories"], 1);
+    let out = run(
+        db_str,
+        &[
+            "recall",
+            "--namespace",
+            "maint",
+            "--query",
+            "backup observation",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "post-vacuum recall failed: {}",
+        out.stdout
+    );
+}

@@ -24,7 +24,7 @@ pub fn export(store: &dyn Store) -> Result<ExportData> {
         version: EXPORT_VERSION,
         exported_at: crate::unix_now(),
         namespaces: store.list_namespaces()?,
-        memories: store.list_memories(None, usize::MAX - 1)?,
+        memories: store.list_memories(None, usize::MAX - 1, 0)?,
     })
 }
 

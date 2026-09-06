@@ -18,6 +18,7 @@ fn app_with(api_key: Option<String>) -> axum::Router {
         &ServerConfig {
             api_key,
             web_dir: None,
+            ..Default::default()
         },
     )
 }

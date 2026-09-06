@@ -44,16 +44,22 @@
     },
     "/v1/memories": {
       "get": {
-        "summary": "List memories, newest first",
+        "summary": "List memories, newest first (paginated)",
         "parameters": [
           { "name": "namespace", "in": "query", "schema": { "type": "string" }, "description": "Filter by namespace name" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "minimum": 1 } }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "minimum": 1 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 }, "description": "Rows to skip" }
         ],
         "responses": {
-          "200": { "description": "Memories", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Memory" } } } } },
+          "200": {
+            "description": "Memories page; the X-Total-Count header carries the unpaginated total",
+            "headers": { "X-Total-Count": { "schema": { "type": "integer" }, "description": "Total memories matching the filter" } },
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Memory" } } } }
+          },
           "400": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
       "post": {
@@ -148,6 +154,63 @@
         }
       }
     },
+    "/v1/capture": {
+      "post": {
+        "summary": "Capture an agent transcript as memories (auto-chunked)",
+        "description": "Auto-capture hook scaffold (D-018): each transcript message is split into deterministic chunks (paragraph, then sentence, then hard-wrap boundaries) and stored as memories with source=capture. The namespace is created if missing. Roles become role:<role> tags.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["namespace", "transcript"],
+                "properties": {
+                  "namespace": { "type": "string", "minLength": 1 },
+                  "transcript": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["content"],
+                      "properties": {
+                        "role": { "type": "string", "description": "e.g. user, assistant, system" },
+                        "content": { "type": "string", "minLength": 1 },
+                        "at": { "type": "integer", "description": "message timestamp (unix seconds)" }
+                      }
+                    }
+                  },
+                  "tags": { "type": "array", "items": { "type": "string" }, "default": [], "description": "applied to every captured chunk" },
+                  "max_chunk_chars": { "type": "integer", "minimum": 100, "maximum": 8000, "default": 1000 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Captured memories",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["namespace", "captured", "memories"], "properties": {
+              "namespace": { "type": "string" },
+              "captured": { "type": "integer" },
+              "memories": { "type": "array", "items": { "$ref": "#/components/schemas/Memory" } }
+            } } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics (text exposition 0.0.4)",
+        "description": "Request counters and latencies, embedding timings, store gauges. Requires the API key when one is configured.",
+        "responses": {
+          "200": { "description": "Metrics in text/plain; version=0.0.4" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/mcp": {
       "post": {
         "summary": "MCP streamable-HTTP transport",
@@ -160,6 +223,10 @@
     "responses": {
       "Error": {
         "description": "Error",
+        "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" } } } } }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded; includes a Retry-After header in seconds",
         "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" } } } } }
       }
     },

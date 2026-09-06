@@ -15,6 +15,7 @@ recall-core = { workspace = true }
 recall-server = { workspace = true }
 axum = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

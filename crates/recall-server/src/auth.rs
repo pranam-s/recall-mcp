@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::http::Request;
 use axum::middleware::Next;
 use axum::response::Response;
+use subtle::ConstantTimeEq;
 
 use crate::error::unauthorized;
 use crate::state::AppState;
@@ -32,6 +33,13 @@ pub fn presented_key(headers: &axum::http::HeaderMap) -> Option<String> {
     None
 }
 
+/// Constant-time byte comparison (subtle `ConstantTimeEq`), so a forged key
+/// cannot be probed byte-by-byte through timing. Differing lengths fail —
+/// the leak of "wrong length" is negligible next to the local threat model.
+fn keys_match(presented: &str, expected: &str) -> bool {
+    presented.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
 pub async fn require_api_key(
     State(state): State<AppState>,
     request: Request<axum::body::Body>,
@@ -41,7 +49,7 @@ pub async fn require_api_key(
         return next.run(request).await;
     };
     match presented_key(request.headers()) {
-        Some(presented) if presented == *expected => next.run(request).await,
+        Some(presented) if keys_match(&presented, expected) => next.run(request).await,
         Some(_) => unauthorized("invalid API key"),
         None => unauthorized("missing API key"),
     }
@@ -70,5 +78,18 @@ mod tests {
         assert_eq!(presented_key(&h), None, "non-bearer scheme is ignored");
         h.insert("authorization", "Bearer  ".parse().unwrap());
         assert_eq!(presented_key(&h), None, "blank bearer is ignored");
+    }
+
+    #[test]
+    fn keys_match_is_exact_and_length_sensitive() {
+        assert!(keys_match("secret", "secret"));
+        assert!(!keys_match("secreT", "secret"), "case must matter");
+        assert!(
+            !keys_match("secret ", "secret"),
+            "no trimming after extraction"
+        );
+        assert!(!keys_match("secr", "secret"), "shorter must fail");
+        assert!(!keys_match("secret-longer", "secret"), "longer must fail");
+        assert!(!keys_match("", "secret"), "empty must fail");
     }
 }

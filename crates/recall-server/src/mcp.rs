@@ -231,7 +231,7 @@ impl RecallTools {
         let limit = params.limit.unwrap_or(50);
         let memories = self
             .state
-            .with_store(|store| store.list_memories(Some(&params.namespace), limit))
+            .with_store(|store| store.list_memories(Some(&params.namespace), limit, 0))
             .map_err(Self::domain_err)?;
         Self::tool_json(&memories)
     }

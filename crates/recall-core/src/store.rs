@@ -30,8 +30,27 @@ pub trait Store: Send {
     fn update_memory(&self, id: &str, update: &MemoryUpdate) -> Result<Memory>;
     /// `Ok(true)` when a row was deleted, `Ok(false)` when the id was unknown.
     fn delete_memory(&self, id: &str) -> Result<bool>;
-    /// Newest first. `namespace` filters; `limit` must be > 0.
-    fn list_memories(&self, namespace: Option<&str>, limit: usize) -> Result<Vec<Memory>>;
+    /// Newest first. `namespace` filters; `limit` must be > 0; `offset` skips
+    /// that many rows for pagination (0 = from the top).
+    fn list_memories(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>>;
+    /// Total memories matching `namespace` (all stores when `None`) — the
+    /// pagination denominator. Unknown namespaces error.
+    fn count_memories(&self, namespace: Option<&str>) -> Result<u64>;
+
+    /// Flush the write-ahead log into the main database file (`wal_checkpoint(TRUNCATE)`).
+    /// Called on graceful shutdown and before backups.
+    fn checkpoint_wal(&self) -> Result<()>;
+    /// Compact the database in place, reclaiming freelist pages.
+    fn vacuum(&self) -> Result<()>;
+    /// Write a compacted, consistent snapshot of the whole database to
+    /// `path` (`VACUUM INTO`). The target must not exist. Encrypted stores
+    /// produce encrypted backups (the ciphertext is copied verbatim).
+    fn vacuum_into(&self, path: &std::path::Path) -> Result<()>;
 
     /// Hybrid recall: FTS5 keyword candidates merged with a brute-force cosine scan,
     /// ranked by [`crate::scorer::HybridScorer`], each hit carrying its score breakdown.

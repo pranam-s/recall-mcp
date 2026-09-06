@@ -64,6 +64,8 @@ pub async fn create_memory(
 pub struct ListMemoriesQuery {
     pub namespace: Option<String>,
     pub limit: Option<usize>,
+    /// Rows to skip (pagination); the response carries `X-Total-Count`.
+    pub offset: Option<usize>,
 }
 
 pub async fn list_memories(
@@ -71,9 +73,20 @@ pub async fn list_memories(
     Query(query): Query<ListMemoriesQuery>,
 ) -> Result<Response, HttpError> {
     let limit = query.limit.unwrap_or(100);
-    let memories =
-        state.with_store(|store| store.list_memories(query.namespace.as_deref(), limit))?;
-    Ok(Json(memories).into_response())
+    let offset = query.offset.unwrap_or(0);
+    let (memories, total) = state.with_store(|store| {
+        let total = store.count_memories(query.namespace.as_deref())?;
+        let memories = store.list_memories(query.namespace.as_deref(), limit, offset)?;
+        std::result::Result::Ok::<_, recall_core::RecallError>((memories, total))
+    })?;
+    Ok((
+        [(
+            axum::http::HeaderName::from_static("x-total-count"),
+            total.to_string(),
+        )],
+        Json(memories),
+    )
+        .into_response())
 }
 
 pub async fn delete_memory(
@@ -184,4 +197,128 @@ pub async fn recall(
 pub async fn stats(State(state): State<AppState>) -> Result<Response, HttpError> {
     let stats = state.with_store(|store| store.stats())?;
     Ok(Json(stats).into_response())
+}
+
+/// Prometheus text exposition (0.0.4): request counters and latencies,
+/// embedding timings, and live store gauges. Protected by the API-key
+/// middleware like the rest of `/v1/*`.
+pub async fn metrics(State(state): State<AppState>) -> Response {
+    let stats = state.with_store(|store| store.stats()).unwrap_or_else(|_| {
+        // A failing store still reports the request metrics.
+        recall_core::Stats {
+            total_namespaces: 0,
+            total_memories: 0,
+            pinned_memories: 0,
+            per_namespace: Vec::new(),
+        }
+    });
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(&stats),
+    )
+        .into_response()
+}
+
+// ---- Capture ingestion (D-018): auto-capture hook scaffold ----
+
+/// One transcript message. `role` is prefixed into the stored text and added
+/// as a `role:<role>` tag for analytics; `at` becomes the chunks'
+/// `created_at` when present.
+#[derive(Debug, Deserialize)]
+pub struct CaptureMessage {
+    pub role: Option<String>,
+    pub content: String,
+    /// Optional message timestamp (unix seconds).
+    pub at: Option<i64>,
+}
+
+/// Request body for `POST /v1/capture`: an agent transcript chunked into
+/// memories server-side.
+#[derive(Debug, Deserialize)]
+pub struct CaptureRequest {
+    pub namespace: String,
+    pub transcript: Vec<CaptureMessage>,
+    /// Extra tags applied to every captured chunk.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Chunk size cap in characters (default 1000, clamped to 100..=8000).
+    pub max_chunk_chars: Option<usize>,
+}
+
+pub async fn capture(
+    State(state): State<AppState>,
+    Json(body): Json<CaptureRequest>,
+) -> Result<Response, HttpError> {
+    if body.namespace.trim().is_empty() {
+        return Err(RecallError::InvalidInput("namespace must not be empty".into()).into());
+    }
+    if body.transcript.is_empty() {
+        return Err(RecallError::InvalidInput(
+            "transcript must contain at least one message".into(),
+        )
+        .into());
+    }
+    let max_chars = body.max_chunk_chars.unwrap_or(1000).clamp(100, 8000);
+    let mut new_memories: Vec<NewMemory> = Vec::new();
+    for message in &body.transcript {
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let text = match message.role.as_deref().map(str::trim) {
+            Some(role) if !role.is_empty() => format!("{role}: {content}"),
+            _ => content.to_string(),
+        };
+        for chunk in recall_core::capture::chunk_text(&text, max_chars)? {
+            let mut tags = body.tags.clone();
+            if let Some(role) = message
+                .role
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+            {
+                tags.push(format!("role:{role}"));
+            }
+            new_memories.push(NewMemory {
+                namespace: body.namespace.trim().to_string(),
+                embedding: Some(state.embedder.embed(&chunk)),
+                text: chunk,
+                tags,
+                source: Some("capture".into()),
+                pinned: false,
+                created_at: message.at,
+                id: None,
+            });
+        }
+    }
+    if new_memories.is_empty() {
+        return Err(
+            RecallError::InvalidInput("transcript contained no captureable text".into()).into(),
+        );
+    }
+    let captured = state.with_store(|store| {
+        // Agents call capture without setup, mirroring MCP `remember` (D-009).
+        store.get_or_create_namespace(body.namespace.trim())?;
+        new_memories
+            .iter()
+            .map(|m| store.insert_memory(m))
+            .collect::<Result<Vec<recall_core::Memory>, RecallError>>()
+    })?;
+    tracing::info!(
+        namespace = %body.namespace,
+        memories = captured.len(),
+        "captured transcript via API"
+    );
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "namespace": body.namespace.trim(),
+            "captured": captured.len(),
+            "memories": captured,
+        })),
+    )
+        .into_response())
 }

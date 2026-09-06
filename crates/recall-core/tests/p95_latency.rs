@@ -195,7 +195,7 @@ fn recall_cost_breakdown_on_10k_memories() {
     let mut n = 0usize;
     for _ in 0..200 {
         n = store
-            .list_memories(Some("bench"), CORPUS_SIZE)
+            .list_memories(Some("bench"), CORPUS_SIZE, 0)
             .unwrap()
             .len();
     }

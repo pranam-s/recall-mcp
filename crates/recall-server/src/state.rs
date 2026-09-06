@@ -4,11 +4,18 @@ use std::sync::Arc;
 
 use recall_core::SharedStore;
 
+use crate::metrics::Metrics;
+use crate::ratelimit::RateLimiter;
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: SharedStore,
     pub embedder: Arc<dyn recall_core::Embedder>,
     pub api_key: Option<String>,
+    /// Per-key token-bucket limiter; `None` disables limiting entirely.
+    pub rate_limiter: Option<Arc<RateLimiter>>,
+    /// Registry rendered at `/metrics`.
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
@@ -21,6 +28,8 @@ impl AppState {
             store,
             embedder,
             api_key,
+            rate_limiter: None,
+            metrics: Arc::new(Metrics::new()),
         }
     }
 

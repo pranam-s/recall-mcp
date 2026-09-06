@@ -10,7 +10,7 @@ use recall_core::{
     Embedder, HashEmbedder, MemoryUpdate, NewMemory, RecallParams, SharedStore, SqliteStore,
     shared, unix_now,
 };
-use recall_server::{ServerConfig, build_router};
+use recall_server::build_router;
 
 #[derive(Parser)]
 #[command(
@@ -35,15 +35,30 @@ enum Command {
         /// Serve MCP over stdio instead of HTTP.
         #[arg(long)]
         stdio: bool,
-        /// Bind address for the HTTP server (ignored with --stdio).
-        #[arg(long, default_value = "127.0.0.1:8787")]
-        bind: String,
-        /// API key for /v1/* and /mcp (falls back to RECALL_MCP_API_KEY).
+        /// Bind address for the HTTP server (env RECALL_MCP_BIND; default
+        /// 127.0.0.1:8787). Ignored with --stdio.
+        #[arg(long)]
+        bind: Option<String>,
+        /// Optional JSON config file (bind, rate_limit, rate_burst,
+        /// body_limit) — lowest precedence after flags and env.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// API key for /v1/*, /metrics and /mcp (falls back to RECALL_MCP_API_KEY).
         #[arg(long)]
         api_key: Option<String>,
         /// Serve the built web UI from this directory at /.
         #[arg(long)]
         web_dir: Option<PathBuf>,
+        /// Rate limit in sustained requests/second per key (env
+        /// RECALL_MCP_RATE_LIMIT). Omit to disable limiting.
+        #[arg(long)]
+        rate_limit: Option<f64>,
+        /// Rate-limit burst capacity (default: max(2x rate, 10)).
+        #[arg(long)]
+        rate_burst: Option<f64>,
+        /// Maximum request body size in bytes (env RECALL_MCP_BODY_LIMIT).
+        #[arg(long)]
+        body_limit: Option<usize>,
     },
     /// Store one memory (prints the created record as JSON).
     Remember {
@@ -98,6 +113,15 @@ enum Command {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Hot backup: checkpoint the WAL and write a compacted snapshot of the
+    /// database to a new file (encrypted stores produce encrypted backups).
+    Backup {
+        /// Backup target file; must not exist.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Compact the database in place (VACUUM) and checkpoint the WAL.
+    Vacuum,
 }
 
 fn open_store(db: &PathBuf) -> Result<SharedStore> {
@@ -156,35 +180,154 @@ fn effective_api_key(cli_key: Option<&String>, env_value: Option<String>) -> Opt
 struct ServeArgs {
     db: PathBuf,
     stdio: bool,
-    bind: String,
+    bind: Option<String>,
     api_key: Option<String>,
     web_dir: Option<PathBuf>,
+    rate_limit: Option<f64>,
+    rate_burst: Option<f64>,
+    body_limit: Option<usize>,
 }
 
-async fn serve(args: &ServeArgs) -> Result<()> {
+/// Optional serve overrides from a JSON file (`--config`), merged with the
+/// lowest precedence: flags > environment > config file > defaults.
+/// Secrets (API key, encryption key) are deliberately not file-configurable.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct ServeConfigFile {
+    bind: Option<String>,
+    rate_limit: Option<f64>,
+    rate_burst: Option<f64>,
+    body_limit: Option<usize>,
+}
+
+fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
+    match std::env::var(name) {
+        Ok(raw) if !raw.trim().is_empty() => raw
+            .trim()
+            .parse::<T>()
+            .map(Some)
+            .map_err(|_| anyhow::anyhow!("invalid {name}: {raw:?}")),
+        _ => Ok(None),
+    }
+}
+
+fn serve_config(
+    args: &ServeArgs,
+    config_file: Option<&PathBuf>,
+) -> Result<(recall_server::ServerConfig, String)> {
+    let file: ServeConfigFile = match config_file {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("read config {}", path.display()))?;
+            serde_json::from_str(&raw)
+                .with_context(|| format!("parse config {}", path.display()))?
+        }
+        None => ServeConfigFile::default(),
+    };
+    // Precedence: flag > env > config file > default.
+    let rate_limit = args
+        .rate_limit
+        .or(env_parse("RECALL_MCP_RATE_LIMIT")?)
+        .or(file.rate_limit);
+    let body_limit = args
+        .body_limit
+        .or(env_parse("RECALL_MCP_BODY_LIMIT")?)
+        .or(file.body_limit);
+    let bind = args
+        .bind
+        .clone()
+        .or_else(|| {
+            std::env::var("RECALL_MCP_BIND")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .or(file.bind)
+        .unwrap_or_else(|| "127.0.0.1:8787".into());
+    // Validation: fail closed on nonsense instead of serving unbounded.
+    let rate_limit = match rate_limit {
+        Some(rate) if !rate.is_finite() || rate <= 0.0 => {
+            anyhow::bail!("rate limit must be finite and > 0, got {rate}")
+        }
+        Some(rate) => {
+            let burst = args
+                .rate_burst
+                .or(file.rate_burst)
+                .unwrap_or_else(|| (rate * 2.0).max(10.0));
+            let limits = recall_server::ratelimit::RateLimit { rate, burst };
+            limits
+                .validate()
+                .map_err(|e| anyhow::anyhow!("invalid rate limit: {e}"))?;
+            Some(limits)
+        }
+        None => None,
+    };
+    let body_limit_bytes = body_limit
+        .unwrap_or(recall_server::DEFAULT_BODY_LIMIT_BYTES)
+        .max(1);
+    let config = recall_server::ServerConfig {
+        api_key: effective_api_key(args.api_key.as_ref(), env_api_key()),
+        web_dir: args.web_dir.clone(),
+        rate_limit,
+        body_limit_bytes,
+    };
+    Ok((config, bind))
+}
+
+async fn serve(args: &ServeArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let store = open_store(&args.db)?;
+    let (config, bind) = serve_config(args, config_file)?;
     if args.stdio {
         tracing::info!("serving MCP over stdio");
         let state = recall_server::state::AppState::new(
             store,
             Arc::new(HashEmbedder::new_256()),
-            effective_api_key(args.api_key.as_ref(), env_api_key()),
+            config.api_key,
         );
         // stdio is the only stdout writer; tracing logs go to stderr.
         return recall_server::mcp::run_stdio_server(state).await;
     }
 
-    let config = ServerConfig {
-        api_key: effective_api_key(args.api_key.as_ref(), env_api_key()),
-        web_dir: args.web_dir.clone(),
-    };
-    let app = build_router(store, &config);
-    let listener = tokio::net::TcpListener::bind(&args.bind)
+    let app = build_router(store.clone(), &config);
+    let listener = tokio::net::TcpListener::bind(&bind)
         .await
-        .with_context(|| format!("bind {}", args.bind))?;
+        .with_context(|| format!("bind {bind}"))?;
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "recall-mcp HTTP server listening (REST + MCP at /mcp)");
-    axum::serve(listener, app).await.context("server error")
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("server error")?;
+    // Drain finished: flush the WAL so the next open starts from a clean file.
+    store
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .checkpoint_wal()
+        .context("WAL checkpoint on shutdown")?;
+    tracing::info!("shutdown complete (WAL checkpointed)");
+    Ok(())
+}
+
+/// Resolve on Ctrl-C or SIGTERM (SIGTERM is not delivered on Windows).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received; draining in-flight requests");
 }
 
 #[tokio::main]
@@ -203,16 +346,26 @@ async fn main() -> Result<()> {
         Command::Serve {
             stdio,
             bind,
+            config,
             api_key,
             web_dir,
+            rate_limit,
+            rate_burst,
+            body_limit,
         } => {
-            serve(&ServeArgs {
-                db,
-                stdio: *stdio,
-                bind: bind.clone(),
-                api_key: api_key.clone(),
-                web_dir: web_dir.clone(),
-            })
+            serve(
+                &ServeArgs {
+                    db,
+                    stdio: *stdio,
+                    bind: bind.clone(),
+                    api_key: api_key.clone(),
+                    web_dir: web_dir.clone(),
+                    rate_limit: *rate_limit,
+                    rate_burst: *rate_burst,
+                    body_limit: *body_limit,
+                },
+                config.as_ref(),
+            )
             .await
         }
         Command::Remember {
@@ -326,6 +479,38 @@ async fn main() -> Result<()> {
             let data: ExportData = serde_json::from_str(&raw)?;
             let report = import(&*store.lock().unwrap_or_else(|p| p.into_inner()), &data)?;
             print_json(serde_json::to_value(report)?)
+        }
+        Command::Backup { out } => {
+            if out.exists() {
+                anyhow::bail!(
+                    "backup target {} already exists (VACUUM INTO never overwrites)",
+                    out.display()
+                );
+            }
+            let store = open_store(&db)?;
+            let guard = store.lock().unwrap_or_else(|p| p.into_inner());
+            guard.checkpoint_wal().context("WAL checkpoint")?;
+            guard
+                .vacuum_into(out)
+                .with_context(|| format!("backup into {}", out.display()))?;
+            let stats = guard.stats()?;
+            print_json(serde_json::json!({
+                "backup": out.display().to_string(),
+                "total_namespaces": stats.total_namespaces,
+                "total_memories": stats.total_memories,
+            }))
+        }
+        Command::Vacuum => {
+            let store = open_store(&db)?;
+            let guard = store.lock().unwrap_or_else(|p| p.into_inner());
+            guard.vacuum().context("VACUUM")?;
+            guard.checkpoint_wal().context("WAL checkpoint")?;
+            let stats = guard.stats()?;
+            print_json(serde_json::json!({
+                "vacuumed": db.display().to_string(),
+                "total_namespaces": stats.total_namespaces,
+                "total_memories": stats.total_memories,
+            }))
         }
     }
 }
