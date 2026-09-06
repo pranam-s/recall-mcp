@@ -26,6 +26,11 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 
 [dev-dependencies]
 tempfile = "3"
+criterion = "0.8"
+
+[[bench]]
+name = "recall_latency"
+harness = false
 
 [features]
 default = []
