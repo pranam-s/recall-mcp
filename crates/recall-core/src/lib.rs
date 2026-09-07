@@ -19,7 +19,7 @@ pub mod sqlite;
 pub mod store;
 pub mod util;
 
-pub use embed::{Embedder, HashEmbedder};
+pub use embed::{Embedder, EmbedderKind, HashEmbedder, parse_embedder_name, select_embedder};
 pub use error::{RecallError, Result};
 pub use models::{
     Memory, MemoryUpdate, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats,

@@ -322,3 +322,66 @@ fn cli_backup_and_vacuum_maintain_the_store() {
         out.stdout
     );
 }
+
+/// `--embedder` selection end-to-end through the real binary: unknown names
+/// fail the command (serve included), the default `hash` path works, and the
+/// same flag drives both writing and reading.
+#[test]
+fn cli_embedder_flag_selects_and_validates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("emb.db");
+    let db_str = db.to_str().unwrap();
+
+    // Unknown embedder names fail one-shot commands.
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--embedder",
+            "gpt4",
+            "--namespace",
+            "e",
+            "--text",
+            "x",
+        ],
+    );
+    assert!(
+        !out.status.success(),
+        "unknown embedder must fail the command"
+    );
+
+    // ...and fail `serve` during config resolution, before it can bind.
+    let out = run(db_str, &["serve", "--embedder", "gpt4"]);
+    assert!(!out.status.success(), "serve must fail closed");
+
+    // The explicit default works through the same selection path.
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--embedder",
+            "hash",
+            "--namespace",
+            "e",
+            "--text",
+            "embedded via the explicit embedder flag",
+        ],
+    );
+    assert!(out.status.success(), "remember failed: {}", out.stdout);
+
+    let out = run(
+        db_str,
+        &[
+            "recall",
+            "--embedder",
+            "hash",
+            "--namespace",
+            "e",
+            "--query",
+            "explicit embedder flag",
+        ],
+    );
+    assert!(out.status.success(), "recall failed: {}", out.stdout);
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+}

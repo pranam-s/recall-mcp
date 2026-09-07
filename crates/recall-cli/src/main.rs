@@ -1,14 +1,12 @@
 //! recall-cli — scripting and serving entry point for Recall-MCP.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use recall_core::export::{ExportData, export, import};
 use recall_core::{
-    Embedder, HashEmbedder, MemoryUpdate, NewMemory, RecallParams, SharedStore, SqliteStore,
-    shared, unix_now,
+    Embedder, MemoryUpdate, NewMemory, RecallParams, SharedStore, SqliteStore, shared, unix_now,
 };
 use recall_server::build_router;
 
@@ -23,6 +21,13 @@ struct Cli {
     /// SQLite database file (created if missing). Applies to every subcommand.
     #[arg(long, global = true, default_value = "recall.db")]
     db: PathBuf,
+    /// Embedder for remember/recall/update and the server: `hash` (default),
+    /// `onnx` or `openai` (env RECALL_MCP_EMBEDDER). The non-default values
+    /// need their cargo features (`--features onnx|openai`) plus their
+    /// runtime setup; all embeds must use the same embedder a store was
+    /// populated with. See `select_embedder` in recall-core.
+    #[arg(long, global = true)]
+    embedder: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -186,6 +191,7 @@ struct ServeArgs {
     rate_limit: Option<f64>,
     rate_burst: Option<f64>,
     body_limit: Option<usize>,
+    embedder: Option<String>,
 }
 
 /// Optional serve overrides from a JSON file (`--config`), merged with the
@@ -198,6 +204,7 @@ struct ServeConfigFile {
     rate_limit: Option<f64>,
     rate_burst: Option<f64>,
     body_limit: Option<usize>,
+    embedder: Option<String>,
 }
 
 fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
@@ -209,6 +216,30 @@ fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
             .map_err(|_| anyhow::anyhow!("invalid {name}: {raw:?}")),
         _ => Ok(None),
     }
+}
+
+/// Embedder-name resolution shared by serve and the one-shot commands:
+/// flag > env `RECALL_MCP_EMBEDDER` > config-file value > default `hash`.
+/// Blank flag/env/file values fall through to the next layer.
+fn embedder_name(flag: Option<&str>, file: Option<&str>) -> Result<String> {
+    if let Some(f) = flag.map(str::trim).filter(|f| !f.is_empty()) {
+        return Ok(f.to_string());
+    }
+    if let Some(e) = env_parse::<String>("RECALL_MCP_EMBEDDER")? {
+        return Ok(e);
+    }
+    if let Some(f) = file.map(str::trim).filter(|f| !f.is_empty()) {
+        return Ok(f.to_string());
+    }
+    Ok("hash".to_string())
+}
+
+/// Build the embedder for one-shot commands (`remember`, `recall`, `update`):
+/// resolve the name, then construct — a missing feature or runtime resource
+/// (onnx dylib, OpenAI key) fails the command instead of silently degrading.
+fn resolve_embedder(flag: Option<&str>) -> Result<std::sync::Arc<dyn Embedder>> {
+    let name = embedder_name(flag, None)?;
+    recall_core::select_embedder(&name).with_context(|| format!("select embedder {name:?}"))
 }
 
 fn serve_config(
@@ -264,11 +295,15 @@ fn serve_config(
     let body_limit_bytes = body_limit
         .unwrap_or(recall_server::DEFAULT_BODY_LIMIT_BYTES)
         .max(1);
+    let embedder_name = embedder_name(args.embedder.as_deref(), file.embedder.as_deref())?;
+    let embedder = recall_core::select_embedder(&embedder_name)
+        .with_context(|| format!("select embedder {embedder_name:?}"))?;
     let config = recall_server::ServerConfig {
         api_key: effective_api_key(args.api_key.as_ref(), env_api_key()),
         web_dir: args.web_dir.clone(),
         rate_limit,
         body_limit_bytes,
+        embedder,
     };
     Ok((config, bind))
 }
@@ -278,11 +313,9 @@ async fn serve(args: &ServeArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let (config, bind) = serve_config(args, config_file)?;
     if args.stdio {
         tracing::info!("serving MCP over stdio");
-        let state = recall_server::state::AppState::new(
-            store,
-            Arc::new(HashEmbedder::new_256()),
-            config.api_key,
-        );
+        // stdio has no metrics; the embedder is used raw.
+        let state =
+            recall_server::state::AppState::new(store, config.embedder.clone(), config.api_key);
         // stdio is the only stdout writer; tracing logs go to stderr.
         return recall_server::mcp::run_stdio_server(state).await;
     }
@@ -363,6 +396,7 @@ async fn main() -> Result<()> {
                     rate_limit: *rate_limit,
                     rate_burst: *rate_burst,
                     body_limit: *body_limit,
+                    embedder: cli.embedder.clone(),
                 },
                 config.as_ref(),
             )
@@ -375,7 +409,7 @@ async fn main() -> Result<()> {
             pinned,
         } => {
             let store = open_store(&db)?;
-            let embedder = HashEmbedder::new_256();
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
             // Scripted remember is agent-like: create the namespace if missing.
             let namespace = namespace.trim().to_string();
             if namespace.is_empty() {
@@ -406,7 +440,7 @@ async fn main() -> Result<()> {
             tags,
         } => {
             let store = open_store(&db)?;
-            let embedder: Arc<dyn Embedder> = Arc::new(HashEmbedder::new_256());
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
             let params = RecallParams {
                 k: *k,
                 tau_days: if *tau_days <= 0.0 {
@@ -434,6 +468,7 @@ async fn main() -> Result<()> {
             pinned,
         } => {
             let store = open_store(&db)?;
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
             let mut update = MemoryUpdate {
                 text: text.clone(),
                 tags: tags.clone(),
@@ -442,7 +477,7 @@ async fn main() -> Result<()> {
                 embedding: None,
             };
             if let Some(t) = &update.text {
-                update.embedding = Some(HashEmbedder::new_256().embed(t));
+                update.embedding = Some(embedder.embed(t));
             }
             let memory = store
                 .lock()
@@ -519,6 +554,46 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Serializes tests that mutate process-global environment variables.
+    /// Poison-recovering, like `AppState::with_store`: one test's panic must
+    /// not fail every later env test with `PoisonError`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Deterministic serve_config tests: every env layer starts unset.
+    ///
+    /// SAFETY (edition-2024 unsafe env access): process-global mutation is
+    /// confined to this test binary and single-threaded here — every
+    /// env-touching test holds [`ENV_LOCK`].
+    fn clear_serve_env() {
+        for name in [
+            "RECALL_MCP_RATE_LIMIT",
+            "RECALL_MCP_BODY_LIMIT",
+            "RECALL_MCP_BIND",
+            "RECALL_MCP_EMBEDDER",
+            "RECALL_MCP_API_KEY",
+        ] {
+            unsafe { std::env::remove_var(name) };
+        }
+    }
+
+    fn serve_args() -> ServeArgs {
+        ServeArgs {
+            db: PathBuf::from("t.db"),
+            stdio: false,
+            bind: None,
+            api_key: None,
+            web_dir: None,
+            rate_limit: None,
+            rate_burst: None,
+            body_limit: None,
+            embedder: None,
+        }
+    }
+
     #[test]
     fn api_key_prefers_cli_then_env_then_none() {
         let cli = Some("cli-key".to_string());
@@ -539,5 +614,199 @@ mod tests {
         // Blank values never count.
         assert!(effective_api_key(None, Some("  ".into())).is_none());
         assert!(effective_api_key(Some("  ".into()).as_ref(), None).is_none());
+    }
+
+    #[test]
+    fn embedder_name_flag_beats_env_beats_file_beats_default() {
+        let _guard = env_lock();
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::remove_var("RECALL_MCP_EMBEDDER") };
+        // Flag wins over everything.
+        assert_eq!(
+            embedder_name(Some("onnx"), Some("hash")).unwrap(),
+            "onnx",
+            "flag must beat file"
+        );
+        // Env over file, file over default.
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::set_var("RECALL_MCP_EMBEDDER", "openai") };
+        assert_eq!(embedder_name(None, Some("hash")).unwrap(), "openai");
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::remove_var("RECALL_MCP_EMBEDDER") };
+        assert_eq!(embedder_name(None, Some("openai")).unwrap(), "openai");
+        assert_eq!(embedder_name(None, None).unwrap(), "hash");
+        // Blank values fall through to the next layer.
+        assert_eq!(embedder_name(Some("   "), Some("hash")).unwrap(), "hash");
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::set_var("RECALL_MCP_EMBEDDER", "  ") };
+        assert_eq!(embedder_name(None, Some("hash")).unwrap(), "hash");
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::remove_var("RECALL_MCP_EMBEDDER") };
+    }
+
+    #[test]
+    fn resolve_embedder_builds_hash_and_rejects_unknown() {
+        let _guard = env_lock();
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::remove_var("RECALL_MCP_EMBEDDER") };
+        let e = resolve_embedder(None).expect("default embedder");
+        assert_eq!(e.name(), "hash-256");
+        // `.err()` — the success side is a trait object without Debug.
+        let err = resolve_embedder(Some("gpt4"))
+            .err()
+            .expect("unknown embedder must fail");
+        // anyhow's Display shows only the outer context; the typed error is
+        // the root cause.
+        assert!(
+            err.root_cause().to_string().contains("unknown embedder"),
+            "got: {err:#}"
+        );
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    #[test]
+    fn resolve_embedder_onnx_requires_the_feature() {
+        let _guard = env_lock();
+        // SAFETY: ENV_LOCK serializes process-global env access in tests.
+        unsafe { std::env::remove_var("RECALL_MCP_EMBEDDER") };
+        let err = resolve_embedder(Some("onnx"))
+            .err()
+            .expect("onnx must fail without the feature");
+        assert!(
+            err.root_cause().to_string().contains("onnx"),
+            "error must name the embedder: {err:#}"
+        );
+    }
+
+    /// Glue: a `--config` file lands in the produced `ServerConfig`, flags
+    /// override it, and the rate-limit validation fails closed.
+    #[test]
+    fn serve_config_wires_file_and_flags_into_server_config() {
+        let _guard = env_lock();
+        clear_serve_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("serve.json");
+        std::fs::write(
+            &path,
+            r#"{"bind": "0.0.0.0:9999", "rate_limit": 5, "rate_burst": 9,
+                "body_limit": 2048, "embedder": "hash"}"#,
+        )
+        .unwrap();
+
+        // File values land in the config (with the documented burst default).
+        let (config, bind) = serve_config(&serve_args(), Some(&path)).unwrap();
+        assert_eq!(bind, "0.0.0.0:9999");
+        assert_eq!(
+            config.rate_limit,
+            Some(recall_server::ratelimit::RateLimit {
+                rate: 5.0,
+                burst: 9.0
+            })
+        );
+        assert_eq!(config.body_limit_bytes, 2048);
+        assert_eq!(config.embedder.name(), "hash-256");
+        assert!(config.api_key.is_none());
+
+        // Flags override the file *per knob*: the rate comes from the flag,
+        // while the burst (no flag) still comes from the file — each setting
+        // follows the precedence chain independently.
+        let mut args = serve_args();
+        args.rate_limit = Some(1.0);
+        args.body_limit = Some(4096);
+        args.bind = Some("127.0.0.1:1".into());
+        args.api_key = Some("k".into());
+        let (config, bind) = serve_config(&args, Some(&path)).unwrap();
+        assert_eq!(bind, "127.0.0.1:1");
+        assert_eq!(
+            config.rate_limit,
+            Some(recall_server::ratelimit::RateLimit {
+                rate: 1.0,
+                burst: 9.0
+            })
+        );
+        assert_eq!(config.body_limit_bytes, 4096);
+        assert_eq!(config.api_key.as_deref(), Some("k"));
+
+        // With no flag and no file, the burst default is max(2x rate, 10).
+        let mut args = serve_args();
+        args.rate_limit = Some(1.0);
+        let (config, _) = serve_config(&args, None).unwrap();
+        assert_eq!(
+            config.rate_limit,
+            Some(recall_server::ratelimit::RateLimit {
+                rate: 1.0,
+                burst: 10.0
+            })
+        );
+
+        // Defaults without flags or file.
+        let (config, bind) = serve_config(&serve_args(), None).unwrap();
+        assert_eq!(bind, "127.0.0.1:8787");
+        assert_eq!(
+            config.body_limit_bytes,
+            recall_server::DEFAULT_BODY_LIMIT_BYTES
+        );
+        assert!(config.rate_limit.is_none());
+    }
+
+    #[test]
+    fn serve_config_fails_closed_on_bad_values() {
+        let _guard = env_lock();
+        clear_serve_env();
+        let dir = tempfile::tempdir().unwrap();
+        let write = |body: &str| {
+            let path = dir.path().join("bad.json");
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+
+        // Non-positive rate limit (file layer) is refused.
+        let path = write(r#"{"rate_limit": -1}"#);
+        let err = serve_config(&serve_args(), Some(&path)).unwrap_err();
+        assert!(err.to_string().contains("rate limit must be"), "got: {err}");
+
+        // Unknown file keys are refused (no silent typos).
+        let path = write(r#"{"api_key": "secrets-do-not-belong-in-files"}"#);
+        let err = serve_config(&serve_args(), Some(&path)).unwrap_err();
+        assert!(
+            err.root_cause().to_string().contains("unknown field"),
+            "got: {err:#}"
+        );
+
+        // A burst smaller than the rate is refused by the limiter's rules.
+        let mut args = serve_args();
+        args.rate_limit = Some(50.0);
+        args.rate_burst = Some(1.0);
+        let err = serve_config(&args, None).unwrap_err();
+        assert!(err.to_string().contains("invalid rate limit"), "got: {err}");
+
+        // An unknown embedder name is refused before the server starts.
+        let path = write(r#"{"embedder": "gpt4"}"#);
+        let err = serve_config(&serve_args(), Some(&path)).unwrap_err();
+        assert!(
+            err.root_cause().to_string().contains("unknown embedder"),
+            "got: {err:#}"
+        );
+
+        // A zero body limit clamps to 1 rather than disabling the limit.
+        let mut args = serve_args();
+        args.body_limit = Some(0);
+        let (config, _) = serve_config(&args, None).unwrap();
+        assert_eq!(config.body_limit_bytes, 1);
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    #[test]
+    fn serve_config_embedder_onnx_without_feature_fails_closed() {
+        let _guard = env_lock();
+        clear_serve_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("onnx.json");
+        std::fs::write(&path, r#"{"embedder": "onnx"}"#).unwrap();
+        let err = serve_config(&serve_args(), Some(&path)).unwrap_err();
+        assert!(
+            err.root_cause().to_string().contains("onnx"),
+            "error must name the embedder: {err:#}"
+        );
     }
 }

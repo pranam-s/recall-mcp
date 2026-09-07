@@ -24,3 +24,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+default = []
+# Forward the optional embedders to the binary so `--embedder onnx|openai`
+# can actually be served (D-003, D-013).
+onnx = ["recall-core/onnx"]
+openai = ["recall-core/openai"]

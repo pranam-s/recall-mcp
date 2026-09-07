@@ -27,7 +27,7 @@ use crate::state::AppState;
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
 /// Server settings supplied by the binary (CLI `serve`).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// When set, all `/v1/*`, `/metrics` and `/mcp` requests must present this
     /// key via `Authorization: Bearer <key>` or `X-API-Key: <key>`. Unset =
@@ -39,6 +39,24 @@ pub struct ServerConfig {
     pub rate_limit: Option<ratelimit::RateLimit>,
     /// Maximum accepted request body size in bytes.
     pub body_limit_bytes: usize,
+    /// Embedder used for every server-side embed (REST, MCP, capture). The
+    /// CLI resolves `--embedder` / env / config-file into this; the default
+    /// is the offline `HashEmbedder`.
+    pub embedder: Arc<dyn recall_core::Embedder>,
+}
+
+impl std::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `Arc<dyn Embedder>` has no Debug; the embedder's name is the
+        // stable, useful part for logs.
+        f.debug_struct("ServerConfig")
+            .field("api_key", &self.api_key)
+            .field("web_dir", &self.web_dir)
+            .field("rate_limit", &self.rate_limit)
+            .field("body_limit_bytes", &self.body_limit_bytes)
+            .field("embedder", &self.embedder.name())
+            .finish()
+    }
 }
 
 impl Default for ServerConfig {
@@ -48,6 +66,7 @@ impl Default for ServerConfig {
             web_dir: None,
             rate_limit: None,
             body_limit_bytes: DEFAULT_BODY_LIMIT_BYTES,
+            embedder: Arc::new(HashEmbedder::new_256()),
         }
     }
 }
@@ -56,9 +75,10 @@ impl Default for ServerConfig {
 /// metrics, optional static UI, CORS, tracing, body limit, rate limiting.
 pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> Router {
     let metrics = Arc::new(Metrics::new());
-    // Every embed (REST, MCP, capture) flows through the timed wrapper.
+    // Every embed (REST, MCP, capture) flows through the timed wrapper over
+    // the configured embedder (hash by default; `--embedder` to switch).
     let embedder: Arc<dyn recall_core::Embedder> = Arc::new(TimedEmbedder {
-        inner: Arc::new(HashEmbedder::new_256()),
+        inner: config.embedder.clone(),
         metrics: metrics.clone(),
     });
     let mut state = AppState::new(store, embedder, config.api_key.clone());
@@ -271,5 +291,95 @@ mod tests {
         );
         assert!(text.contains("recall_request_duration_seconds"));
         assert!(text.contains("recall_store_memories 0"));
+    }
+
+    /// Embeds every text to one fixed vector, so a stored memory and its
+    /// query share cosine exactly 1.0 — any other embedder would not.
+    #[derive(Debug)]
+    struct FixedEmbedder {
+        vector: Vec<f32>,
+    }
+    impl recall_core::Embedder for FixedEmbedder {
+        fn dimensions(&self) -> usize {
+            self.vector.len()
+        }
+        fn name(&self) -> &'static str {
+            "fixed-test"
+        }
+        fn embed(&self, _text: &str) -> Vec<f32> {
+            self.vector.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn router_embeds_with_the_configured_embedder() {
+        // Glue check for the `--embedder` selection: ServerConfig.embedder
+        // must be the embedder REST/MCP/capture actually use.
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        std::mem::forget(dir); // outlives the test; OS cleans the temp dir
+        let app = build_router(
+            store,
+            &ServerConfig {
+                embedder: Arc::new(FixedEmbedder {
+                    vector: vec![0.5f32; 8],
+                }),
+                ..ServerConfig::default()
+            },
+        );
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/namespaces")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"name":"w"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::CREATED);
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/memories")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        r#"{"namespace":"w","text":"any text"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::CREATED);
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/recall")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        r#"{"namespace":"w","query":"any text"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(res.status().is_success());
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let hits: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let vector = hits[0]["breakdown"]["vector"]
+            .as_f64()
+            .expect("vector component");
+        assert!(
+            (vector - 1.0).abs() < 1e-5,
+            "the server must embed with the configured embedder, got vector {vector}"
+        );
     }
 }
