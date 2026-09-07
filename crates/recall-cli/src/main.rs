@@ -1,5 +1,8 @@
 //! recall-cli — scripting and serving entry point for Recall-MCP.
 
+// Curated clippy opt-ins (docs/style-guides/rust-tooling-conventions.md).
+#![warn(clippy::dbg_macro, clippy::todo, clippy::unimplemented)]
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -45,7 +48,7 @@ enum Command {
         #[arg(long)]
         bind: Option<String>,
         /// Optional JSON config file (bind, rate_limit, rate_burst,
-        /// body_limit) — lowest precedence after flags and env.
+        /// body_limit, embedder) — lowest precedence after flags and env.
         #[arg(long)]
         config: Option<PathBuf>,
         /// API key for /v1/*, /metrics and /mcp (falls back to RECALL_MCP_API_KEY).
@@ -314,10 +317,21 @@ async fn serve(args: &ServeArgs, config_file: Option<&PathBuf>) -> Result<()> {
     if args.stdio {
         tracing::info!("serving MCP over stdio");
         // stdio has no metrics; the embedder is used raw.
-        let state =
-            recall_server::state::AppState::new(store, config.embedder.clone(), config.api_key);
+        let state = recall_server::state::AppState::new(
+            store.clone(),
+            config.embedder.clone(),
+            config.api_key,
+        );
         // stdio is the only stdout writer; tracing logs go to stderr.
-        return recall_server::mcp::run_stdio_server(state).await;
+        let result = recall_server::mcp::run_stdio_server(state).await;
+        // Same shutdown hygiene as the HTTP path: flush the WAL so the next
+        // open starts from a clean main file.
+        store
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .checkpoint_wal()
+            .context("WAL checkpoint on stdio shutdown")?;
+        return result;
     }
 
     let app = build_router(store.clone(), &config);

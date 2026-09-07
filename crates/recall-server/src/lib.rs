@@ -1,5 +1,8 @@
 //! recall-server — Axum HTTP API and MCP transports around the pure core.
 
+// Curated clippy opt-ins (docs/style-guides/rust-tooling-conventions.md).
+#![warn(clippy::dbg_macro, clippy::todo, clippy::unimplemented)]
+
 pub mod api;
 pub mod auth;
 pub mod error;

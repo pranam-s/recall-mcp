@@ -68,11 +68,17 @@ pub struct ListMemoriesQuery {
     pub offset: Option<usize>,
 }
 
+/// Upper bound for the `limit` query parameter. Without it, a `usize` limit
+/// near `usize::MAX` would wrap negative through the store's `i64` `LIMIT`
+/// bind and SQLite's "negative = unlimited" rule would materialize the whole
+/// namespace into one response.
+const MAX_PAGE_LIMIT: usize = 10_000;
+
 pub async fn list_memories(
     State(state): State<AppState>,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Result<Response, HttpError> {
-    let limit = query.limit.unwrap_or(100);
+    let limit = query.limit.unwrap_or(100).min(MAX_PAGE_LIMIT);
     let offset = query.offset.unwrap_or(0);
     let (memories, total) = state.with_store(|store| {
         let total = store.count_memories(query.namespace.as_deref())?;

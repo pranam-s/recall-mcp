@@ -27,6 +27,12 @@ use crate::util::tokenize;
 pub const ENC_PREFIX: &str = "enc:v1:";
 
 const NONCE_LEN: usize = 12;
+/// AEAD tag length appended to every ciphertext by ChaCha20-Poly1305.
+const TAG_LEN: usize = 16;
+/// Smallest real ciphertext blob: nonce + tag (an empty plaintext is
+/// impossible through the store — text is validated non-empty — so any
+/// payload below this size wearing the prefix is not our ciphertext).
+const MIN_BLOB_LEN: usize = NONCE_LEN + TAG_LEN;
 /// HMAC-SHA256 digests are truncated to 16 bytes (128 bits): collision
 /// probability is negligible for any realistic store (~4e-23 even at 10^9
 /// distinct tokens) while keeping FTS documents compact.
@@ -61,6 +67,7 @@ impl StoreKey {
     }
 
     /// Generate a fresh random key (printed as hex for storage).
+    #[allow(clippy::expect_used)] // 32 random bytes always satisfy from_bytes
     pub fn generate() -> Self {
         let raw: [u8; 32] = Generate::generate();
         Self::from_bytes(&raw).expect("32 random bytes are a valid key")
@@ -72,6 +79,7 @@ impl StoreKey {
     }
 
     /// AEAD-encrypt with a fresh random nonce; AAD binds the row identity.
+    #[allow(clippy::expect_used)] // ChaCha20-Poly1305 encrypt is infallible for these inputs
     pub fn encrypt(&self, context: &str, plaintext: &str) -> String {
         let nonce: Nonce = Generate::generate();
         let ct = self
@@ -99,7 +107,7 @@ impl StoreKey {
         let blob = BASE64
             .decode(blob_b64)
             .map_err(|e| RecallError::Crypto(format!("ciphertext is not valid base64: {e}")))?;
-        if blob.len() <= NONCE_LEN {
+        if blob.len() < MIN_BLOB_LEN {
             return Err(RecallError::Crypto("ciphertext too short".into()));
         }
         let (nonce_bytes, ct) = blob.split_at(NONCE_LEN);
@@ -122,9 +130,20 @@ impl StoreKey {
         String::from_utf8(pt).map_err(|_| RecallError::Crypto("plaintext is not UTF-8".into()))
     }
 
-    /// Whether a stored value is an encrypted-at-rest blob.
+    /// Whether a stored value is an encrypted-at-rest blob: it must carry the
+    /// `enc:v1:` prefix AND the payload shape of a real ciphertext (canonical
+    /// base64 of at least nonce+tag bytes). Shape-checking keeps a plaintext
+    /// memory that merely *starts with* `enc:v1:` (a coincidental collision in
+    /// user text) out of the encrypted lane, where a doomed decrypt attempt
+    /// would fail the whole read or skip the keyed upgrade.
     pub fn is_encrypted(stored: &str) -> bool {
-        stored.starts_with(ENC_PREFIX)
+        let Some(payload) = stored.strip_prefix(ENC_PREFIX) else {
+            return false;
+        };
+        match BASE64.decode(payload) {
+            Ok(blob) => blob.len() >= MIN_BLOB_LEN,
+            Err(_) => false,
+        }
     }
 
     /// Keyed FTS document: the memory text reduced to space-joined HMAC-SHA256
@@ -139,6 +158,7 @@ impl StoreKey {
     }
 
     /// Truncated hex HMAC of one token (lowercase alphanumeric per `tokenize`).
+    #[allow(clippy::expect_used)] // HMAC accepts any key length by contract
     pub fn token_digest(&self, token: &str) -> String {
         let mut mac =
             HmacSha256::new_from_slice(&self.mac_key).expect("HMAC accepts any key length");
@@ -147,9 +167,6 @@ impl StoreKey {
         hex::encode(&out[..DIGEST_LEN])
     }
 }
-
-/// Minimal hex encode helper on top of the `hex` crate.
-use hex;
 
 /// AAD context for the `memories.text` column of a given row.
 pub fn text_context(memory_id: &str) -> String {
@@ -228,6 +245,25 @@ mod tests {
         assert!(k.decrypt(&text_context("mem-1"), &bad_b64).is_err());
         let short = format!("{ENC_PREFIX}{}", BASE64.encode([1u8; 4]));
         assert!(k.decrypt(&text_context("mem-1"), &short).is_err());
+    }
+
+    #[test]
+    fn is_encrypted_requires_prefix_and_ciphertext_shape() {
+        let k = key();
+        assert!(StoreKey::is_encrypted(
+            &k.encrypt(&text_context("m"), "secret")
+        ));
+        // Prefix alone is not enough: plaintext that merely starts with the
+        // marker (prose, truncated blobs, non-base64 tails) stays in the
+        // plaintext lane instead of failing a doomed decrypt later.
+        assert!(!StoreKey::is_encrypted("enc:v1:this is prose, not base64!"));
+        assert!(!StoreKey::is_encrypted("enc:v1:!!!!"));
+        assert!(!StoreKey::is_encrypted(&format!(
+            "{ENC_PREFIX}{}",
+            BASE64.encode([1u8; 4]) // far below nonce+tag size
+        )));
+        assert!(!StoreKey::is_encrypted("attack at dawn"));
+        assert!(!StoreKey::is_encrypted(""));
     }
 
     #[test]

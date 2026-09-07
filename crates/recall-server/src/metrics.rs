@@ -5,6 +5,7 @@
 //! computed at scrape time so they never go stale.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -190,8 +191,6 @@ impl recall_core::Embedder for TimedEmbedder {
         vector
     }
 }
-
-use std::sync::Arc;
 
 /// Axum middleware: observe every request (route label, status, latency).
 pub async fn observe(

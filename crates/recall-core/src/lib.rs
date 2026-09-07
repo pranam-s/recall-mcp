@@ -4,6 +4,14 @@
 //! SQLite implementation (FTS5 keyword index), embedders, and the explainable
 //! hybrid scorer. Everything else in the workspace is a shell around this crate.
 
+// Style guide (docs/style-guides/rust-tooling-conventions.md): curated clippy
+// opt-ins with justified `#[allow]`s, never blanket pedantic noise.
+#![warn(clippy::dbg_macro, clippy::todo, clippy::unimplemented)]
+// No `unwrap`/`expect` outside tests (rust-error-handling.md item 5); each
+// non-test use carries a local `#[allow]` naming the invariant that makes it
+// provably infallible.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod capture;
 pub mod crypto;
 pub mod embed;

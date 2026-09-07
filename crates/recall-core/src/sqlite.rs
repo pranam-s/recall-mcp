@@ -259,7 +259,10 @@ impl PackedNamespace {
 /// Reuse the cached packed vectors for `namespace_id`, or rebuild the cache
 /// in place. Rebuild happens when the namespace changed, the query
 /// dimensionality changed, or the caller asks for more rows than cached from
-/// an incomplete fill (complete caches serve any cap).
+/// an incomplete fill (complete caches serve any cap; a *smaller* cap reuses
+/// the cache as-is and the recall loop bounds the scan to the caller's cap,
+/// preserving the SQL `LIMIT` semantics row-for-row).
+#[allow(clippy::expect_used)] // invariant: the cache was just filled or reused above
 fn packed_vectors_for<'a>(
     slot: &'a mut Option<PackedNamespace>,
     conn: &Connection,
@@ -427,6 +430,7 @@ impl SqliteStore {
     /// Enforce mode consistency and complete the keyed-mode setup:
     /// verify the stored key check, encrypt any remaining plaintext rows,
     /// and persist the mode marker.
+    #[allow(clippy::expect_used)] // `self.key` is Some on the arm that dereferences it
     fn init_mode(&self) -> Result<()> {
         let marker = self.meta_get(META_AT_REST)?;
         match (&self.key, marker.as_deref()) {
@@ -462,6 +466,7 @@ impl SqliteStore {
 
     /// Open-time proof that the supplied key is the one the database was
     /// written with (AEAD decrypt fails on any other key).
+    #[allow(clippy::expect_used)] // only called from the keyed branch of init_mode
     fn verify_key_check(&self) -> Result<()> {
         let key = self.key.as_ref().expect("keyed open");
         if let Some(check) = self.meta_get(META_KEY_CHECK)? {
@@ -478,13 +483,31 @@ impl SqliteStore {
             Some(k) => k,
             None => return Ok(()),
         };
-        let ids: Vec<String> = {
+        let mut ids: Vec<String> = {
             let mut stmt = self
                 .conn
                 .prepare("SELECT id FROM memories WHERE text NOT LIKE 'enc:v1:%'")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
+        // Rows wearing the prefix but not its ciphertext shape are plaintext
+        // literals ("enc:v1:this is prose, not base64!") written before a key
+        // existed; the prefix test alone would skip them and a later read
+        // would fail decrypting. The shape-checking [`StoreKey::is_encrypted`]
+        // separates them from real ciphertext.
+        let literal_ids: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, text FROM memories WHERE text LIKE 'enc:v1:%'")?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.filter_map(|r| {
+                let (id, text) = r.ok()?;
+                (!StoreKey::is_encrypted(&text)).then_some(id)
+            })
+            .collect()
+        };
+        ids.extend(literal_ids);
         if ids.is_empty() {
             return Ok(());
         }
@@ -878,6 +901,7 @@ impl Store for SqliteStore {
         Ok(count as u64)
     }
 
+    #[allow(clippy::expect_used)] // the candidate-heap peek is infallible: validate() guarantees k >= 1
     fn recall(
         &self,
         namespace: &str,
@@ -928,17 +952,6 @@ impl Store for SqliteStore {
         }
         let max_bm25 = keyword.values().copied().fold(0.0f64, f64::max);
 
-        // Pass 2 — brute-force cosine over the namespace (exact, explainable;
-        // ADR-002 as amended by D-016). The scan is slim (rowid + embedding +
-        // created_at + pinned only) and the similarity is computed straight
-        // from the borrowed BLOB (`get_raw`) without any per-row allocation;
-        // the query norm is hoisted out of the loop. Text and tags are
-        // fetched afterwards, for the surviving candidates only.
-        //
-        // Selection stays exact: outside the keyword set bm25 is 0, so a
-        // row's vector-only total IS its final total; rows beyond the top-`k`
-        // by that measure sort strictly below the heap's weakest member under
-        // the final ranking comparator and can never enter the top-`k`.
         // Pass 2 — brute-force cosine over the namespace (exact, explainable;
         // ADR-002 as amended by D-016 + D-019). Rows are scanned slim (rowid +
         // embedding + created_at + pinned) and the query norm is hoisted out
@@ -1011,7 +1024,13 @@ impl Store for SqliteStore {
                 let mut cache_slot = self.vector_cache.borrow_mut();
                 let packed =
                     packed_vectors_for(&mut cache_slot, &self.conn, &ns, qv.len(), p.scan_cap)?;
-                for i in 0..packed.len() {
+                // Bound the scan to the caller's cap: a smaller `scan_cap`
+                // after a larger incomplete fill must not surface rows the
+                // SQL `LIMIT` would never have returned. Rows are stored in
+                // rowid order, so the first `scan_cap` entries are exactly
+                // the rows the index scan returns.
+                let rows = packed.len().min(p.scan_cap);
+                for i in 0..rows {
                     let sim = if packed.has_vector[i] {
                         crate::util::cosine_f32_with_query_norm(
                             qv,
@@ -1222,6 +1241,7 @@ fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::ENC_PREFIX;
     use crate::embed::Embedder as _;
     use crate::embed::HashEmbedder;
     use crate::models::Weights;
@@ -2044,6 +2064,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plaintext_that_merely_looks_encrypted_survives_the_keyed_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sneaky.db");
+        let sneaky = format!("{ENC_PREFIX}this is prose, not base64!");
+        // Plaintext store holding a text that starts with the ciphertext
+        // marker (a coincidental collision in user content).
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", &sneaky)).unwrap();
+        }
+        // The keyed upgrade must treat it as plaintext and encrypt it, so
+        // later reads decrypt back to the exact original instead of failing.
+        let key = StoreKey::from_hex(&"f1".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            let m = s.list_memories(Some("w"), 10, 0).unwrap();
+            assert_eq!(m.len(), 1);
+            assert_eq!(
+                m[0].text, sneaky,
+                "literal prefix text must round-trip, not fail a doomed decrypt"
+            );
+            // And the file holds no plaintext of it. The upgrade ran in place,
+            // so (per the D-014 limitation) the plaintext-era pages linger in
+            // the freelist/WAL until a compact — exercise the documented
+            // remedy (`vacuum` + checkpoint) before inspecting raw bytes.
+            s.checkpoint_wal().unwrap();
+            s.vacuum().unwrap();
+            s.checkpoint_wal().unwrap();
+            let db = std::fs::read(&path).unwrap();
+            let wal = std::fs::read(path.with_extension("db-wal")).unwrap_or_default();
+            for buf in [&db, &wal] {
+                assert!(
+                    !String::from_utf8_lossy(buf).contains("prose, not base64"),
+                    "sneaky plaintext leaked to disk"
+                );
+            }
+        }
+        let reopened = SqliteStore::open_with_key(&path, &key).unwrap();
+        let m = reopened.list_memories(Some("w"), 10, 0).unwrap();
+        assert_eq!(m[0].text, sneaky);
+        // Keyword recall over the (digest-indexed) literal text still works.
+        assert_eq!(
+            reopened
+                .recall("w", "prose", None, &RecallParams::default(), 1)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
     // ---- Update path (D-015) ----
 
     #[test]
@@ -2458,6 +2530,17 @@ mod tests {
         let hits = s.recall("w", "zzq wvvx", Some(&q), &p, 1_000).unwrap();
         assert_eq!(hits[0].memory.text, "carrier");
         assert!((hits[0].breakdown.vector - 1.0).abs() < 1e-5);
+
+        // Shrinking the cap again must re-apply the LIMIT row-for-row: the
+        // cache still holds 3 rows from the cap-3 fill, so the scan is
+        // bounded back to 2 and the carrier row (rowid 3) is invisible —
+        // exactly what the SQL scan with LIMIT 2 returns.
+        p.scan_cap = 2;
+        let hits = s.recall("w", "zzq wvvx", Some(&q), &p, 1_000).unwrap();
+        assert!(
+            hits.iter().all(|h| h.memory.text != "carrier"),
+            "a shrunk scan_cap must not surface rows beyond the cap"
+        );
     }
 
     #[test]

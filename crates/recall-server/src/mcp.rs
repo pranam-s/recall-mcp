@@ -100,9 +100,12 @@ impl RecallTools {
 
     fn domain_err(e: recall_core::RecallError) -> McpError {
         match &e {
-            // Caller-fixable problems are "invalid params"; anything else is internal.
+            // Caller-fixable problems are "invalid params"; anything else is
+            // internal. An unknown memory id is caller-fixable too (it maps
+            // to HTTP 404 on the REST side) — never an internal error.
             recall_core::RecallError::InvalidInput(_)
-            | recall_core::RecallError::NamespaceNotFound(_) => {
+            | recall_core::RecallError::NamespaceNotFound(_)
+            | recall_core::RecallError::MemoryNotFound(_) => {
                 McpError::invalid_params(e.to_string(), None)
             }
             _ => McpError::internal_error(e.to_string(), None),
@@ -299,5 +302,26 @@ mod tests {
             "tools capability must be declared"
         );
         assert!(info.instructions.is_some());
+    }
+
+    #[test]
+    fn error_mapping_keeps_caller_fixable_problems_invalid_params() {
+        use recall_core::RecallError;
+        // Unknown namespace AND unknown memory id are caller-fixable (404 on
+        // the REST side); they must surface as JSON-RPC invalid params, not
+        // internal errors which would blame the server.
+        for e in [
+            RecallError::NamespaceNotFound("w".into()),
+            RecallError::MemoryNotFound("m".into()),
+            RecallError::InvalidInput("bad".into()),
+        ] {
+            let err = RecallTools::domain_err(e);
+            assert_eq!(
+                err.code.0, -32602,
+                "caller-fixable errors map to invalid params: {err:?}"
+            );
+        }
+        let internal = RecallTools::domain_err(RecallError::Io(std::io::Error::other("db down")));
+        assert_eq!(internal.code.0, -32603, "real faults stay internal errors");
     }
 }

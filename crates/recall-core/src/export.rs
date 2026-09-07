@@ -17,14 +17,20 @@ pub struct ExportData {
 
 pub const EXPORT_VERSION: u32 = 1;
 
+/// Page size for the internal full scan. Comfortably above any v1-scale store
+/// while staying a positive `i64` through the store's `LIMIT` bind — passing
+/// `usize::MAX` would wrap to a negative value, silently relying on SQLite's
+/// "negative LIMIT = unlimited" rule.
+const EXPORT_SCAN_LIMIT: usize = 1 << 40;
+
 /// Snapshot every namespace and memory. Listing caps are internal-only here
-/// (10k scan cap per store contract; larger stores are documented out of v1 scope).
+/// (see `EXPORT_SCAN_LIMIT`; larger stores are documented out of v1 scope).
 pub fn export(store: &dyn Store) -> Result<ExportData> {
     Ok(ExportData {
         version: EXPORT_VERSION,
         exported_at: crate::unix_now(),
         namespaces: store.list_namespaces()?,
-        memories: store.list_memories(None, usize::MAX - 1, 0)?,
+        memories: store.list_memories(None, EXPORT_SCAN_LIMIT, 0)?,
     })
 }
 
