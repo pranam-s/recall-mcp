@@ -168,9 +168,128 @@ impl PartialOrd for VectorCandidate {
     }
 }
 
+/// Packed, dequantized embeddings for one namespace — the D-016 remedy for
+/// the measured blob-read floor. The vector pass re-reads ~10 MB of embedding
+/// BLOBs from SQLite on every recall; after the first scan the packed cache
+/// serves the same rows from contiguous memory, so repeat recalls pay only
+/// the (vectorized) cosine arithmetic.
+///
+/// All rows of the namespace (up to the fill-time `scan_cap`, in `rowid`
+/// order — the same order the index scan returns) are kept, including rows
+/// *without* a usable vector: they occupy a slot so `LIMIT scan_cap`
+/// semantics match the SQL scan exactly. `has_vector` marks which slots hold
+/// real data; everything else scores cosine 0.0, identical to how the SQL
+/// path treats NULL blobs and dimension mismatches (`dim` is the *query*
+/// dimension, so a mismatched stored vector is "no signal", as before).
+struct PackedNamespace {
+    namespace_id: String,
+    /// Query-dimension the cache was packed for; rows whose stored BLOB does
+    /// not have exactly this shape are treated as vector-less.
+    dim: usize,
+    /// Row-major packed vectors: entry `i` lives at `data[i*dim..(i+1)*dim]`.
+    data: Vec<f32>,
+    has_vector: Vec<bool>,
+    rowids: Vec<i64>,
+    created_at: Vec<i64>,
+    pinned: Vec<bool>,
+    /// True when the namespace has no rows beyond the ones cached (the fill
+    /// query returned fewer rows than the cap), so the cache can serve any
+    /// `scan_cap`. When false, a caller asking for more rows triggers a
+    /// rebuild with the larger cap.
+    complete: bool,
+}
+
+impl PackedNamespace {
+    fn len(&self) -> usize {
+        self.rowids.len()
+    }
+
+    /// Load up to `scan_cap` rows (rowid order) for `namespace_id`, packing
+    /// vectors of the query's dimensionality. Reads happen once per
+    /// (re)build; the per-recall scan afterwards never touches SQLite.
+    fn load(conn: &Connection, namespace_id: &str, dim: usize, scan_cap: usize) -> Result<Self> {
+        let sql = format!(
+            "SELECT rowid, embedding, created_at, pinned FROM memories
+             WHERE namespace_id = ?1 ORDER BY rowid LIMIT {scan_cap}"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![namespace_id])?;
+        let mut rowids = Vec::new();
+        let mut created_at = Vec::new();
+        let mut pinned = Vec::new();
+        let mut blobs: Vec<Option<Vec<u8>>> = Vec::new();
+        while let Some(row) = rows.next()? {
+            rowids.push(row.get(0)?);
+            created_at.push(row.get(2)?);
+            pinned.push(row.get::<_, i64>(3)? != 0);
+            // The only allocation on the fill path; the scan path never runs
+            // this query while the cache stays valid.
+            blobs.push(row.get(1)?);
+        }
+        let mut data = vec![0.0f32; rowids.len() * dim];
+        let mut has_vector = vec![false; rowids.len()];
+        for (i, blob) in blobs.iter().enumerate() {
+            let Some(bytes) = blob else { continue };
+            if bytes.len() != dim * 4 {
+                continue;
+            }
+            for (j, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
+                data[i * dim + j] = f32::from_le_bytes(*chunk);
+            }
+            has_vector[i] = true;
+        }
+        Ok(Self {
+            namespace_id: namespace_id.to_string(),
+            dim,
+            data,
+            has_vector,
+            rowids,
+            created_at,
+            pinned,
+            complete: blobs.len() < scan_cap,
+        })
+    }
+
+    /// Borrow entry `i` as an `f32` slice (only valid when `has_vector[i]`).
+    fn slice(&self, i: usize) -> &[f32] {
+        &self.data[i * self.dim..(i + 1) * self.dim]
+    }
+}
+
+/// Reuse the cached packed vectors for `namespace_id`, or rebuild the cache
+/// in place. Rebuild happens when the namespace changed, the query
+/// dimensionality changed, or the caller asks for more rows than cached from
+/// an incomplete fill (complete caches serve any cap).
+fn packed_vectors_for<'a>(
+    slot: &'a mut Option<PackedNamespace>,
+    conn: &Connection,
+    namespace_id: &str,
+    dim: usize,
+    scan_cap: usize,
+) -> Result<&'a PackedNamespace> {
+    let usable = match &*slot {
+        Some(cached) => {
+            cached.namespace_id == namespace_id
+                && cached.dim == dim
+                && (cached.complete || cached.len() >= scan_cap)
+        }
+        None => false,
+    };
+    if !usable {
+        *slot = Some(PackedNamespace::load(conn, namespace_id, dim, scan_cap)?);
+    }
+    Ok(slot.as_ref().expect("cache was just filled or reused"))
+}
+
 pub struct SqliteStore {
     conn: Connection,
     key: Option<StoreKey>,
+    /// Packed vector cache for the most recently scanned namespace (D-019).
+    /// `RefCell` is sound here by the same argument as D-007: the store is
+    /// `Send`-only and every access is serialized by the owning mutex, so no
+    /// reference into the cell can ever be held across a re-entrant borrow
+    /// (writes invalidate *after* their SQL runs, never mid-scan).
+    vector_cache: std::cell::RefCell<Option<PackedNamespace>>,
 }
 
 /// Metadata keys in `store_meta`.
@@ -259,7 +378,11 @@ impl SqliteStore {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn, key: None })
+        Ok(Self {
+            conn,
+            key: None,
+            vector_cache: std::cell::RefCell::new(None),
+        })
     }
 
     /// In-memory encrypted database (tests).
@@ -269,6 +392,7 @@ impl SqliteStore {
         let store = Self {
             conn,
             key: Some(key.clone()),
+            vector_cache: std::cell::RefCell::new(None),
         };
         store.init_mode()?;
         Ok(store)
@@ -281,7 +405,11 @@ impl SqliteStore {
         if needs_upgrade {
             upgrade_legacy_schema(&conn)?;
         }
-        let store = Self { conn, key };
+        let store = Self {
+            conn,
+            key,
+            vector_cache: std::cell::RefCell::new(None),
+        };
         // Legacy layout always stored plaintext.
         if needs_upgrade {
             store.copy_plaintext_fts_tokens()?;
@@ -439,6 +567,14 @@ impl SqliteStore {
         Ok(stmt
             .query_row(params![name], |r| r.get::<_, String>(0))
             .optional()?)
+    }
+
+    /// Drop the packed vector cache after any write to `memories` (insert,
+    /// update, delete). Rebuilds are rare next to reads in this workload, so
+    /// invalidation is total rather than surgical — correctness over
+    /// cleverness.
+    fn invalidate_vector_cache(&self) {
+        self.vector_cache.borrow_mut().take();
     }
 }
 
@@ -602,6 +738,7 @@ impl Store for SqliteStore {
             Err(e) => return Err(e.into()),
         }
         debug!(memory_id = %id, namespace = %memory.namespace, "inserted memory");
+        self.invalidate_vector_cache();
         self.get_memory(&id)?
             .ok_or_else(|| RecallError::InvalidInput("inserted memory not found".into()))
     }
@@ -669,6 +806,7 @@ impl Store for SqliteStore {
             return Err(RecallError::MemoryNotFound(id.to_string()));
         }
         debug!(memory_id = id, "updated memory");
+        self.invalidate_vector_cache();
         self.get_memory(id)?
             .ok_or_else(|| RecallError::MemoryNotFound(id.to_string()))
     }
@@ -677,6 +815,9 @@ impl Store for SqliteStore {
         let n = self
             .conn
             .execute("DELETE FROM memories WHERE id = ?1", params![id])?;
+        if n > 0 {
+            self.invalidate_vector_cache();
+        }
         Ok(n > 0)
     }
 
@@ -798,6 +939,19 @@ impl Store for SqliteStore {
         // row's vector-only total IS its final total; rows beyond the top-`k`
         // by that measure sort strictly below the heap's weakest member under
         // the final ranking comparator and can never enter the top-`k`.
+        // Pass 2 — brute-force cosine over the namespace (exact, explainable;
+        // ADR-002 as amended by D-016 + D-019). Rows are scanned slim (rowid +
+        // embedding + created_at + pinned) and the query norm is hoisted out
+        // of the loop. Without a tag filter the scan reads the packed vector
+        // cache (contiguous memory, no per-recall SQLite BLOB reads); with a
+        // tag filter it reads the same columns straight from SQLite, because
+        // the cache does not carry tags. Text and tags are fetched
+        // afterwards, for the surviving candidates only.
+        //
+        // Selection stays exact: outside the keyword set bm25 is 0, so a
+        // row's vector-only total IS its final total; rows beyond the top-`k`
+        // by that measure sort strictly below the heap's weakest member under
+        // the final ranking comparator and can never enter the top-`k`.
         let query_vec: Option<&[f32]> = query_embedding.filter(|v| !v.is_empty());
         let scorer = HybridScorer {
             weights: p.weights,
@@ -809,36 +963,17 @@ impl Store for SqliteStore {
             std::collections::BinaryHeap::with_capacity(p.k);
         if let Some(qv) = query_vec {
             let query_norm_sqrt = crate::util::f32_norm_sqrt(qv);
-            let tag_sql = tag_filter_sql("memories", &required_tags, 2);
-            let sql = format!(
-                "SELECT rowid, embedding, created_at, pinned FROM memories
-                 WHERE namespace_id = ?1{tag_sql}
-                 LIMIT {}",
-                p.scan_cap
-            );
-            let mut stmt = self.conn.prepare(&sql)?;
-            let mut bind: Vec<String> = vec![ns.clone()];
-            bind.extend(required_tags.iter().cloned());
-            let mut rows = stmt.query(rusqlite::params_from_iter(bind.iter()))?;
-            while let Some(row) = rows.next()? {
-                let rowid: i64 = row.get(0)?;
-                let created_at: i64 = row.get(2)?;
-                let pinned = row.get::<_, i64>(3)? != 0;
-                // Borrowed blob: no per-row Vec allocation on the scan path.
-                let embedding = row.get_ref(1)?;
-                let sim = match &embedding {
-                    rusqlite::types::ValueRef::Blob(bytes) => {
-                        crate::util::cosine_f32_blob_with_query_norm(qv, query_norm_sqrt, bytes)
-                    }
-                    _ => continue,
-                };
+            // Per-row selection, shared by both scan paths: the heap
+            // exactness argument applies identically to cached and SQL-sourced
+            // rows.
+            let mut consider = |rowid: i64, sim: f64, created_at: i64, pinned: bool| {
                 if sim == 0.0 {
-                    continue;
+                    return;
                 }
                 if keyword.contains_key(&rowid) {
                     // Keyword rows are candidates regardless of vector rank.
                     vector.insert(rowid, sim);
-                    continue;
+                    return;
                 }
                 let vector_only_total = scorer
                     .score(
@@ -866,6 +1001,60 @@ impl Store for SqliteStore {
                 {
                     best_vector_only.pop();
                     best_vector_only.push(candidate);
+                }
+            };
+            if required_tags.is_empty() {
+                // Packed-cache path (D-019): same rows (rowid order, same
+                // `scan_cap` limit), same arithmetic (`cosine_f32_with_query_norm`
+                // is bit-identical to the BLOB variant), so results are
+                // unchanged — only the blob-read round trips disappear.
+                let mut cache_slot = self.vector_cache.borrow_mut();
+                let packed =
+                    packed_vectors_for(&mut cache_slot, &self.conn, &ns, qv.len(), p.scan_cap)?;
+                for i in 0..packed.len() {
+                    let sim = if packed.has_vector[i] {
+                        crate::util::cosine_f32_with_query_norm(
+                            qv,
+                            query_norm_sqrt,
+                            packed.slice(i),
+                        )
+                    } else {
+                        0.0
+                    };
+                    consider(
+                        packed.rowids[i],
+                        sim,
+                        packed.created_at[i],
+                        packed.pinned[i],
+                    );
+                }
+            } else {
+                // Tag-filtered path: identical to the pre-cache SQL scan; the
+                // correlated `json_each` filter runs inside SQLite.
+                let tag_sql = tag_filter_sql("memories", &required_tags, 2);
+                let sql = format!(
+                    "SELECT rowid, embedding, created_at, pinned FROM memories
+                     WHERE namespace_id = ?1{tag_sql}
+                     LIMIT {}",
+                    p.scan_cap
+                );
+                let mut stmt = self.conn.prepare(&sql)?;
+                let mut bind: Vec<String> = vec![ns.clone()];
+                bind.extend(required_tags.iter().cloned());
+                let mut rows = stmt.query(rusqlite::params_from_iter(bind.iter()))?;
+                while let Some(row) = rows.next()? {
+                    let rowid: i64 = row.get(0)?;
+                    let created_at: i64 = row.get(2)?;
+                    let pinned = row.get::<_, i64>(3)? != 0;
+                    // Borrowed blob: no per-row Vec allocation on the scan path.
+                    let embedding = row.get_ref(1)?;
+                    let sim = match &embedding {
+                        rusqlite::types::ValueRef::Blob(bytes) => {
+                            crate::util::cosine_f32_blob_with_query_norm(qv, query_norm_sqrt, bytes)
+                        }
+                        _ => continue,
+                    };
+                    consider(rowid, sim, created_at, pinned);
                 }
             }
         }
@@ -2130,5 +2319,193 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.recall("w", "rust", None, &dup, 1).unwrap().len(), 2);
+    }
+
+    // ---- Packed vector cache (D-019) ----
+
+    #[test]
+    fn packed_cache_stays_exact_across_writes_and_namespaces() {
+        let s = store();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let mk = |text: &str, at: i64| {
+            s.insert_memory(&NewMemory {
+                created_at: Some(at),
+                embedding: Some(e.embed(text)),
+                ..mem("w", text)
+            })
+            .unwrap()
+        };
+        let a = mk("alpha rooster", 100);
+        // Shares the "alpha" token so it is always a keyword candidate (and
+        // thus present in hits) regardless of its cosine.
+        mk("alpha heron", 90);
+        let q = e.embed("alpha rooster");
+        let p = RecallParams::default();
+        let now = 1_000;
+
+        let first = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert_eq!(first[0].memory.id, a.id);
+        // Warm cache: the repeat query is served from packed memory and must
+        // be identical (proves the cache path does not change results).
+        let warm = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert_eq!(first, warm);
+
+        // Insert invalidates: a newer exact duplicate takes the top spot.
+        let c = mk("alpha rooster", 200);
+        let after_insert = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert_eq!(
+            after_insert[0].memory.id, c.id,
+            "insert must invalidate the packed cache"
+        );
+
+        // Update invalidates: rewriting the text drops the vector (D-015),
+        // and the row no longer surfaces as a vector match.
+        s.update_memory(
+            &c.id,
+            &MemoryUpdate {
+                text: Some("gamma ibis".into()),
+                ..MemoryUpdate::default()
+            },
+        )
+        .unwrap();
+        let after_update = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert!(!after_update.iter().any(|h| h.memory.id == c.id));
+
+        // Pinned-only update invalidates: the boost shows through the
+        // rebuilt cache.
+        let b_id = s
+            .list_memories(Some("w"), 10, 0)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.text == "alpha heron")
+            .map(|m| m.id)
+            .unwrap();
+        s.update_memory(
+            &b_id,
+            &MemoryUpdate {
+                pinned: Some(true),
+                ..MemoryUpdate::default()
+            },
+        )
+        .unwrap();
+        let after_pin = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        let pinned = after_pin.iter().find(|h| h.memory.id == b_id).unwrap();
+        assert!((pinned.breakdown.pinned_boost - p.pinned_boost).abs() < 1e-9);
+
+        // Delete invalidates: the pinned row disappears from results.
+        assert!(s.delete_memory(&b_id).unwrap());
+        let after_delete = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert!(!after_delete.iter().any(|h| h.memory.id == b_id));
+
+        // Namespace switch: the cache is keyed by namespace id and must
+        // repopulate — first for x, then correctly again for w.
+        ns(&s, "x");
+        let x_id = s.find_namespace("x").unwrap().unwrap().id;
+        s.insert_memory(&NewMemory {
+            created_at: Some(50),
+            embedding: Some(e.embed("alpha rooster")),
+            ..mem("x", "alpha rooster")
+        })
+        .unwrap();
+        let in_x = s.recall("x", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert_eq!(in_x.len(), 1);
+        assert_eq!(in_x[0].memory.namespace_id, x_id);
+        let back_in_w = s.recall("w", "alpha rooster", Some(&q), &p, now).unwrap();
+        assert_eq!(back_in_w[0].memory.id, a.id);
+    }
+
+    #[test]
+    fn recall_scan_cap_semantics_survive_the_packed_cache() {
+        let s = store();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        // Six rows in insertion (= rowid) order. The query text is gibberish
+        // (no FTS matches), and only the third row carries the query's exact
+        // vector, so the scan cap alone decides whether it can surface.
+        // Its created_at is the newest so it also wins recency among matches.
+        for (i, text) in ["t-one", "t-two", "carrier", "t-four", "t-five", "t-six"]
+            .into_iter()
+            .enumerate()
+        {
+            let carrier = text == "carrier";
+            s.insert_memory(&NewMemory {
+                created_at: Some(if carrier { 900 } else { i as i64 }),
+                embedding: Some(if carrier {
+                    e.embed("zzq wvvx")
+                } else {
+                    e.embed(text)
+                }),
+                ..mem("w", text)
+            })
+            .unwrap();
+        }
+        let q = e.embed("zzq wvvx");
+        let mut p = RecallParams {
+            pinned_boost: 0.0,
+            ..Default::default()
+        };
+
+        p.scan_cap = 2;
+        let hits = s.recall("w", "zzq wvvx", Some(&q), &p, 1_000).unwrap();
+        assert!(
+            hits.iter().all(|h| h.memory.text != "carrier"),
+            "scan_cap 2 must not scan the third rowid"
+        );
+
+        // A larger cap rebuilds the incomplete cache with more rows.
+        p.scan_cap = 3;
+        let hits = s.recall("w", "zzq wvvx", Some(&q), &p, 1_000).unwrap();
+        assert_eq!(hits[0].memory.text, "carrier");
+        assert!((hits[0].breakdown.vector - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn packed_cache_reuses_and_rebuilds_by_namespace_dim_and_cap() {
+        let s = store();
+        ns(&s, "w");
+        let e = HashEmbedder::new_256();
+        for i in 0..3 {
+            s.insert_memory(&NewMemory {
+                created_at: Some(i),
+                embedding: Some(e.embed(&format!("note {i}"))),
+                ..mem("w", &format!("note {i}"))
+            })
+            .unwrap();
+        }
+        let ns_id = s.find_namespace("w").unwrap().unwrap().id;
+
+        let mut slot = None;
+        let first = packed_vectors_for(&mut slot, &s.conn, &ns_id, 256, 2).unwrap();
+        assert_eq!(first.len(), 2, "fill respects the cap");
+        assert!(!first.complete, "3 rows exist, only 2 cached");
+        let first_data = first.data.as_ptr() as usize;
+        let reused = packed_vectors_for(&mut slot, &s.conn, &ns_id, 256, 2).unwrap();
+        assert_eq!(
+            reused.data.as_ptr() as usize,
+            first_data,
+            "same namespace/dim/cap must reuse the cache"
+        );
+
+        // A bigger cap on an incomplete cache forces a rebuild.
+        let bigger = packed_vectors_for(&mut slot, &s.conn, &ns_id, 256, 10).unwrap();
+        assert_eq!(bigger.len(), 3);
+        assert!(bigger.complete);
+        let bigger_data = bigger.data.as_ptr() as usize;
+        // A complete cache serves any cap without a rebuild.
+        let any = packed_vectors_for(&mut slot, &s.conn, &ns_id, 256, 500).unwrap();
+        assert_eq!(any.data.as_ptr() as usize, bigger_data);
+
+        // A different namespace rebuilds (empty → complete cache).
+        ns(&s, "x");
+        let x_id = s.find_namespace("x").unwrap().unwrap().id;
+        let other = packed_vectors_for(&mut slot, &s.conn, &x_id, 256, 10).unwrap();
+        assert_eq!(other.len(), 0);
+        assert!(other.complete);
+        // A different query dimension rebuilds too (mixed-dim stores treat
+        // mismatched rows as vector-less, mirroring the SQL path's 0.0).
+        let redim = packed_vectors_for(&mut slot, &s.conn, &ns_id, 384, 10).unwrap();
+        assert_eq!(redim.dim, 384);
+        assert!(redim.has_vector.iter().all(|v| !*v));
     }
 }
