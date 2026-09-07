@@ -38,12 +38,15 @@ gcc for bundled SQLite, Node 24.
 cargo test --workspace
 
 # 1b. Measure recall latency on the 10k fixture (criterion + exact percentiles).
-#     Measured: p95 ≈ 33-35 ms at 10k — see docs/EVALUATION.md before trusting the 25 ms PRD budget.
+#     Measured: criterion hybrid_k5 ≈ 16 ms; exact-harness p95 ≈ 26-27 ms at 10k —
+#     see docs/EVALUATION.md before trusting the 25 ms PRD budget.
 cargo bench -p recall-core
 cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
 
 # 2. Serve REST + MCP + web UI (creates recall.db if missing)
 cargo run -p recall-cli -- serve --bind 127.0.0.1:8787 --db recall.db
+#   Use a different embedder everywhere (hash | onnx | openai):
+cargo run -p recall-cli -- serve --embedder onnx   # needs --features onnx + ORT_DYLIB_PATH
 #   → REST:        http://127.0.0.1:8787/v1/...
 #   → MCP:         http://127.0.0.1:8787/mcp  (streamable-HTTP, spec 2026-07-28)
 #   → OpenAPI:     http://127.0.0.1:8787/openapi.json
@@ -81,8 +84,16 @@ cd web && npm install && npm run build && npx playwright test
 - **Body limit**: requests are capped at 1 MiB by default (`--body-limit`,
   env `RECALL_MCP_BODY_LIMIT`); oversize → `413`.
 - **Config file**: `serve --config serve.json` accepts
-  `{"bind": "...", "rate_limit": 50, "rate_burst": 120, "body_limit": 1048576}`.
-  Precedence: flag > env > file > default. Secrets are never file-configurable.
+  `{"bind": "...", "rate_limit": 50, "rate_burst": 120, "body_limit": 1048576,
+  "embedder": "hash"}`.
+  Precedence: flag > env > file > default (per knob). Secrets are never
+  file-configurable.
+- **Embedder selection**: `--embedder hash|onnx|openai` (env
+  `RECALL_MCP_EMBEDDER`) applies to `serve` (HTTP + stdio), `remember`,
+  `recall`, and `update`. `onnx`/`openai` require their cargo features at
+  build time (`cargo build --features onnx` / `--features openai`) and fail
+  with a clear error otherwise; a store must be read with the embedder that
+  wrote it.
 - **Graceful shutdown**: Ctrl-C/SIGTERM drains in-flight requests and
   checkpoints the WAL before exit.
 - **Metrics**: `GET /metrics` (Prometheus 0.0.4) — request counter, status
@@ -129,20 +140,23 @@ namespace names/tags/embeddings are not encrypted.
 ### Local semantic embeddings (optional `onnx` feature)
 
 The default `HashEmbedder` is lexical. For semantic matching fully offline,
-build with `--features onnx` (`OnnxEmbedder`, all-MiniLM-L6-v2 quantized,
-384-dim): the model downloads once from Hugging Face into
-`.fastembed_cache/`, and ONNX Runtime is loaded at runtime — set
-`ORT_DYLIB_PATH` to `onnxruntime.dll` (windows-gnu has no ort prebuilt; see
-D-013). On the golden set, HashEmbedder scores 0.980 hit-rate@5, the ONNX
-embedder 1.000 (docs/EVALUATION.md).
+build with `--features onnx` and run with `--embedder onnx`
+(`OnnxEmbedder`, all-MiniLM-L6-v2 quantized, 384-dim): the model downloads
+once from Hugging Face into `.fastembed_cache/`, and ONNX Runtime is loaded
+at runtime — set `ORT_DYLIB_PATH` to `onnxruntime.dll` (windows-gnu has no
+ort prebuilt; see D-013). On the golden set, HashEmbedder scores 0.980
+hit-rate@5, the ONNX embedder 1.000 (docs/EVALUATION.md). `--embedder openai`
+(`--features openai`, configured via `RECALL_MCP_OPENAI_*` env) exists for
+API-backed deployments; it has never been called live (no key).
 
 ## Architecture
 
 ```
 crates/
   recall-core/    # pure domain: models, Store trait + SQLite (FTS5, WAL, BLOB
-                  # embeddings, maintenance ops), Embedder trait (HashEmbedder
-                  # default, OpenAI opt-in), explainable HybridScorer,
+                  # embeddings, packed vector cache, maintenance ops),
+                  # Embedder trait (HashEmbedder default; ONNX/OpenAI behind
+                  # features + runtime selection), explainable HybridScorer,
                   # capture chunking, export/import
   recall-server/  # axum REST API (/v1/*), OpenAPI doc, /metrics (Prometheus),
                   # API-key middleware (constant-time), token-bucket rate
@@ -157,11 +171,13 @@ docs/             # PRD, architecture, decisions, evaluation, status
 
 Ranking pipeline per query: FTS5 `MATCH` candidates (BM25, normalized to the
 candidate set) merged with an exact cosine scan over the namespace's BLOB
-embeddings — slimmed in v0.3 to scan only scoring columns and keep an exact
-top-k candidate heap (D-016) → `HybridScorer` produces each component →
-deterministic tie-break (total desc, created_at desc, id asc) → top-k with
+embeddings — slimmed in v0.3 to scan only scoring columns with an exact top-k
+candidate heap (D-016), then served from a packed in-memory vector cache so
+repeat recalls stop re-reading embedding BLOBs from SQLite (D-019; any write
+invalidates it) → `HybridScorer` produces each component → deterministic
+tie-break (total desc, created_at desc, id asc) → top-k with
 `last_accessed_at` refreshed in one batched update. See
-`docs/adr/DECISIONS.md` D-002 and D-016 for the storage trade-offs.
+`docs/adr/DECISIONS.md` D-002, D-016 and D-019 for the storage trade-offs.
 
 ## Repository hygiene
 

@@ -3,6 +3,47 @@
 One entry per notable decision, appended as decisions land. ADR-001…006 below
 expand the summaries embedded in `docs/ARCHITECTURE.md`; later numbers are new.
 
+## D-019 (2026-09-07, evening pass) — Packed in-process vector cache for the recall scan
+
+D-016 removed the full-row materialization but left a measured residual:
+the vector pass re-read every embedding BLOB from SQLite on every recall
+(≈ 18–20 ms at 10k memories; ≈ 10 MB of blobs stepped row-by-row). The
+remedy, implemented in `recall-core::sqlite`:
+
+- On the first untagged vector pass for a namespace, the store packs the
+  scan columns into contiguous memory: row-major `f32` vectors plus
+  parallel `rowid`/`created_at`/`pinned` arrays (`PackedNamespace`).
+  Repeat recalls scan the packed buffer — no SQLite blob reads on the
+  hot path.
+- Invalidation is total, not surgical: any insert/update/delete clears
+  the cache; the next recall rebuilds it. Writes are rare next to reads
+  in this workload, so correctness beats cleverness. The
+  `last_accessed_at` refresh is deliberately NOT an invalidation (the
+  cache carries no such column).
+- Exactness guards: the fill query is `ORDER BY rowid LIMIT scan_cap`
+  (the same row set the index scan returns); rows with NULL blobs or a
+  stored dimension different from the query's occupy a slot marked
+  vector-less and score cosine 0.0 — bit-identical behavior to the SQL
+  path's mismatch handling. The packed cosine
+  (`util::cosine_f32_with_query_norm`) is bit-identical to the reference
+  (unit-tested). Tag-filtered recalls bypass the cache entirely (it
+  carries no tags) and keep the original SQL scan.
+- Concurrency: the cache lives in a `RefCell` inside `SqliteStore`,
+  sound under the same single-threaded-access argument as D-007
+  (`Store` is `Send`-only behind the shared mutex; no reference into the
+  cell is held across a re-entrant borrow).
+
+Measured (10k fixture, this VM, release; see EVALUATION.md for run lists):
+criterion `hybrid_k5` 31.8 ms → **16.2 ms** (−49%); the exact-percentile
+harness p95 55.9 ms → **26.2–27.2 ms** across three runs (the same runs
+measured 55.9 before). The 25 ms PRD budget is still not met at exactly
+10k on the exact harness: the residual is now the FTS keyword pass plus
+survivor fetch and refresh (~15 ms floor, keyword-only), not the vector
+scan. Beyond ~100k memories/namespace the D-002 revisit (packed vector
+file or ANN index — LanceDB first choice on windows-gnu) remains the
+structural next step; within a namespace the packed cache keeps 10k-row
+recall at roughly 2× the keyword floor.
+
 ## D-001 (ADR-001) — Rust workspace with a pure-core crate
 
 `recall-core` holds models, the `Store` trait + SQLite implementation, embedders,
@@ -125,6 +166,17 @@ stays the default (deterministic, zero-download); batch-size is fixed at one
 text per call to keep embeddings batch-shape-stable. Documented runtime
 requirements: `ORT_DYLIB_PATH` → `onnxruntime.dll` 1.28.0 (download from the
 onnxruntime GitHub releases), first model fetch from Hugging Face (rustls).
+
+Amendment (2026-09-07, evening pass) — selection surface: `--embedder
+onnx|hash|openai` (global CLI flag; env `RECALL_MCP_EMBEDDER`; config-file
+`embedder`) now completes the feature. Resolution lives in core
+(`embed::parse_embedder_name` + `embed::select_embedder`): unknown names are
+typed errors listing the accepted values, and `onnx`/`openai` fail with a
+message naming the required cargo feature in builds without them — never a
+silent fallback to `hash`, which would silently corrupt recall quality. The
+flag drives `serve` (HTTP + stdio), `remember`, `recall`, and `update`
+(re-embedding), through `ServerConfig.embedder` on the server side so REST,
+MCP and capture all embed identically.
 
 ## D-014 — Encryption at rest: AEAD over `memories.text` + keyed FTS token digests
 
@@ -260,10 +312,12 @@ Adopted 2026-09-07 so the server is operable beyond "works on loopback":
 - **Release profile**: `lto = "fat"`, `codegen-units = 1`,
   `strip = "symbols"` for the shipped binary.
 - **Config precedence**: CLI flag > environment (`RECALL_MCP_BIND`,
-  `RECALL_MCP_RATE_LIMIT`, `RECALL_MCP_BODY_LIMIT`) > optional JSON
-  `--config` file (bind, rate_limit, rate_burst, body_limit) > defaults.
-  Secrets (API key, encryption key) remain env/flag-only — no secrets in
-  world-readable files.
+  `RECALL_MCP_RATE_LIMIT`, `RECALL_MCP_BODY_LIMIT`, and — since the
+  D-013 amendment — `RECALL_MCP_EMBEDDER`) > optional JSON `--config`
+  file (bind, rate_limit, rate_burst, body_limit, embedder) > defaults.
+  Precedence resolves per knob: a file `rate_burst` applies even when the
+  rate comes from a flag. Secrets (API key, encryption key) remain
+  env/flag-only — no secrets in world-readable files.
 
 Rejected: tower-governor (extra dependency for ~60 lines of bucket math) and
 scraping /metrics unauthenticated (would leak store sizes when a key is set).
