@@ -1,4 +1,5 @@
-//! MCP server exposing `remember`, `recall`, `forget`, `list_memories`.
+//! MCP server exposing `remember`, `recall`, `forget`, `update_memory`,
+//! `list_memories`, and `capture`.
 //!
 //! Transport-neutral tool layer (rmcp 3.x, MCP spec 2026-07-28) mounted over
 //! stdio and streamable-HTTP. The streamable-HTTP mount is guarded by the same
@@ -238,13 +239,36 @@ impl RecallTools {
             .map_err(Self::domain_err)?;
         Self::tool_json(&memories)
     }
+
+    #[tool(
+        description = "Ingest a full agent transcript as memories: messages are deterministically chunked (paragraph/sentence boundaries, ~1000 chars by default), embedded, and stored with source=capture. Role prefixes become role:* tags and extra tags apply to every chunk. The namespace is created automatically. Use this to auto-capture a whole session instead of calling remember per observation."
+    )]
+    fn capture(
+        &self,
+        Parameters(params): Parameters<crate::capture::CaptureRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        // Same request type, chunking and storage path as POST /v1/capture
+        // (crate::capture) — REST and MCP cannot drift. Embedding happens in
+        // `prepare`, before the store lock, exactly like the REST endpoint.
+        let prepared = crate::capture::prepare(self.state.embedder.as_ref(), &params)
+            .map_err(Self::domain_err)?;
+        let captured = self
+            .state
+            .with_store(|store| crate::capture::commit(store, &prepared))
+            .map_err(Self::domain_err)?;
+        Self::tool_json(serde_json::json!({
+            "namespace": prepared.namespace,
+            "captured": captured.len(),
+            "memories": captured,
+        }))
+    }
 }
 
 #[tool_handler(
     router = self.tool_router,
     name = "recall-mcp",
     version = "0.1.0",
-    instructions = "Local-first semantic memory broker. Use remember to persist decisions/observations, recall to retrieve ranked memories with score breakdowns (optionally filtered by tags), update_memory to revise an existing memory, forget to delete, and list_memories to browse a namespace. Namespaces isolate workspaces."
+    instructions = "Local-first semantic memory broker. Use remember to persist decisions/observations, recall to retrieve ranked memories with score breakdowns (optionally filtered by tags), update_memory to revise an existing memory, forget to delete, list_memories to browse a namespace, and capture to ingest a whole transcript as auto-chunked memories. Namespaces isolate workspaces."
 )]
 impl ServerHandler for RecallTools {}
 
@@ -323,5 +347,64 @@ mod tests {
         }
         let internal = RecallTools::domain_err(RecallError::Io(std::io::Error::other("db down")));
         assert_eq!(internal.code.0, -32603, "real faults stay internal errors");
+    }
+
+    #[test]
+    fn capture_tool_stores_chunked_memories_like_the_rest_endpoint() {
+        let state = test_state();
+        let tools = RecallTools::new(state.clone());
+        let long = "This decision matters. ".repeat(60); // ~1380 chars
+        let result = tools
+            .capture(Parameters(crate::capture::CaptureRequest {
+                namespace: "session-7".into(),
+                transcript: vec![crate::capture::CaptureMessage {
+                    role: Some("user".into()),
+                    content: format!("please deploy the payments service on friday. {long}"),
+                    at: Some(1_786_000_000),
+                }],
+                tags: vec!["session:7".into()],
+                max_chunk_chars: None,
+            }))
+            .expect("capture tool succeeds");
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "capture must not flag an error"
+        );
+
+        // The authoritative assertions run against the store: chunks landed
+        // with capture source, role tags, and the caller tag; namespace was
+        // auto-created (D-009).
+        let hits = state
+            .with_store(|store| {
+                store.recall(
+                    "session-7",
+                    "deploy payments service friday",
+                    None,
+                    &recall_core::RecallParams::default(),
+                    1_786_000_001,
+                )
+            })
+            .expect("recall after capture");
+        assert!(!hits.is_empty(), "captured chunks must be recallable");
+        for h in &hits {
+            assert_eq!(h.memory.source, "capture");
+            assert!(h.memory.tags.contains(&"session:7".to_string()));
+            assert!(h.memory.tags.contains(&"role:user".to_string()));
+            assert_eq!(h.memory.created_at, 1_786_000_000);
+        }
+        // The ~1400-char message is split into multiple stored chunks (the
+        // keyword query above only matches the first one, so list instead).
+        let stored = state
+            .with_store(|store| store.list_memories(Some("session-7"), 100, 0))
+            .expect("list after capture");
+        assert!(
+            stored.len() >= 2,
+            "a ~1400-char message must be split into multiple chunks, got {}",
+            stored.len()
+        );
+        for m in &stored {
+            assert_eq!(m.source, "capture");
+        }
     }
 }

@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod capture;
 pub mod error;
 pub mod mcp;
 pub mod metrics;

@@ -112,6 +112,7 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     assert_eq!(
         names,
         vec![
+            "capture",
             "forget",
             "list_memories",
             "recall",

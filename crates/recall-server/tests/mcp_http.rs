@@ -94,7 +94,7 @@ async fn conformance_initialize_tools_list_call_over_http() {
         "tools capability must be advertised"
     );
 
-    // 2) tools/list — exactly the five documented tools, each with an input schema.
+    // 2) tools/list — exactly the six documented tools, each with an input schema.
     let (status, body) = rpc(
         &app,
         json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
@@ -109,6 +109,7 @@ async fn conformance_initialize_tools_list_call_over_http() {
     assert_eq!(
         names,
         vec![
+            "capture",
             "forget",
             "list_memories",
             "recall",
@@ -213,6 +214,70 @@ async fn conformance_initialize_tools_list_call_over_http() {
     )
     .await;
     assert_eq!(tool_text(unwrap_result(&body)).as_array().unwrap().len(), 0);
+
+    // 6b) tools/call capture -> transcript auto-chunked into capture memories
+    // (runs after the forget steps so their exact-count assertions stay intact).
+    let long = "Decided to keep the storage layer boring. ".repeat(60); // ~2520 chars
+    let (_, body) = rpc(
+        &app,
+        tool_call(
+            13,
+            "capture",
+            json!({
+                "namespace": "conformance",
+                "transcript": [
+                    {"role": "user", "content": "please summarize the storage decision", "at": 1_786_000_500},
+                    {"role": "assistant", "content": long}
+                ],
+                "tags": ["session:storage"]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(unwrap_result(&body)["isError"], false);
+    let report = tool_text(unwrap_result(&body));
+    assert_eq!(report["namespace"], "conformance");
+    let captured = report["captured"].as_u64().expect("captured count");
+    assert!(captured >= 3, "long message must be chunked: {report}");
+    let memories = report["memories"].as_array().unwrap();
+    assert_eq!(memories.len() as u64, captured);
+    for memory in memories {
+        assert_eq!(memory["source"], "capture");
+        // The user message carries an explicit `at`; the assistant message
+        // intentionally does not and takes the server clock.
+        if memory["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "role:user")
+        {
+            assert_eq!(memory["created_at"], 1_786_000_500);
+        }
+        let tags: Vec<&str> = memory["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(tags.contains(&"session:storage"), "{tags:?}");
+        assert!(tags.contains(&"role:user") || tags.contains(&"role:assistant"));
+    }
+
+    // Capture output is recallable through the same MCP surface.
+    let (_, body) = rpc(
+        &app,
+        tool_call(
+            14,
+            "recall",
+            json!({"namespace": "conformance", "query": "storage decision boring", "tags": ["session:storage"]}),
+        ),
+    )
+    .await;
+    let hits = tool_text(unwrap_result(&body));
+    assert!(
+        !hits.as_array().unwrap().is_empty(),
+        "captured chunks must be recallable: {hits}"
+    );
 
     // 7) unknown tool -> JSON-RPC protocol error (invalid params / tool missing).
     let (status, body) = rpc(&app, tool_call(8, "nonexistent", json!({}))).await;
