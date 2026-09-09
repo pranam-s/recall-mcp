@@ -163,6 +163,53 @@ fn conformance_initialize_tools_list_call_over_stdio() {
             .len(),
         0
     );
+
+    // 6) tools/call capture -> a transcript is auto-chunked into
+    // source=capture memories, mirroring the streamable-HTTP conformance flow.
+    let long = "Captured over stdio for the record. ".repeat(60); // ~2160 chars
+    let response = session.request(&tool_call(
+        7,
+        "capture",
+        json!({
+            "namespace": "stdio-test",
+            "transcript": [
+                {"role": "user", "content": "the stdio capture round trip works", "at": 1_786_000_500},
+                {"role": "assistant", "content": long}
+            ],
+            "tags": ["session:stdio"]
+        }),
+    ));
+    assert_eq!(response["id"], 7);
+    let report = tool_text(unwrap_result(&response));
+    assert_eq!(report["namespace"], "stdio-test");
+    let captured = report["captured"].as_u64().expect("captured count");
+    assert!(captured >= 3, "the long message must be chunked: {report}");
+    for memory in report["memories"].as_array().expect("memories array") {
+        assert_eq!(memory["source"], "capture");
+        let tags: Vec<&str> = memory["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(tags.contains(&"session:stdio"), "{tags:?}");
+    }
+
+    // 7) recall surfaces a captured chunk through the same stdio session.
+    let response = session.request(&tool_call(
+        8,
+        "recall",
+        json!({
+            "namespace": "stdio-test",
+            "query": "stdio capture round trip",
+            "tags": ["session:stdio"]
+        }),
+    ));
+    let hits = tool_text(unwrap_result(&response));
+    assert!(
+        !hits.as_array().expect("hits array").is_empty(),
+        "captured chunks must be recallable over stdio: {hits}"
+    );
 }
 
 fn tool_call(id: u64, name: &str, args: Value) -> Value {
