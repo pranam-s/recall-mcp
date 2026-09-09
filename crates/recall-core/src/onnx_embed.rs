@@ -60,17 +60,36 @@ pub struct OnnxEmbedder {
     inner: Mutex<fastembed::TextEmbedding>,
 }
 
+/// ONNX Runtime intra-op threads used by the production constructors
+/// ([`OnnxEmbedder::new`], [`OnnxEmbedder::with_model`],
+/// [`OnnxEmbedder::with_cache_dir`]): the machine's logical CPU count capped
+/// at 4. Measured on the 6-vCPU reference VM (D-020): 4 threads beat the
+/// runtime's use-all-CPUs default by 1.3–1.8× on capture-sized chunks and
+/// never lost a run overall, while 1–2 threads were clearly worse on long
+/// inputs. Capping (instead of using every CPU) also leaves headroom for the
+/// store and the HTTP runtime on small multi-tenant hosts.
+pub fn default_intra_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .min(4)
+        .max(1)
+}
+
 impl OnnxEmbedder {
     /// Default model: `all-MiniLM-L6-v2` quantized (384 dims).
     pub fn new() -> Result<Self> {
         Self::with_model(OnnxModel::AllMiniLmL6V2Q)
     }
 
-    /// Build with an explicit model; downloads it if not cached yet.
+    /// Build with an explicit model; downloads it if not cached yet. Uses
+    /// [`default_intra_threads`].
     pub fn with_model(model: OnnxModel) -> Result<Self> {
-        let inner =
-            fastembed::TextEmbedding::try_new(fastembed::InitOptions::new(model.fastembed()))
-                .map_err(|e| RecallError::Embedder(format!("ONNX model init failed: {e}")))?;
+        let inner = fastembed::TextEmbedding::try_new(
+            fastembed::InitOptions::new(model.fastembed())
+                .with_intra_threads(default_intra_threads()),
+        )
+        .map_err(|e| RecallError::Embedder(format!("ONNX model init failed: {e}")))?;
         Ok(Self {
             model,
             inner: Mutex::new(inner),
@@ -78,10 +97,27 @@ impl OnnxEmbedder {
     }
 
     /// Build with an explicit model and cache directory for the download.
+    /// Uses [`default_intra_threads`].
     pub fn with_cache_dir(model: OnnxModel, cache_dir: std::path::PathBuf) -> Result<Self> {
-        let options = fastembed::InitOptions::new(model.fastembed())
+        Self::with_cache_dir_and_threads(model, cache_dir, Some(default_intra_threads()))
+    }
+
+    /// Build with an explicit model, cache directory, and ONNX Runtime
+    /// intra-op thread count. `Some(n)` pins exactly `n` threads; `None`
+    /// restores the runtime default (one thread per logical CPU — measured
+    /// slower than the tuned default in D-020, kept as an explicit escape
+    /// hatch and used by the probe harness).
+    pub fn with_cache_dir_and_threads(
+        model: OnnxModel,
+        cache_dir: std::path::PathBuf,
+        intra_threads: Option<usize>,
+    ) -> Result<Self> {
+        let mut options = fastembed::InitOptions::new(model.fastembed())
             .with_cache_dir(cache_dir)
             .with_show_download_progress(true);
+        if let Some(threads) = intra_threads {
+            options = options.with_intra_threads(threads);
+        }
         let inner = fastembed::TextEmbedding::try_new(options)
             .map_err(|e| RecallError::Embedder(format!("ONNX model init failed: {e}")))?;
         Ok(Self {
@@ -180,5 +216,94 @@ mod tests {
         // Same-shape determinism: identical text, fresh call, identical vector.
         let repeat = e.embed("deploy the payments service on friday");
         assert_eq!(base, repeat);
+    }
+
+    // Intra-op thread-count probe (ignored, release; D-020 evidence): builds
+    // one ORT session per setting up front, then times single-text embedding
+    // latency in *interleaved* rounds — each setting experiences the same
+    // machine drift, so no ordering bias (this VM throttles visibly over a
+    // long sequential run). Three representative shapes: tool-call-sized
+    // line, one-sentence note, capture-default ~1000-char chunk.
+    //
+    //   ORT_DYLIB_PATH=<onnxruntime.dll> cargo test -p recall-core --release \
+    //     --features onnx onnx_intra_op_thread_probe -- --ignored --nocapture
+    #[test]
+    #[ignore = "builds several ORT sessions; run with --ignored --nocapture (release mode)"]
+    fn onnx_intra_op_thread_probe() {
+        let cache =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.fastembed_cache");
+        let shapes: [(&str, String); 3] = [
+            ("short", "deploy the payments service on friday".to_string()),
+            (
+                "note",
+                "decided to keep the storage layer boring: one sqlite file, wal mode, \
+                 no extensions, exact cosine scan until the numbers say otherwise"
+                    .to_string(),
+            ),
+            ("chunk", "Release plan. ".repeat(100)), // ~1400 chars
+        ];
+        let settings: [(&str, Option<usize>); 4] = [
+            ("default(=cpus)", None),
+            ("1", Some(1)),
+            ("2", Some(2)),
+            ("4", Some(4)),
+        ];
+
+        // One session per setting; init cost is not what we measure. Building
+        // every session also proves the `with_intra_threads` wiring end to end
+        // (a bad knob fails the whole probe).
+        let embedders: Vec<(&str, OnnxEmbedder)> = settings
+            .iter()
+            .map(|(label, threads)| {
+                (
+                    *label,
+                    OnnxEmbedder::with_cache_dir_and_threads(
+                        OnnxModel::AllMiniLmL6V2Q,
+                        cache.clone(),
+                        *threads,
+                    )
+                    .expect("session builds at every setting"),
+                )
+            })
+            .collect();
+
+        // Warm every session and tokenizer cache before timing.
+        for (_, e) in &embedders {
+            for (_, text) in &shapes {
+                for _ in 0..3 {
+                    assert_eq!(e.embed(text).len(), 384);
+                }
+            }
+        }
+
+        const ROUNDS: usize = 5;
+        const ITERS: usize = 12;
+        let mut totals = vec![0.0f64; settings.len() * shapes.len()];
+        for _ in 0..ROUNDS {
+            for (s_idx, (_, e)) in embedders.iter().enumerate() {
+                for (shape_idx, (_, text)) in shapes.iter().enumerate() {
+                    let start = std::time::Instant::now();
+                    for _ in 0..ITERS {
+                        assert_eq!(e.embed(text).len(), 384);
+                    }
+                    totals[s_idx * shapes.len() + shape_idx] +=
+                        start.elapsed().as_secs_f64() * 1000.0 / ITERS as f64;
+                }
+            }
+        }
+
+        println!(
+            "\n{:>15} | {:>9} | {:>9} | {:>9}  (ms/call, mean of {ROUNDS} interleaved rounds x {ITERS} iters)",
+            "intra_threads", "short", "note", "chunk"
+        );
+        for (s_idx, (label, _)) in settings.iter().enumerate() {
+            println!(
+                "{:>15} | {:>9.3} | {:>9.3} | {:>9.3}",
+                label,
+                totals[s_idx * shapes.len()],
+                totals[s_idx * shapes.len() + 1],
+                totals[s_idx * shapes.len() + 2],
+            );
+        }
     }
 }
