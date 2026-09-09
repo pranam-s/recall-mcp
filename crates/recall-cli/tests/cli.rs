@@ -385,3 +385,156 @@ fn cli_embedder_flag_selects_and_validates() {
     let hits: Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(hits.as_array().unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Process-level serve glue: a `--config` file drives a REAL server over real
+// sockets. The unit tests in main.rs stop at `ServerConfig`; this proves the
+// resolved config actually reaches the running router (bind from file, body
+// limit 413, rate-limit 429 with Retry-After, probes unlimited).
+// ---------------------------------------------------------------------------
+
+struct ServerGuard {
+    child: std::process::Child,
+}
+
+impl Drop for ServerGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// One raw HTTP/1.1 request over its own connection (`Connection: close`).
+/// Returns (status code, all header lines lower-cased, body).
+fn http_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> (u16, Vec<String>, String) {
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .expect("read timeout");
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(20)))
+        .expect("write timeout");
+    let body_bytes = body.unwrap_or("").as_bytes();
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body_bytes.len()
+    );
+    use std::io::{Read, Write};
+    stream.write_all(request.as_bytes()).expect("write head");
+    if !body_bytes.is_empty() {
+        stream.write_all(body_bytes).expect("write body");
+    }
+    // No client half-close here: hyper treats an early client FIN as
+    // end-of-stream and answers with an empty connection. The request asks
+    // for `Connection: close`, so the server's own FIN ends `read_to_end`.
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read response");
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let mut parts = text.splitn(2, "\r\n\r\n");
+    let head = parts.next().unwrap_or("");
+    let body = parts.next().unwrap_or("").to_string();
+    let mut head_lines = head.split("\r\n");
+    let status_line = head_lines.next().unwrap_or_default();
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in response: {text:.200}"));
+    let headers = head_lines.map(|h| h.to_ascii_lowercase()).collect();
+    (status, headers, body)
+}
+
+#[test]
+fn cli_serve_applies_a_config_file_over_real_http() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("serve-glue.db");
+
+    // Grab a free port, then hand it to the server *via the config file* —
+    // the bind address itself is part of the glue under test.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe port");
+    let port = listener.local_addr().expect("port").port();
+    drop(listener);
+
+    // rate_limit 1 -> burst default max(2x1, 10) = 10; body_limit 512 bytes.
+    let config_path = dir.path().join("serve.json");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"{{"bind": "127.0.0.1:{port}", "rate_limit": 1, "body_limit": 512, "embedder": "hash"}}"#
+        ),
+    )
+    .expect("write config");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_recall-cli"))
+        .arg("--db")
+        .arg(&db)
+        .args(["serve", "--config", config_path.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn recall-cli serve");
+    let _server = ServerGuard { child };
+
+    // Wait for /healthz (the probe path is deliberately unlimited).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut up = false;
+    while std::time::Instant::now() < deadline {
+        if let Ok(stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+            drop(stream);
+            let (status, _, _) = http_request(port, "GET", "/healthz", None);
+            if status == 200 {
+                up = true;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    assert!(
+        up,
+        "server never became healthy on the file-configured bind"
+    );
+
+    // Sanity: the protected API works through the same spawn (this also
+    // spends 2 rate-limit tokens: namespace create + memory create).
+    let payload = r#"{"name":"glue"}"#;
+    let (status, _, _) = http_request(port, "POST", "/v1/namespaces", Some(payload));
+    assert_eq!(status, 201, "namespace create must succeed");
+    let payload = r#"{"namespace":"glue","text":"config glue end to end"}"#;
+    let (status, _, _) = http_request(port, "POST", "/v1/memories", Some(payload));
+    assert_eq!(status, 201, "memory create must succeed");
+
+    // The file's 512-byte body limit engages: a 700-byte body is 413.
+    let big = format!(r#"{{"namespace":"glue","text":"{}"}}"#, "x".repeat(700));
+    let (status, _, _) = http_request(port, "POST", "/v1/memories", Some(&big));
+    assert_eq!(status, 413, "a body over the file's limit must be 413");
+
+    // The file's rate limit engages: burst 10 was spent 3 deep by now, so a
+    // rapid flood of 15 must produce 429s, each carrying Retry-After.
+    let mut saw_429 = false;
+    let mut last_status = 0;
+    for _ in 0..15 {
+        let (status, headers, _) = http_request(port, "GET", "/v1/namespaces", None);
+        last_status = status;
+        if status == 429 {
+            saw_429 = true;
+            assert!(
+                headers.iter().any(|h| h.starts_with("retry-after:")),
+                "every 429 must carry Retry-After"
+            );
+        }
+    }
+    assert!(saw_429, "the flood must hit the rate limit at least once");
+    assert_eq!(
+        last_status, 429,
+        "the sustained rate (1/s) cannot refill within the flood"
+    );
+
+    // Probes stay unlimited even with an empty bucket (D-017).
+    let (status, _, _) = http_request(port, "GET", "/healthz", None);
+    assert_eq!(status, 200, "healthz must never be rate limited");
+}
