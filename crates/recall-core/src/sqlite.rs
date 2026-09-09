@@ -2592,3 +2592,135 @@ mod tests {
         assert!(redim.has_vector.iter().all(|v| !*v));
     }
 }
+
+// Keyword-pass query-plan probe (ignored, release): seeds the 10k fixture,
+// prints EXPLAIN QUERY PLAN for the current FTS candidate query and candidate
+// replacements, then times each variant in isolation. Evidence for the
+// "attack the FTS pass" remediation documented in docs/EVALUATION.md.
+//
+//   cargo test -p recall-core --release --lib fts_keyword_pass_query_plan_probe -- --ignored --nocapture
+#[cfg(test)]
+mod fts_plan_probe {
+    use super::*;
+    use std::time::Instant;
+
+    fn seed_10k(s: &SqliteStore) {
+        let topics = [
+            "deploy",
+            "database",
+            "incident review",
+            "design decision",
+            "meeting notes",
+            "onboarding",
+            "performance",
+            "security audit",
+            "release checklist",
+            "customer feedback",
+        ];
+        for i in 0..10_000usize {
+            let text = format!(
+                "{} note {}: follow up with the platform team about {}",
+                topics[i % topics.len()],
+                i,
+                topics[(i * 7) % topics.len()]
+            );
+            s.insert_memory(&NewMemory {
+                namespace: "bench".into(),
+                text,
+                tags: vec![],
+                source: None,
+                pinned: false,
+                created_at: None,
+                id: None,
+                embedding: None,
+            })
+            .expect("insert");
+        }
+    }
+
+    #[test]
+    #[ignore = "seeds a 10k-memory store; run with --ignored --nocapture (release mode)"]
+    fn fts_keyword_pass_query_plan_probe() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = SqliteStore::open(dir.path().join("fts.db")).expect("open store");
+        s.create_namespace("bench").expect("namespace");
+        let seed_start = Instant::now();
+        seed_10k(&s);
+        eprintln!("seeded 10k in {:?}", seed_start.elapsed());
+        let ns_id = s.find_namespace("bench").unwrap().unwrap().id;
+
+        let fts_query = build_fts_query("incident review note 42 root cause", None).unwrap();
+        let variants: Vec<(&str, String)> = vec![
+            (
+                "v0_current_join",
+                "SELECT m.rowid, bm25(memories_fts) AS rank_score \
+                 FROM memories_fts JOIN memories m ON m.rowid = memories_fts.rowid \
+                 WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2 \
+                 ORDER BY rank_score LIMIT 200"
+                    .into(),
+            ),
+            (
+                "v1_materialized_cte_in",
+                "WITH ns AS MATERIALIZED (SELECT rowid FROM memories WHERE namespace_id = ?2) \
+                 SELECT f.rowid, bm25(f.memories_fts) AS rank_score \
+                 FROM memories_fts f \
+                 WHERE f.memories_fts MATCH ?1 AND f.rowid IN (SELECT rowid FROM ns) \
+                 ORDER BY rank_score LIMIT 200"
+                    .into(),
+            ),
+            (
+                "v2_no_join_fts_only",
+                "SELECT rowid, bm25(memories_fts) AS rank_score \
+                 FROM memories_fts \
+                 WHERE memories_fts MATCH ?1 \
+                 ORDER BY rank_score LIMIT 200"
+                    .into(),
+            ),
+            (
+                "v3_subquery_join",
+                "SELECT f.rowid, bm25(f.memories_fts) AS rank_score \
+                 FROM memories_fts f \
+                 JOIN (SELECT rowid FROM memories WHERE namespace_id = ?2) n \
+                   ON n.rowid = f.rowid \
+                 WHERE f.memories_fts MATCH ?1 \
+                 ORDER BY rank_score LIMIT 200"
+                    .into(),
+            ),
+        ];
+
+        for (name, sql) in &variants {
+            println!("\n=== {name} ===");
+            // 1) The plan.
+            let mut plan_stmt = s
+                .conn
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .expect("explain prepares");
+            let mut plan_rows = plan_stmt
+                .query(params![fts_query, ns_id])
+                .expect("explain queries");
+            while let Some(row) = plan_rows.next().expect("plan row") {
+                let detail: String = row.get(3).expect("plan detail");
+                println!("  plan: {detail}");
+            }
+            // 2) The time (200 iterations, rows consumed like the real pass).
+            let mut stmt = s.conn.prepare(sql).expect("variant prepares");
+            let mut total = std::time::Duration::ZERO;
+            let mut rows_seen = 0usize;
+            for _ in 0..200 {
+                let t0 = Instant::now();
+                let rows = stmt
+                    .query_map(params![fts_query, ns_id], |r| {
+                        Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                    })
+                    .expect("variant queries");
+                let n = rows.filter_map(|r| r.ok()).count();
+                rows_seen = n;
+                total += t0.elapsed();
+            }
+            println!(
+                "  rows: {rows_seen}, avg {:>6.3} ms/call over 200 iters",
+                total.as_secs_f64() * 1000.0 / 200.0
+            );
+        }
+    }
+}
