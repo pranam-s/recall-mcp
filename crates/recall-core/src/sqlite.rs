@@ -944,9 +944,15 @@ impl Store for SqliteStore {
             None => None,
         };
         let mut stmt = self.conn.prepare(&sql)?;
+        // `usize as i64` would wrap values above i64::MAX negative, and SQLite
+        // treats a negative LIMIT as unlimited — the exact hazard the REST/MCP
+        // MAX_PAGE_LIMIT clamp guards against. Saturate here too so the store
+        // itself can never produce a negative LIMIT bind (AR-004).
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let rows = match ns {
-            Some(ns) => stmt.query_map(params![ns, limit as i64, offset as i64], memory_row)?,
-            None => stmt.query_map(params![limit as i64, offset as i64], memory_row)?,
+            Some(ns) => stmt.query_map(params![ns, limit, offset], memory_row)?,
+            None => stmt.query_map(params![limit, offset], memory_row)?,
         };
         let mut out = Vec::new();
         for row in rows {
@@ -1528,6 +1534,20 @@ mod tests {
             RecallError::NamespaceNotFound(_)
         ));
         assert!(s.list_memories(None, 0, 0).is_err());
+    }
+
+    #[test]
+    fn list_memories_saturates_wrapping_limit_and_offset() {
+        // AR-004 root cause: `usize::MAX as i64` bound -1, which SQLite reads
+        // as "unlimited". The bind must saturate instead of wrapping.
+        let s = store();
+        ns(&s, "w");
+        s.insert_memory(&mem("w", "only row")).unwrap();
+        let rows = s.list_memories(Some("w"), usize::MAX, 0).unwrap();
+        assert_eq!(rows.len(), 1, "no error, no unlimited-bind surprise");
+        // A wrapped offset yields an empty page (past the end), never an error.
+        let rest = s.list_memories(Some("w"), 10, usize::MAX).unwrap();
+        assert!(rest.is_empty());
     }
 
     #[test]

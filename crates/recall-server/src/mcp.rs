@@ -76,7 +76,8 @@ pub struct UpdateMemoryParams {
 pub struct ListMemoriesParams {
     /// Namespace to list.
     pub namespace: String,
-    /// Maximum number of memories to return (default 50).
+    /// Maximum number of memories to return (default 50, capped at 10_000 so
+    /// one call cannot dump an entire large namespace into the context).
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -232,7 +233,10 @@ impl RecallTools {
         &self,
         Parameters(params): Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let limit = params.limit.unwrap_or(50);
+        // Same clamp as the REST surface (crate::page_limit): an uncapped
+        // limit like usize::MAX wraps to a negative SQLite LIMIT (= unlimited)
+        // and would materialize the whole namespace in one tool response.
+        let limit = crate::page_limit(params.limit, 50);
         let memories = self
             .state
             .with_store(|store| store.list_memories(Some(&params.namespace), limit, 0))
@@ -347,6 +351,50 @@ mod tests {
         }
         let internal = RecallTools::domain_err(RecallError::Io(std::io::Error::other("db down")));
         assert_eq!(internal.code.0, -32603, "real faults stay internal errors");
+    }
+
+    #[test]
+    fn list_memories_caps_the_limit_instead_of_dumping_the_namespace() {
+        // AR-004 regression: a wrapped `usize::MAX` limit used to reach SQLite
+        // as LIMIT -1 (= unlimited) and one tool call could materialize the
+        // whole namespace. The clamp must hold end-to-end.
+        let state = test_state();
+        state.with_store(|store| {
+            store.create_namespace("big").expect("create namespace");
+            for i in 0..(crate::MAX_PAGE_LIMIT + 1) {
+                store
+                    .insert_memory(&recall_core::NewMemory {
+                        namespace: "big".into(),
+                        text: format!("memory number {i} about deploy"),
+                        tags: vec![],
+                        source: Some("mcp".into()),
+                        pinned: false,
+                        created_at: Some(1_786_000_000 + i as i64),
+                        id: None,
+                        embedding: None,
+                    })
+                    .expect("insert memory");
+            }
+        });
+        let tools = RecallTools::new(state);
+        let result = tools
+            .list_memories(Parameters(ListMemoriesParams {
+                namespace: "big".into(),
+                limit: Some(usize::MAX),
+            }))
+            .expect("list_memories succeeds");
+        let text = result
+            .content
+            .first()
+            .and_then(|c| c.as_text())
+            .map(|t| t.text.clone())
+            .unwrap_or_default();
+        let listed: Vec<serde_json::Value> = serde_json::from_str(&text).expect("json array");
+        assert_eq!(
+            listed.len(),
+            crate::MAX_PAGE_LIMIT,
+            "a usize::MAX limit must return the cap, not the namespace"
+        );
     }
 
     #[test]

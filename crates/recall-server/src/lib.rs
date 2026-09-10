@@ -33,6 +33,20 @@ use crate::state::AppState;
 /// bring their own vectors.
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 
+/// Upper bound for caller-supplied pagination limits on every surface (REST
+/// `GET /v1/memories` and the MCP `list_memories` tool). Without it, a
+/// `usize` limit near `usize::MAX` would wrap negative through the store's
+/// `i64` `LIMIT` bind and SQLite's "negative = unlimited" rule would
+/// materialize an entire namespace into one response — a memory-exhaustion
+/// DoS and an unbounded dump into an agent's context (AR-004).
+pub const MAX_PAGE_LIMIT: usize = 10_000;
+
+/// Apply the shared pagination clamp: caller limit (or the surface default)
+/// capped at [`MAX_PAGE_LIMIT`].
+pub fn page_limit(limit: Option<usize>, default: usize) -> usize {
+    limit.unwrap_or(default).min(MAX_PAGE_LIMIT)
+}
+
 /// Server settings supplied by the binary (CLI `serve`).
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -439,6 +453,18 @@ mod tests {
     }
 
     // ---- AR-001 regressions: the loopback default is not web-page-reachable ----
+
+    #[test]
+    fn page_limit_clamps_wrap_sized_requests() {
+        // The exact AR-004 hazard: usize::MAX as i64 wraps to -1, which SQLite
+        // treats as an unlimited LIMIT.
+        assert_eq!(page_limit(Some(usize::MAX), 50), MAX_PAGE_LIMIT);
+        assert_eq!(page_limit(Some(MAX_PAGE_LIMIT + 1), 50), MAX_PAGE_LIMIT);
+        assert_eq!(page_limit(Some(MAX_PAGE_LIMIT), 50), MAX_PAGE_LIMIT);
+        assert_eq!(page_limit(Some(7), 50), 7);
+        assert_eq!(page_limit(None, 50), 50);
+        assert_eq!(page_limit(None, 100), 100);
+    }
 
     fn guarded_request(
         method: &str,
