@@ -1252,25 +1252,12 @@ impl Store for SqliteStore {
         });
         hits.truncate(p.k);
 
-        if !hits.is_empty() {
-            let placeholders = (2..=hits.len() + 1)
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql =
-                format!("UPDATE memories SET last_accessed_at = ?1 WHERE id IN ({placeholders})");
-            let mut bind: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Integer(now)];
-            bind.extend(
-                hits.iter()
-                    .map(|h| rusqlite::types::Value::Text(h.memory.id.clone())),
-            );
-            self.conn
-                .execute(&sql, rusqlite::params_from_iter(bind.iter()))?;
-            for hit in &mut hits {
-                // Keep the returned view consistent with the database.
-                hit.memory.last_accessed_at = now;
-            }
-        }
+        // `last_accessed_at` is maintained at write time only (AR-018): every
+        // consumer of the column was removed with v0.2's eviction plans, so
+        // recalls no longer pay a batched UPDATE (write amplification + WAL
+        // churn in keyed mode) to keep an unread value fresh. The column
+        // stays as the last-write timestamp, reserved for a future
+        // eviction/recency-of-use policy that actually reads it.
         debug!(namespace, hits = hits.len(), "recall complete");
         Ok(hits)
     }
@@ -1786,10 +1773,14 @@ mod tests {
         assert!(pinned_hit.breakdown.total > target_hit.breakdown.total);
         assert!(target_hit.breakdown.total > stale_hit.breakdown.total);
 
-        // Recall refreshes last_accessed_at, both in the returned hits and on disk.
-        assert_eq!(target_hit.memory.last_accessed_at, now);
-        let touched = s.get_memory(&target.id).unwrap().unwrap();
-        assert_eq!(touched.last_accessed_at, now);
+        // `last_accessed_at` is write-time only now (AR-018): recall neither
+        // touches it on disk nor rewrites the returned hits.
+        assert_eq!(
+            target_hit.memory.last_accessed_at,
+            target_hit.memory.created_at
+        );
+        let untouched = s.get_memory(&target.id).unwrap().unwrap();
+        assert_eq!(untouched.last_accessed_at, untouched.created_at);
     }
 
     #[test]

@@ -25,6 +25,9 @@ pub struct Memory {
     pub source: String,
     pub pinned: bool,
     pub created_at: i64,
+    /// Last-write timestamp (AR-018): recalls no longer refresh it — the
+    /// write was pure amplification with no consumer. Kept as the hook for a
+    /// future eviction/recency-of-use policy.
     pub last_accessed_at: i64,
 }
 
@@ -84,6 +87,9 @@ pub struct ScoreBreakdown {
     /// Normalized BM25 keyword score in `[0,1]` (1.0 = best keyword match of the candidate set).
     pub bm25: f64,
     /// Cosine similarity between query and memory embeddings in `[-1,1]`.
+    /// Zero also when a keyword hit falls outside the `scan_cap` vector-scan
+    /// window (namespaces larger than the cap, default 10 000 — documented
+    /// approximation, AR-015).
     pub vector: f64,
     /// Recency factor `exp(-days/tau)` in `(0,1]`; 0 when decay is disabled.
     pub recency: f64,

@@ -55,7 +55,7 @@ pub trait Store: Send {
     /// Hybrid recall: FTS5 keyword candidates merged with a brute-force cosine scan,
     /// ranked by [`crate::scorer::HybridScorer`], each hit carrying its score breakdown.
     /// `query_embedding` of `None`/empty disables the vector term for this query.
-    /// Returned hits have `last_accessed_at` refreshed to `now`.
+    /// Recall is read-only over `last_accessed_at` (write-time only, AR-018).
     fn recall(
         &self,
         namespace: &str,

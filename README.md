@@ -26,7 +26,10 @@ total = w_bm25·norm_bm25 + w_vector·cosine + w_recency·exp(-Δdays/τ) + pinn
 defaults: w = 0.45 / 0.45 / 0.10, τ = 30 days, pinned_boost = 0.2 (all tunable per request)
 ```
 
-Namespaces isolate workspaces; memories never leak across them.
+Namespaces organize workspaces, and recall always filters by namespace — but
+that is single-tenant organization, not a security boundary: one API key (or
+the open loopback default) can read and write *every* namespace, so do not
+point mutually untrusted agents at one server.
 
 ## Quickstart (commands verified green on 2026-09-07)
 
@@ -113,6 +116,15 @@ cd web && npm install && npm run build && npx playwright test
 - **Pagination**: `GET /v1/memories?namespace=&limit=&offset=` with
   `X-Total-Count` carrying the unpaginated total.
 
+### Web UI
+
+Served same-origin from the binary at `/` once built (step 4); semantic HTML,
+keyboard-first, axe-tested. Known limitation (AR-017): the UI does not send an
+API key, so it only works against a server running without
+`RECALL_MCP_API_KEY` — the intended local single-user mode. With a key
+configured, use the CLI/REST/MCP clients, or extend `web/src/api.ts` to
+collect and send `X-API-Key`.
+
 ### Auto-capture ingest (hook scaffold)
 
 Point a session-end hook or IDE plugin at:
@@ -192,9 +204,21 @@ embeddings — slimmed in v0.3 to scan only scoring columns with an exact top-k
 candidate heap (D-016), then served from a packed in-memory vector cache so
 repeat recalls stop re-reading embedding BLOBs from SQLite (D-019; any write
 invalidates it) → `HybridScorer` produces each component → deterministic
-tie-break (total desc, created_at desc, id asc) → top-k with
-`last_accessed_at` refreshed in one batched update. See
+tie-break (total desc, created_at desc, id asc) → top-k. See
 `docs/adr/DECISIONS.md` D-002, D-016 and D-019 for the storage trade-offs.
+
+Two documented approximations and one honest gap in that pipeline:
+
+- **Scan-cap boundary**: the vector scan covers a namespace's first
+  `scan_cap` rows in rowid order (default 10 000). In namespaces larger than
+  the cap, a keyword hit stored beyond the window gets `vector = 0.0` in its
+  breakdown — the keyword pass still finds it, but its total is lower than
+  the same memory would earn in a smaller namespace.
+- **Keyword candidate cap**: the FTS pass considers at most `candidate_cap`
+  (200) candidates.
+- **`last_accessed_at` is write-time only**: recalls do not refresh it (it
+  had no consumer; AR-018). The column is reserved for a future
+  eviction/recency-of-use policy.
 
 ## Repository hygiene
 

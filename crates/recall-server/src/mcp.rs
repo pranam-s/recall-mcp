@@ -33,7 +33,7 @@ pub struct RememberParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RecallToolParams {
-    /// Namespace (workspace) to search. Memories never leak across namespaces.
+    /// Namespace (workspace) to search. Recall only ever reads this namespace.
     pub namespace: String,
     /// Free-text query.
     pub query: String,

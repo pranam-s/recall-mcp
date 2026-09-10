@@ -17,9 +17,10 @@ remedy, implemented in `recall-core::sqlite`:
   hot path.
 - Invalidation is total, not surgical: any insert/update/delete clears
   the cache; the next recall rebuilds it. Writes are rare next to reads
-  in this workload, so correctness beats cleverness. The
-  `last_accessed_at` refresh is deliberately NOT an invalidation (the
-  cache carries no such column).
+  in this workload, so correctness beats cleverness. Recall itself no
+  longer writes at all: the `last_accessed_at` access-time refresh was
+  removed (AR-018) — it had no consumer and cost a batched UPDATE per
+  recall (WAL churn in keyed mode).
 - Exactness guards: the fill query is `ORDER BY rowid LIMIT scan_cap`
   (the same row set the index scan returns); rows with NULL blobs or a
   stored dimension different from the query's occupy a slot marked
@@ -250,10 +251,9 @@ COMPETITORS.md rec #4) and currently has no consumer. Policy details:
 - Blank replacement text and empty updates are `invalid input`; unknown ids are
   `memory not found`.
 - FTS5 stays exact via the (new) `memories_fts_update` trigger, guarded with
-  `WHEN old.fts_tokens IS NOT new.fts_tokens`, so access-time
-  `last_accessed_at` refreshes never churn the index. Works identically in
-  encrypted mode because both the ciphertext and the token digest column are
-  rewritten together (D-014).
+  `WHEN old.fts_tokens IS NOT new.fts_tokens`, so token-digest rewrites never
+  double-index. Works identically in encrypted mode because both the
+  ciphertext and the token digest column are rewritten together (D-014).
 
 Surfaces: MCP tool `update_memory` (five tools now), REST
 `PATCH /v1/memories/{id}`, CLI `update`.
@@ -284,8 +284,7 @@ was re-engineered (2026-09-07), keeping results exact:
   provably contains every row that could reach the final top-k; everything it
   evicts sorts strictly below the heap's weakest member and can never surface.
   Full rows (text/tags/source) are fetched only for survivors — at most
-  `candidate_cap + k` rows instead of the whole namespace — and the
-  `last_accessed_at` refresh is one batched UPDATE.
+  `candidate_cap + k` rows instead of the whole namespace.
 - Ranking-order refinement: ties on `(total, created_at)` are now broken by
   insertion order (rowid) instead of the random UUID id. This only orders
   content-identical duplicates that straddle the k-boundary; outcomes are
