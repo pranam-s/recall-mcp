@@ -208,10 +208,12 @@ a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
   upgraded in place on open (rebuild of the FTS index over the new column) and
   a keyed first open re-encrypts all plaintext rows in one transaction and
   stores a key-check blob, so a wrong key fails at open instead of corrupting
-  reads. Fresh keyed databases never write plaintext. `VACUUM` runs after the
-  legacy in-place upgrade; remnants of the plaintext era can persist in
-  freelist pages of databases encrypted in place — for strict guarantees,
-  export into a fresh keyed database.
+  reads. Fresh keyed databases never write plaintext. The in-place upgrade
+  runs with `secure_delete = ON` and finishes with `VACUUM` plus a truncated
+  WAL checkpoint, so plaintext-era pages and sidecar frames are shredded from
+  the live database (AR-013); filesystem copies made *before* the upgrade
+  still contain plaintext — for strict guarantees, export into a fresh keyed
+  database.
 - Scope: `memories.text` only. Namespace names, tags, source, and embeddings
   remain plaintext; exports are plaintext JSON by design (backup format).
   Documented in README security notes rather than hidden. **The plaintext

@@ -413,6 +413,15 @@ impl SqliteStore {
             key,
             vector_cache: std::cell::RefCell::new(None),
         };
+        // Forensic hygiene for the in-place plaintext→keyed upgrade (AR-013):
+        // while plaintext rows are rewritten, freed pages must be zero-filled
+        // rather than left with recoverable plaintext. Scoped to the upgrade
+        // window — steady-state keyed rows are ciphertext, so deletes have
+        // nothing sensitive to shred.
+        let keyed_conn = store.key.is_some();
+        if keyed_conn {
+            store.conn.execute_batch("PRAGMA secure_delete = ON")?;
+        }
         // Legacy layout always stored plaintext.
         if needs_upgrade {
             store.copy_plaintext_fts_tokens()?;
@@ -420,9 +429,17 @@ impl SqliteStore {
         store.init_mode()?;
         if store.key.is_some() && needs_upgrade {
             // The plaintext era wrote legacy rows and (pre-upgrade) FTS
-            // content into pages that may linger after deletion; VACUUM
-            // compacts them away after the in-place upgrade.
+            // content into pages that may linger after deletion. VACUUM alone
+            // is not enough: freed-page content persists without
+            // secure_delete (set above), and WAL frames from the plaintext
+            // era survive in the sidecar unless checkpointed with TRUNCATE —
+            // so the upgrade finishes with both (D-014 keeps the caveat that
+            // filesystem copies made before the upgrade remain).
             store.conn.execute_batch("VACUUM")?;
+            store.checkpoint_wal()?;
+        }
+        if keyed_conn {
+            store.conn.execute_batch("PRAGMA secure_delete = OFF")?;
         }
         Ok(store)
     }
@@ -2121,6 +2138,47 @@ mod tests {
         assert!(
             err.to_string().contains("encrypted at rest"),
             "plain open must refuse: {err}"
+        );
+    }
+
+    #[test]
+    fn keyed_upgrade_shreds_plaintext_from_the_database_file() {
+        // AR-013 regression: the in-place plaintext→keyed upgrade must not
+        // leave the marker text recoverable in the main database file, and
+        // the WAL must be truncated so plaintext-era frames cannot linger in
+        // the sidecar.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("upgrade.db");
+        let marker = "CANARY-topsecret-04f9c2d1";
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", marker)).unwrap();
+            s.checkpoint_wal().unwrap();
+        }
+        let key = StoreKey::from_hex(&"17".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            let rows = s.list_memories(Some("w"), 10, 0).unwrap();
+            assert_eq!(rows[0].text, marker);
+            // secure_delete is scoped to the upgrade window, not forever:
+            // steady-state keyed rows are ciphertext.
+            let secure_delete: i64 = s
+                .conn
+                .query_row("PRAGMA secure_delete", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(secure_delete, 0, "hygiene pragma must be restored");
+            s.checkpoint_wal().unwrap();
+        }
+        let main = std::fs::read(&path).unwrap();
+        assert!(
+            !main.windows(marker.len()).any(|w| w == marker.as_bytes()),
+            "marker plaintext must not survive the keyed upgrade in the main file"
+        );
+        let wal = std::fs::read(path.with_extension("db-wal")).unwrap_or_default();
+        assert!(
+            !wal.windows(marker.len()).any(|w| w == marker.as_bytes()),
+            "no plaintext-era frames may remain in the WAL sidecar"
         );
     }
 
