@@ -2022,7 +2022,7 @@ mod tests {
     fn pre_hkdf_store_is_migrated_to_derived_subkeys_on_open() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pre-hkdf.db");
-        let master = [0xdDu8; 32];
+        let master = [0xddu8; 32];
         let legacy = StoreKey::legacy_from_bytes(&master);
         {
             // Hand-seal a database under the pre-key-separation layout: the
