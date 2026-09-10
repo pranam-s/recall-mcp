@@ -390,3 +390,15 @@ Position:
 - **Not accepted as final**: per-namespace trust levels, writer provenance
   surfaced in recall results (source is already stored and shown), and
   insertion-time content screening are v2 candidates.
+
+## D-020 — ONNX intra-op threads capped at min(logical CPUs, 4) (shipped 0c2d07e)
+
+The fastembed/ort default uses every logical CPU; on the 6-vCPU reference VM
+that starved the SQLite store and the Tokio runtime during capture bursts.
+Measured (D-020, `onnx_embed.rs::default_intra_threads`): 4 intra-op threads
+beat the all-CPU default by 1.3–1.8x on capture-sized chunks and never lost a
+run overall; 1–2 threads were clearly worse on long inputs. Production
+constructors (`new`, `with_model`, `with_cache_dir`) therefore use
+`available_parallelism` capped at 4 (floored at 1). Trade-off accepted: peak
+single-embed latency on otherwise-idle large hosts is slightly below its
+theoretical best; headroom for the rest of the process is the point.
