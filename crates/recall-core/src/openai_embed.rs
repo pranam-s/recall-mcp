@@ -79,8 +79,12 @@ impl OpenAIEmbedder {
         .unwrap_or_else(|_| "{}".to_string())
     }
 
-    /// Parse an API response body into the embedding vector, validating shape.
-    pub(crate) fn parse_response(body: &str) -> Result<Vec<f32>> {
+    /// Parse an API response body into the embedding vector. The returned
+    /// vector must have exactly `expected_dims` entries: a mismatch would
+    /// otherwise silently zero every cosine against stored vectors (the
+    /// mismatch rule returns 0.0 for different lengths), degrading recall to
+    /// keyword-only with no error anywhere (AR-005). Fail loudly instead.
+    pub(crate) fn parse_response(body: &str, expected_dims: usize) -> Result<Vec<f32>> {
         let parsed: EmbeddingResponse = serde_json::from_str(body)
             .map_err(|e| RecallError::Embedder(format!("bad embedding response: {e}")))?;
         let mut items = parsed.data;
@@ -93,6 +97,14 @@ impl OpenAIEmbedder {
         let vec = items.swap_remove(0).embedding;
         if vec.is_empty() {
             return Err(RecallError::Embedder("embedding is empty".into()));
+        }
+        if vec.len() != expected_dims {
+            return Err(RecallError::Embedder(format!(
+                "embedding dimension mismatch: endpoint returned {} dims but {} are configured \
+                 (RECALL_MCP_OPENAI_DIMS); align the configuration with the model/endpoint",
+                vec.len(),
+                expected_dims
+            )));
         }
         Ok(vec)
     }
@@ -144,7 +156,7 @@ impl OpenAIEmbedder {
                 "embeddings API returned {status}"
             )));
         }
-        Self::parse_response(&body)
+        Self::parse_response(&body, self.dims)
     }
 }
 
@@ -175,17 +187,37 @@ mod tests {
     fn parse_response_validates_payload() {
         let good = r#"{"data":[{"embedding":[0.1,0.2,0.3]}]}"#;
         assert_eq!(
-            OpenAIEmbedder::parse_response(good).unwrap(),
+            OpenAIEmbedder::parse_response(good, 3).unwrap(),
             vec![0.1, 0.2, 0.3]
         );
 
-        assert!(OpenAIEmbedder::parse_response("not json").is_err());
-        assert!(OpenAIEmbedder::parse_response(r#"{"data":[]}"#).is_err());
-        assert!(OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[]}]}"#).is_err());
+        assert!(OpenAIEmbedder::parse_response("not json", 3).is_err());
+        assert!(OpenAIEmbedder::parse_response(r#"{"data":[]}"#, 3).is_err());
+        assert!(OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[]}]}"#, 3).is_err());
         assert!(
-            OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[1]},{"embedding":[2]}]}"#)
+            OpenAIEmbedder::parse_response(r#"{"data":[{"embedding":[1]},{"embedding":[2]}]}"#, 3)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn parse_response_rejects_dimension_mismatch_instead_of_silently_zeroing() {
+        // AR-005: a 1536-dim API response while 512 dims are configured used
+        // to be accepted verbatim; every stored cosine then silently returned
+        // 0.0 (the length-mismatch rule) and recall degraded to keyword-only
+        // with no error anywhere.
+        let body = r#"{"data":[{"embedding":[0.1,0.2,0.3]}]}"#;
+        let err = OpenAIEmbedder::parse_response(body, 512).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("dimension mismatch")
+                && message.contains("512")
+                && message.contains("3"),
+            "error must name both sides of the mismatch: {message}"
+        );
+        // The embed() wrapper surfaces the same failure (degrades to empty).
+        let e = OpenAIEmbedder::new("http://127.0.0.1:1", "k", "m", 512).unwrap();
+        assert_eq!(e.dimensions(), 512);
     }
 
     #[test]

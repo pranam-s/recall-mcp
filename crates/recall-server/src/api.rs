@@ -51,6 +51,20 @@ pub async fn create_memory(
     if body.text.trim().is_empty() {
         return Err(RecallError::InvalidInput("text must not be empty".into()).into());
     }
+    // A caller-supplied vector of the wrong length would silently zero every
+    // cosine against this store's embedder (the mismatch rule returns 0.0) —
+    // reject it instead of accepting silent scoring loss (AR-005).
+    if let Some(vec) = &body.embedding
+        && vec.len() != state.embedder.dimensions()
+    {
+        return Err(RecallError::InvalidInput(format!(
+            "embedding has {} dims but the configured embedder {:?} produces {}",
+            vec.len(),
+            state.embedder.name(),
+            state.embedder.dimensions()
+        ))
+        .into());
+    }
     // Embed here when the caller did not supply a vector (imports pass their own).
     if body.embedding.is_none() {
         body.embedding = Some(state.embedder.embed(&body.text));

@@ -131,14 +131,47 @@ async fn memory_create_list_delete_with_validation() {
         "HashEmbedder must embed on create"
     );
 
-    // List filtered by namespace
+    // AR-005: a caller-supplied vector whose length differs from the
+    // configured embedder's dims would silently zero every cosine — reject
+    // with 400 instead of accepting silent scoring loss.
+    let (status, body) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/memories",
+            Some(
+                json!({"namespace": "proj", "text": "mismatched vector", "embedding": [0.1, 0.2]}),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("dims"),
+        "the error must name the dimension mismatch: {body}"
+    );
+    // A correctly-sized caller vector is accepted (import-style creates).
+    let matched = vec![0.5f64; 256];
+    let (status, _) = json_response(
+        app.clone(),
+        request(
+            "POST",
+            "/v1/memories",
+            Some(json!({"namespace": "proj", "text": "matched vector", "embedding": matched})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // List filtered by namespace (auto-embedded + matched-vector rows; the
+    // mismatched one was rejected before storage)
     let (status, list) = json_response(
         app.clone(),
         request("GET", "/v1/memories?namespace=proj", None),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list.as_array().unwrap().len(), 2);
 
     // Delete -> 204 then 404
     let (status, _) = json_response(

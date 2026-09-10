@@ -131,7 +131,10 @@ pub fn select_embedder(name: &str) -> Result<std::sync::Arc<dyn Embedder>> {
 /// Build [`crate::openai_embed::OpenAIEmbedder`] from the environment:
 /// `RECALL_MCP_OPENAI_API_KEY` (required), `RECALL_MCP_OPENAI_MODEL`
 /// (default `text-embedding-3-small`), `RECALL_MCP_OPENAI_ENDPOINT` (default
-/// OpenAI's endpoint), `RECALL_MCP_OPENAI_DIMS` (default 1536).
+/// OpenAI's endpoint), `RECALL_MCP_OPENAI_DIMS` (default 1536). `DIMS` must
+/// match what the model/endpoint actually returns — every response vector is
+/// validated against it and a mismatch fails loudly instead of silently
+/// zeroing all vector scores (AR-005).
 #[cfg(feature = "openai")]
 fn openai_from_env() -> Result<crate::openai_embed::OpenAIEmbedder> {
     let api_key = std::env::var("RECALL_MCP_OPENAI_API_KEY").unwrap_or_default();
