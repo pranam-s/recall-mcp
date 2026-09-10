@@ -441,7 +441,22 @@ impl SqliteStore {
                         .into(),
                 ));
             }
-            (Some(_), Some(AT_REST_ENC)) => self.verify_key_check()?,
+            (Some(_), Some(AT_REST_ENC)) => {
+                let key = self.key.as_ref().expect("checked above");
+                if !self.key_check_matches(key)? {
+                    // Stores written before key separation (AR-002) sealed the
+                    // key check with the raw master key as AEAD key. If that
+                    // legacy layout opens the database, migrate it to the
+                    // derived subkeys; anything else is a wrong key.
+                    let legacy = StoreKey::legacy_from_bytes(key.master_bytes());
+                    if !self.key_check_matches(&legacy)? {
+                        return Err(RecallError::Crypto(
+                            "decryption failed: wrong key or corrupted/tampered data".into(),
+                        ));
+                    }
+                    self.rekey_from_legacy(&legacy)?;
+                }
+            }
             // First keyed open (fresh or legacy/marked-plain): encrypt everything.
             (Some(_), _) => {
                 self.encrypt_remaining_plaintext()?;
@@ -466,12 +481,70 @@ impl SqliteStore {
 
     /// Open-time proof that the supplied key is the one the database was
     /// written with (AEAD decrypt fails on any other key).
-    #[allow(clippy::expect_used)] // only called from the keyed branch of init_mode
-    fn verify_key_check(&self) -> Result<()> {
-        let key = self.key.as_ref().expect("keyed open");
-        if let Some(check) = self.meta_get(META_KEY_CHECK)? {
-            key.decrypt(&key_check_context(), &check)?;
+    fn key_check_matches(&self, key: &StoreKey) -> Result<bool> {
+        match self.meta_get(META_KEY_CHECK)? {
+            Some(check) => Ok(key.decrypt(&key_check_context(), &check).is_ok()),
+            // No check stored yet (fresh keyed open mid-upgrade): nothing to
+            // verify against.
+            None => Ok(true),
         }
+    }
+
+    /// One-time migration for stores written before key separation (AR-002),
+    /// where the raw master key served as both AEAD and HMAC key. Decrypts
+    /// every row with the legacy key, re-seals it under the derived subkeys,
+    /// recomputes the FTS token digests, and re-wraps the key-check value —
+    /// all in one transaction so a failure leaves the store exactly as it
+    /// was. A VACUUM + WAL checkpoint afterwards shreds the legacy pages.
+    #[allow(clippy::expect_used)] // only called with self.key = Some from init_mode
+    fn rekey_from_legacy(&self, legacy: &StoreKey) -> Result<()> {
+        let key = self.key.as_ref().expect("keyed open");
+        let rows: Vec<(String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, text FROM memories WHERE text LIKE 'enc:v1:%'")?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.filter_map(|r| {
+                let (id, text) = r.ok()?;
+                // Prefix-bearing rows that fail the shape check are plaintext
+                // literals and stay untouched (same rule as the upgrade pass).
+                StoreKey::is_encrypted(&text).then_some((id, text))
+            })
+            .collect()
+        };
+        self.conn.execute_batch("BEGIN")?;
+        let result = (|| -> Result<()> {
+            let mut stmt = self
+                .conn
+                .prepare_cached("UPDATE memories SET text = ?1, fts_tokens = ?2 WHERE id = ?3")?;
+            for (id, stored) in &rows {
+                let plaintext = legacy.decrypt(&text_context(id), stored)?;
+                stmt.execute(params![
+                    key.encrypt(&text_context(id), &plaintext),
+                    key.fts_tokens(&plaintext),
+                    id
+                ])?;
+            }
+            self.meta_set(
+                META_KEY_CHECK,
+                &key.encrypt(&key_check_context(), KEY_CHECK_PLAINTEXT),
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        self.conn.execute_batch("VACUUM")?;
+        self.checkpoint_wal()?;
+        debug!(
+            count = rows.len(),
+            "migrated store to separated key derivation"
+        );
         Ok(())
     }
 
@@ -1943,6 +2016,60 @@ mod tests {
         let reopened = SqliteStore::open_with_key(&path, &good).unwrap();
         let m = reopened.list_memories(Some("w"), 10, 0).unwrap();
         assert_eq!(m[0].text, SECRET);
+    }
+
+    #[test]
+    fn pre_hkdf_store_is_migrated_to_derived_subkeys_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre-hkdf.db");
+        let master = [0xdDu8; 32];
+        let legacy = StoreKey::legacy_from_bytes(&master);
+        {
+            // Hand-seal a database under the pre-key-separation layout: the
+            // raw master is both AEAD and HMAC key.
+            let s = SqliteStore::open_inner(&path, Some(legacy.clone())).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+            s.insert_memory(&mem("w", "deploy笔记 second")).unwrap();
+        }
+        // The same master through the derived-key path must migrate, not fail.
+        let key = StoreKey::from_bytes(&master).unwrap();
+        let s = SqliteStore::open_with_key(&path, &key).unwrap();
+        let rows = s.list_memories(Some("w"), 10, 0).unwrap();
+        assert_eq!(rows.len(), 2, "both memories survive the migration");
+        assert!(rows.iter().any(|m| m.text == SECRET));
+
+        // Rows are now sealed under the derived AEAD subkey and the FTS
+        // digests under the derived MAC subkey.
+        let m = &rows[0];
+        let (stored_text, stored_tokens): (String, String) = {
+            let mut stmt = s
+                .conn
+                .prepare("SELECT text, fts_tokens FROM memories WHERE id = ?1")
+                .unwrap();
+            stmt.query_row([&m.id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+        assert_eq!(
+            key.decrypt(&crate::crypto::text_context(&m.id), &stored_text)
+                .unwrap(),
+            m.text
+        );
+        assert!(
+            legacy
+                .decrypt(&crate::crypto::text_context(&m.id), &stored_text)
+                .is_err(),
+            "legacy raw-master key must no longer open the rows"
+        );
+        assert_eq!(stored_tokens, key.fts_tokens(&m.text));
+
+        // Reopening with the same master is a plain verified open now.
+        drop(s);
+        let reopened = SqliteStore::open_with_key(&path, &key).unwrap();
+        assert_eq!(reopened.list_memories(Some("w"), 10, 0).unwrap().len(), 2);
+        // A different master still fails the key check after migration.
+        let wrong = StoreKey::from_hex(&"ee".repeat(32)).unwrap();
+        assert!(SqliteStore::open_with_key(&path, &wrong).is_err());
     }
 
     #[test]

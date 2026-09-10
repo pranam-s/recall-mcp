@@ -2,12 +2,19 @@
 //! token digests, keyed from `RECALL_MCP_KEY` / `RECALL_MCP_KEY_FILE`.
 //!
 //! Design:
+//! - The 256-bit master key is never used directly by a primitive. Two
+//!   subkeys are derived once with HKDF-SHA256 and distinct info labels
+//!   (`recall-mcp:v1:aead` for the AEAD, `recall-mcp:v1:fts-mac` for the
+//!   HMAC) so a future break in one primitive cannot cascade into the other
+//!   (key separation, AR-002). Stores written before this derivation used the
+//!   raw master key for both; [`crate::sqlite::SqliteStore::open_with_key`]
+//!   detects them via the stored key check and migrates them transparently.
 //! - `memories.text` is stored as `enc:v1:<base64(nonce || ciphertext || tag)>`
 //!   using ChaCha20-Poly1305 with a random 12-byte nonce per record and the
 //!   AAD binding the ciphertext to the row id (`recall-mcp:v1:text:<id>`).
 //! - The FTS5 index never sees plaintext: tokens are HMAC-SHA256 digests
-//!   (truncated to 128 bits) under the same key, so BM25 keyword ranking works
-//!   unchanged while nothing reversible is stored.
+//!   (truncated to 128 bits) under the FTS-MAC subkey, so BM25 keyword
+//!   ranking works unchanged while nothing reversible is stored.
 //! - Existing (legacy) plaintext rows are detected by the missing `enc:v1:`
 //!   prefix; [`crate::sqlite::SqliteStore::open_with_key`] re-encrypts them
 //!   automatically on first keyed open.
@@ -17,6 +24,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use chacha20poly1305::aead::{Aead, Generate, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hex::FromHex as _;
+use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -38,25 +46,62 @@ const MIN_BLOB_LEN: usize = NONCE_LEN + TAG_LEN;
 /// distinct tokens) while keeping FTS documents compact.
 const DIGEST_LEN: usize = 16;
 
+/// HKDF info label for the ChaCha20-Poly1305 subkey.
+const AEAD_INFO: &[u8] = b"recall-mcp:v1:aead";
+/// HKDF info label for the FTS token-digest HMAC subkey.
+const MAC_INFO: &[u8] = b"recall-mcp:v1:fts-mac";
+
 type HmacSha256 = Hmac<Sha256>;
 
-/// A 256-bit store key with its AEAD and MAC instances derived once.
+/// HKDF-SHA256 (RFC 5869) expansion of the master key into one 32-byte
+/// subkey under the given info label. Empty salt: the master key is uniformly
+/// random, so extraction adds nothing to bind.
+#[allow(clippy::expect_used)] // a 32-byte OKM always fits SHA-256 output
+fn subkey(master: &[u8; 32], info: &[u8]) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(None, master);
+    let mut okm = [0u8; 32];
+    hk.expand(info, &mut okm)
+        .expect("32 bytes is a valid HKDF-SHA256 output length");
+    okm
+}
+
+/// A 256-bit store key with its AEAD and MAC subkeys derived once from the
+/// master (HKDF-SHA256, distinct info labels).
 #[derive(Clone)]
 pub struct StoreKey {
+    master: [u8; 32],
     cipher: ChaCha20Poly1305,
     mac_key: [u8; 32],
 }
 
 impl StoreKey {
-    /// Build from exactly 32 raw bytes.
+    /// Build from exactly 32 raw master bytes; subkeys are derived.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: &[u8; 32] = bytes
+        let master: &[u8; 32] = bytes
             .try_into()
             .map_err(|_| RecallError::Crypto("key must be exactly 32 bytes".into()))?;
         Ok(Self {
+            master: *master,
+            cipher: ChaCha20Poly1305::new((&subkey(master, AEAD_INFO)).into()),
+            mac_key: subkey(master, MAC_INFO),
+        })
+    }
+
+    /// Pre-HKDF layout (stores written before key separation): the raw master
+    /// key served as both the AEAD key and the HMAC key. Only used to open
+    /// and migrate such stores; everything new is written with derived
+    /// subkeys.
+    pub(crate) fn legacy_from_bytes(bytes: &[u8; 32]) -> Self {
+        Self {
+            master: *bytes,
             cipher: ChaCha20Poly1305::new(bytes.into()),
             mac_key: *bytes,
-        })
+        }
+    }
+
+    /// The master key this store key was built from (hex-encodable).
+    pub(crate) fn master_bytes(&self) -> &[u8; 32] {
+        &self.master
     }
 
     /// Build from 64 hex characters (the `RECALL_MCP_KEY` format).
@@ -75,7 +120,7 @@ impl StoreKey {
 
     /// Hex encoding suitable for writing to a key file.
     pub fn to_hex(&self) -> String {
-        hex::encode(self.mac_key)
+        hex::encode(self.master)
     }
 
     /// AEAD-encrypt with a fresh random nonce; AAD binds the row identity.
@@ -299,5 +344,62 @@ mod tests {
         assert_eq!(k.token_digest("deploy").len(), 32);
         // Non-alphanumeric-only text yields an empty document.
         assert_eq!(k.fts_tokens("!!!"), "");
+    }
+
+    #[test]
+    fn hkdf_matches_rfc5869_test_case_1() {
+        // Pins the derivation to standard HKDF-SHA256 so a refactor cannot
+        // silently change how subkeys are extracted from the master key.
+        let ikm = [0x0bu8; 22];
+        let salt = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        ];
+        let info = [0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
+        let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let mut okm = [0u8; 42];
+        hk.expand(&info, &mut okm).unwrap();
+        assert_eq!(
+            okm,
+            [
+                0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+                0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+                0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65,
+            ]
+        );
+    }
+
+    #[test]
+    fn derived_subkeys_are_separated_from_the_master_and_each_other() {
+        let master = [7u8; 32];
+        let k = StoreKey::from_bytes(&master).unwrap();
+        let legacy = StoreKey::legacy_from_bytes(&master);
+        // The master survives round-tripping (key files keep working).
+        assert_eq!(k.to_hex(), hex::encode(master));
+        // AEAD and MAC subkeys are distinct derivations: a ciphertext and a
+        // token digest under the new key are not interchangeable with the
+        // legacy raw-key layout.
+        assert_ne!(
+            k.token_digest("deploy"),
+            legacy.token_digest("deploy"),
+            "the FTS-MAC subkey must differ from the raw master"
+        );
+        let ct = legacy.encrypt(&text_context("m"), "secret");
+        assert!(
+            k.decrypt(&text_context("m"), &ct).is_err(),
+            "the derived AEAD subkey must not open legacy ciphertext"
+        );
+        let ct2 = k.encrypt(&text_context("m"), "secret");
+        assert!(
+            legacy.decrypt(&text_context("m"), &ct2).is_err(),
+            "the raw master must not open derived ciphertext"
+        );
+        // Deterministic: the same master always derives the same subkeys.
+        let again = StoreKey::from_bytes(&master).unwrap();
+        assert_eq!(k.token_digest("deploy"), again.token_digest("deploy"));
+        assert_eq!(again.decrypt(&text_context("m"), &ct2).unwrap(), "secret");
+        // A different master derives different subkeys (already covered by
+        // fts_tokens tests, but pinned at the subkey level here).
+        let other = StoreKey::from_bytes(&[8u8; 32]).unwrap();
+        assert_ne!(k.token_digest("deploy"), other.token_digest("deploy"));
     }
 }

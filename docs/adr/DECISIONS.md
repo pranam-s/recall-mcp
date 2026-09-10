@@ -188,9 +188,19 @@ a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
   choice). ChaCha20-Poly1305 (RustCrypto `chacha20poly1305` 0.11), random
   12-byte nonce per record, AAD binding ciphertext to the row id
   (`recall-mcp:v1:text:<id>`), stored as `enc:v1:<base64(nonce||ct||tag)>`.
+  Random nonces are safe to the ~2^32-encryption birthday bound per key —
+  orders of magnitude beyond any realistic store; rotate the key beyond that.
+- Key separation (AR-002): the master key is never used directly by a
+  primitive. HKDF-SHA256 (RFC 5869) derives two subkeys with distinct info
+  labels (`recall-mcp:v1:aead`, `recall-mcp:v1:fts-mac`), so a future
+  cryptanalytic break in one primitive cannot cascade into the other. Stores
+  written before this change (raw master as both AEAD and HMAC key) are
+  detected at open via the key-check blob and migrated in one transaction
+  (re-encrypt rows, recompute FTS digests, re-wrap the key check), then
+  `VACUUM` + WAL checkpoint shred the legacy pages.
 - Keyword search survives encryption: the FTS5 index is built over
   `memories.fts_tokens`, which holds per-token HMAC-SHA256 digests (truncated
-  to 128 bits) of the text under the same key. BM25 sees the same token
+  to 128 bits) of the text under the FTS-MAC subkey. BM25 sees the same token
   multiplicities; queries are digested with the same key; nothing reversible
   is on disk. Token digests are deterministic, so two identical texts produce
   identical FTS documents (a deliberate, documented property).
