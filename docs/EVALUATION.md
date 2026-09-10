@@ -8,21 +8,23 @@ averaged silently.
 
 ## Test suite (all green)
 
-`cargo test --workspace` — **126 tests, 0 failures** (110 at the v0.3 morning
-pass → 126), plus 2 ignored release-only diagnostics (p95 harness + cost
-breakdown):
+`cargo test --workspace` — **131 tests, 0 failures** (110 at the v0.3 morning
+pass → 126 at the 2026-09-07 evening pass → 131 re-verified locally 2026-09-10,
+rustc 1.98.1: recall-core unit 85→87, recall-server lib 16→18, recall-cli e2e
+6→7; fmt clean, clippy `--all-targets` 0 warnings), plus 2 ignored release-only
+diagnostics (p95 harness + cost breakdown):
 
 | Suite | Tests | What they cover |
 |---|---|---|
-| recall-core (unit, incl. crypto) | 85 | scorer math + determinism, embedder determinism/edge cases, **embedder selection (`parse_embedder_name`/`select_embedder`: all kinds, case/whitespace tolerance, unknown-name errors, feature-gated errors)**, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination (offset pages tile without overlap) + count_memories, maintenance (checkpoint, vacuum, VACUUM INTO backup restores, keyed backup stays encrypted, overwrite refused), stats, export/import, error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB-cosine bit-equality vs the reference (incl. hoisted-norm variant), **packed-slice cosine bit-equality**, recall top-k heap exactness vs brute force at 300 memories, **packed-cache reuse/rebuild policy (namespace/dim/cap), write invalidation (insert/update/pin/delete/namespace switch), scan-cap parity through the cache**, capture chunking (boundaries, hard wrap, unicode, determinism), key/AEAD/digest properties |
+| recall-core (unit, incl. crypto) | 87 | scorer math + determinism, embedder determinism/edge cases, **embedder selection (`parse_embedder_name`/`select_embedder`: all kinds, case/whitespace tolerance, unknown-name errors, feature-gated errors)**, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination (offset pages tile without overlap) + count_memories, maintenance (checkpoint, vacuum, VACUUM INTO backup restores, keyed backup stays encrypted, overwrite refused), stats, export/import, error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB-cosine bit-equality vs the reference (incl. hoisted-norm variant), **packed-slice cosine bit-equality**, recall top-k heap exactness vs brute force at 300 memories, **packed-cache reuse/rebuild policy (namespace/dim/cap), write invalidation (insert/update/pin/delete/namespace switch), scan-cap parity through the cache**, capture chunking (boundaries, hard wrap, unicode, determinism), key/AEAD/digest properties |
 | recall-core (eval) | 1 | golden-set hit-rate@5 gate (below) |
 | recall-core (onnx + eval, behind `onnx`) | 4 | model metadata, empty→zero vector, semantic ordering, golden set with OnnxEmbedder |
 | recall-core (ignored, release) | 2 | exact p95 latency harness + cost-breakdown diagnostic (below) |
-| recall-server (lib) | 16 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching properties, OpenAPI drift guards for capture / metrics / pagination / X-Total-Count / 429 shape, 413 body limit, 429 rate limiting with Retry-After + per-key independence, /metrics content (counters, histogram, gauges), timed embedder wrapper, **router embeds with the configured embedder (fixed-vector embedder → cosine 1.0 end-to-end)** |
+| recall-server (lib) | 18 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching properties, OpenAPI drift guards for capture / metrics / pagination / X-Total-Count / 429 shape, 413 body limit, 429 rate limiting with Retry-After + per-key independence, /metrics content (counters, histogram, gauges), timed embedder wrapper, **router embeds with the configured embedder (fixed-vector embedder → cosine 1.0 end-to-end)** |
 | recall-server (api) | 8 | REST integration: namespaces, memories CRUD, recall + breakdown identity + determinism, PATCH update + tag filter, stats, full API-key matrix, list pagination with X-Total-Count, capture ingest e2e (chunking, role tags, recall integration, negative paths) |
 | recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (5 tools, both error paths, API-key honored) |
 | recall-cli (unit) | 7 | API-key precedence, **embedder-name precedence (flag > env > file > default), embedder resolution errors, `--embedder onnx` fails closed without the feature, serve_config glue: file+flags land in `ServerConfig` (bind/rate/burst/body-limit/embedder/api-key, per-knob precedence, burst default), serve_config fail-closed (negative rate, unknown file keys, burst < rate, unknown embedder, zero body limit clamps to 1), serve_config onnx-without-feature refused** |
-| recall-cli (e2e) | 6 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup (restores, recalls, refuses overwrite) + vacuum (keeps data); **`--embedder` end-to-end (unknown name refuses remember and serve, hash round-trips)** |
+| recall-cli (e2e) | 7 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup (restores, recalls, refuses overwrite) + vacuum (keeps data); **`--embedder` end-to-end (unknown name refuses remember and serve, hash round-trips)** |
 | recall-cli (mcp_stdio) | 1 | MCP conformance over stdio as a spawned child process |
 
 `cargo clippy --workspace --all-targets -- -D warnings` — **0 warnings**.
