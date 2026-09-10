@@ -16,6 +16,12 @@ pub struct AppState {
     pub rate_limiter: Option<Arc<RateLimiter>>,
     /// Registry rendered at `/metrics`.
     pub metrics: Arc<Metrics>,
+    /// Explicitly allowed cross-origin browser origins (AR-001 opt-in,
+    /// `--allow-origin`). Empty = same-origin only.
+    pub allowed_origins: Vec<String>,
+    /// Extra Host header values the guard accepts besides loopback hosts
+    /// (AR-001 opt-in, `--allow-host`).
+    pub allowed_hosts: Vec<String>,
 }
 
 impl AppState {
@@ -30,6 +36,8 @@ impl AppState {
             api_key,
             rate_limiter: None,
             metrics: Arc::new(Metrics::new()),
+            allowed_origins: Vec::new(),
+            allowed_hosts: Vec::new(),
         }
     }
 

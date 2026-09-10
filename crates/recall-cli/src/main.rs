@@ -67,6 +67,17 @@ enum Command {
         /// Maximum request body size in bytes (env RECALL_MCP_BODY_LIMIT).
         #[arg(long)]
         body_limit: Option<usize>,
+        /// Browser origin allowed cross-origin API access (repeatable), e.g.
+        /// `--allow-origin http://localhost:5173` for the Vite dev server.
+        /// Default: same-origin only — no CORS, foreign origins rejected.
+        #[arg(long = "allow-origin", value_name = "ORIGIN")]
+        allow_origin: Vec<String>,
+        /// Extra Host header values to accept besides loopback hosts
+        /// (repeatable), for non-loopback bindings such as a LAN IP or a
+        /// container healthcheck name. Requests with other Host values are
+        /// rejected as misdirected (DNS-rebinding defense).
+        #[arg(long = "allow-host", value_name = "HOST")]
+        allow_host: Vec<String>,
     },
     /// Store one memory (prints the created record as JSON).
     Remember {
@@ -195,6 +206,8 @@ struct ServeArgs {
     rate_burst: Option<f64>,
     body_limit: Option<usize>,
     embedder: Option<String>,
+    allow_origin: Vec<String>,
+    allow_host: Vec<String>,
 }
 
 /// Optional serve overrides from a JSON file (`--config`), merged with the
@@ -208,6 +221,8 @@ struct ServeConfigFile {
     rate_burst: Option<f64>,
     body_limit: Option<usize>,
     embedder: Option<String>,
+    allow_origins: Option<Vec<String>>,
+    allow_hosts: Option<Vec<String>>,
 }
 
 fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
@@ -301,12 +316,32 @@ fn serve_config(
     let embedder_name = embedder_name(args.embedder.as_deref(), file.embedder.as_deref())?;
     let embedder = recall_core::select_embedder(&embedder_name)
         .with_context(|| format!("select embedder {embedder_name:?}"))?;
+    // Cross-origin opt-in (AR-001): flags replace the config-file list; every
+    // entry is validated so a typo fails the startup, not the first request.
+    let allow_origin: Vec<String> = if args.allow_origin.is_empty() {
+        file.allow_origins.unwrap_or_default()
+    } else {
+        args.allow_origin.clone()
+    };
+    for origin in &allow_origin {
+        let o = origin.trim();
+        if !o.contains("://") || o.parse::<axum::http::HeaderValue>().is_err() {
+            anyhow::bail!("invalid --allow-origin {origin:?}: expected scheme://host[:port]");
+        }
+    }
+    let allow_host = if args.allow_host.is_empty() {
+        file.allow_hosts.unwrap_or_default()
+    } else {
+        args.allow_host.clone()
+    };
     let config = recall_server::ServerConfig {
         api_key: effective_api_key(args.api_key.as_ref(), env_api_key()),
         web_dir: args.web_dir.clone(),
         rate_limit,
         body_limit_bytes,
         embedder,
+        allowed_origins: allow_origin,
+        allowed_hosts: allow_host.iter().map(|h| h.trim().to_string()).collect(),
     };
     Ok((config, bind))
 }
@@ -399,6 +434,8 @@ async fn main() -> Result<()> {
             rate_limit,
             rate_burst,
             body_limit,
+            allow_origin,
+            allow_host,
         } => {
             serve(
                 &ServeArgs {
@@ -411,6 +448,8 @@ async fn main() -> Result<()> {
                     rate_burst: *rate_burst,
                     body_limit: *body_limit,
                     embedder: cli.embedder.clone(),
+                    allow_origin: allow_origin.clone(),
+                    allow_host: allow_host.clone(),
                 },
                 config.as_ref(),
             )
@@ -605,6 +644,8 @@ mod tests {
             rate_burst: None,
             body_limit: None,
             embedder: None,
+            allow_origin: Vec::new(),
+            allow_host: Vec::new(),
         }
     }
 

@@ -69,11 +69,22 @@ cd web && npm install && npm run build && npx playwright test
 
 - **stdio:** `recall-cli serve --stdio --db recall.db`
 - **streamable-HTTP:** point the client at `http://127.0.0.1:8787/mcp`
-- **API key (recommended when not only loopback):** set `RECALL_MCP_API_KEY`
-  (or `--api-key`). `/v1/*`, `/metrics` and `/mcp` then require
-  `Authorization: Bearer` or `X-API-Key`; without a key the server is open by
-  design — it is a local, single-user tool. `/healthz` and `/openapi.json`
-  always stay open.
+- **Browser isolation (default, on):** the server validates the `Host`
+  header (loopback hosts only — DNS-rebinding defense, `421` otherwise) and
+  enforces a same-origin policy: requests carrying a foreign `Origin` are
+  rejected (`403`) and **no CORS headers are granted by default**, so a web
+  page you visit cannot read or write your memories while `serve` runs. The
+  production web UI is served same-origin and the Vite dev server proxies
+  `/v1`, so nothing needs CORS by default. To let a specific web app or
+  browser-based agent call the API cross-origin, opt in explicitly:
+  `--allow-origin https://agent.example` (repeatable; the origin is echoed in
+  CORS headers). Non-loopback bindings additionally accept
+  `--allow-host <host>` (repeatable) for LAN IPs or healthcheck hostnames.
+- **API key:** set `RECALL_MCP_API_KEY` (or `--api-key`) to require
+  `Authorization: Bearer` or `X-API-Key` on `/v1/*`, `/metrics` and `/mcp` —
+  recommended whenever anything beyond your own user session can reach the
+  port (the web UI does not send an API key; see the note in "Web UI").
+  `/healthz` and `/openapi.json` always stay open.
 
 ### Operating the server (v0.3)
 

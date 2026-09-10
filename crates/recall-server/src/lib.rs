@@ -7,6 +7,7 @@ pub mod api;
 pub mod auth;
 pub mod capture;
 pub mod error;
+pub mod guard;
 pub mod mcp;
 pub mod metrics;
 pub mod openapi;
@@ -17,6 +18,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::{HeaderName, Method};
 use axum::routing::{delete, get, post};
 use recall_core::HashEmbedder;
 use tower_http::cors::CorsLayer;
@@ -47,6 +50,13 @@ pub struct ServerConfig {
     /// CLI resolves `--embedder` / env / config-file into this; the default
     /// is the offline `HashEmbedder`.
     pub embedder: Arc<dyn recall_core::Embedder>,
+    /// Browser origins allowed to call the API cross-origin (AR-001 opt-in,
+    /// CLI `--allow-origin`). Empty keeps the same-origin default: no CORS
+    /// headers are emitted and foreign `Origin` requests are rejected.
+    pub allowed_origins: Vec<String>,
+    /// Extra `Host` values the guard accepts besides loopback hosts (AR-001
+    /// opt-in, CLI `--allow-host`) for non-loopback bindings.
+    pub allowed_hosts: Vec<String>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -59,6 +69,8 @@ impl std::fmt::Debug for ServerConfig {
             .field("rate_limit", &self.rate_limit)
             .field("body_limit_bytes", &self.body_limit_bytes)
             .field("embedder", &self.embedder.name())
+            .field("allowed_origins", &self.allowed_origins)
+            .field("allowed_hosts", &self.allowed_hosts)
             .finish()
     }
 }
@@ -71,8 +83,39 @@ impl Default for ServerConfig {
             rate_limit: None,
             body_limit_bytes: DEFAULT_BODY_LIMIT_BYTES,
             embedder: Arc::new(HashEmbedder::new_256()),
+            allowed_origins: Vec::new(),
+            allowed_hosts: Vec::new(),
         }
     }
+}
+
+/// CORS policy for the configured opt-in origins (AR-001). The same-origin
+/// default emits no CORS headers at all: the production web UI is served
+/// same-origin and the Vite dev server proxies `/v1`, so nothing needs
+/// cross-origin permissions unless the operator lists origins here.
+fn cors_layer(allowed_origins: &[String]) -> CorsLayer {
+    if allowed_origins.is_empty() {
+        return CorsLayer::new();
+    }
+    let origins: Vec<_> = allowed_origins
+        .iter()
+        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+        .collect();
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            CONTENT_TYPE,
+            AUTHORIZATION,
+            HeaderName::from_static("x-api-key"),
+        ])
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 /// Build the complete application router: REST API, MCP streamable-HTTP,
@@ -87,6 +130,8 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
     });
     let mut state = AppState::new(store, embedder, config.api_key.clone());
     state.metrics = metrics;
+    state.allowed_origins = config.allowed_origins.clone();
+    state.allowed_hosts = config.allowed_hosts.clone();
     state.rate_limiter = config
         .rate_limit
         .map(ratelimit::RateLimiter::new)
@@ -138,7 +183,13 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
         ))
         .layer(DefaultBodyLimit::max(config.body_limit_bytes))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors_layer(&config.allowed_origins))
+        // Host/Origin guard outermost (AR-001): foreign hosts and cross-origin
+        // browser requests are rejected before any other layer runs.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            guard::enforce_same_origin,
+        ))
         .with_state(state);
 
     match &config.web_dir {
@@ -384,6 +435,228 @@ mod tests {
         assert!(
             (vector - 1.0).abs() < 1e-5,
             "the server must embed with the configured embedder, got vector {vector}"
+        );
+    }
+
+    // ---- AR-001 regressions: the loopback default is not web-page-reachable ----
+
+    fn guarded_request(
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+    ) -> Request<axum::body::Body> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(axum::body::Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn foreign_host_header_is_rejected_as_misdirected() {
+        // DNS-rebinding signature: the browser resolves the attacker's
+        // hostname to 127.0.0.1, so the request arrives with a foreign Host.
+        let app = test_router(None);
+        let res = app
+            .oneshot(guarded_request(
+                "GET",
+                "/healthz",
+                &[("host", "attacker.example")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn loopback_hosts_are_accepted_with_any_port() {
+        let app = test_router(None);
+        for host in [
+            "127.0.0.1:8787",
+            "localhost:8787",
+            "[::1]:8787",
+            "localhost",
+        ] {
+            let res = app
+                .clone()
+                .oneshot(guarded_request("GET", "/healthz", &[("host", host)]))
+                .await
+                .unwrap();
+            assert_eq!(
+                res.status(),
+                axum::http::StatusCode::OK,
+                "loopback host {host} must be served"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cross_origin_browser_request_is_rejected_by_default() {
+        // The P1 exploit path: a visited web page scripting
+        // fetch("http://127.0.0.1:8787/v1/stats") — the browser attaches
+        // Origin and the guard must reject before anything is disclosed.
+        let app = test_router(None);
+        let res = app
+            .oneshot(guarded_request(
+                "GET",
+                "/v1/stats",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "https://evil.example"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
+        assert!(
+            res.headers().get("access-control-allow-origin").is_none(),
+            "the default must not hand out any CORS grant"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_origin_request_is_served() {
+        let app = test_router(None);
+        let res = app
+            .oneshot(guarded_request(
+                "GET",
+                "/v1/stats",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "http://127.0.0.1:8787"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn requests_without_host_or_origin_headers_are_served() {
+        // Non-browser clients (curl, MCP clients, monitors) send neither
+        // header; the tests' own oneshot requests rely on this too.
+        let app = test_router(None);
+        let res = app
+            .oneshot(guarded_request("GET", "/v1/stats", &[]))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn allow_origin_opt_in_grants_only_listed_origins() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        std::mem::forget(dir);
+        let app = build_router(
+            store,
+            &ServerConfig {
+                allowed_origins: vec!["https://agent.example".into()],
+                ..ServerConfig::default()
+            },
+        );
+        // Listed origin: served, with the origin echoed (not `*`).
+        let res = app
+            .clone()
+            .oneshot(guarded_request(
+                "GET",
+                "/v1/stats",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "https://agent.example"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            res.headers().get("access-control-allow-origin").unwrap(),
+            "https://agent.example"
+        );
+        // Preflight for the listed origin succeeds.
+        let preflight = app
+            .clone()
+            .oneshot(guarded_request(
+                "OPTIONS",
+                "/v1/recall",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "https://agent.example"),
+                    ("access-control-request-method", "POST"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), axum::http::StatusCode::OK);
+        // Any other origin stays rejected.
+        let rejected = app
+            .oneshot(guarded_request(
+                "GET",
+                "/v1/stats",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "https://other.example"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rejected.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn allow_host_opt_in_extends_the_host_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        std::mem::forget(dir);
+        let app = build_router(
+            store,
+            &ServerConfig {
+                allowed_hosts: vec!["mem.internal".into()],
+                ..ServerConfig::default()
+            },
+        );
+        let res = app
+            .clone()
+            .oneshot(guarded_request(
+                "GET",
+                "/healthz",
+                &[("host", "mem.internal:8787")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        // A host that is neither loopback nor listed stays rejected.
+        let res = app
+            .oneshot(guarded_request(
+                "GET",
+                "/healthz",
+                &[("host", "other.internal:8787")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::MISDIRECTED_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_without_opt_in_grants_nothing() {
+        let app = test_router(None);
+        let res = app
+            .oneshot(guarded_request(
+                "OPTIONS",
+                "/v1/recall",
+                &[
+                    ("host", "127.0.0.1:8787"),
+                    ("origin", "https://evil.example"),
+                    ("access-control-request-method", "POST"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert!(
+            res.headers().get("access-control-allow-origin").is_none(),
+            "no CORS grant may exist without --allow-origin"
         );
     }
 }
