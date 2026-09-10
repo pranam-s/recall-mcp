@@ -1,0 +1,50 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Failure",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 16.7590195,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\Admin\\scoop\\persist\\rustup\\.rustup\\toolchains\\stable-x86_64-pc-windows-gnu\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=recall-cli@0.1.0",
+            "--package=recall-core@0.1.0",
+            "--package=recall-server@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 1.3631715,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\Admin\\scoop\\persist\\rustup\\.rustup\\toolchains\\stable-x86_64-pc-windows-gnu\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=recall-cli@0.1.0",
+            "--package=recall-core@0.1.0",
+            "--package=recall-server@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 0,
+  "missed": 0,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-09-10T22:19:11.8171161Z",
+  "end_time": "2026-09-10T22:19:30.124916Z",
+  "cargo_mutants_version": "27.1.0"
+}

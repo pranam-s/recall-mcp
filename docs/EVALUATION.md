@@ -1,4 +1,4 @@
-# Evaluation — Recall-MCP v0.3 (2026-09-07; evening pass: D-019 packed cache + embedder selection)
+# Evaluation — Recall-MCP v0.3.1 (2026-09-11; adversarial-review fix pass)
 
 Everything below was actually run on this machine (Windows 11 VM, GNU toolchain,
 rustc 1.98.1). Nothing is claimed that was not executed. Numbers are exact.
@@ -8,23 +8,25 @@ averaged silently.
 
 ## Test suite (all green)
 
-`cargo test --workspace` — **131 tests, 0 failures** (110 at the v0.3 morning
-pass → 126 at the 2026-09-07 evening pass → 131 re-verified locally 2026-09-10,
-rustc 1.98.1: recall-core unit 85→87, recall-server lib 16→18, recall-cli e2e
-6→7; fmt clean, clippy `--all-targets` 0 warnings), plus 2 ignored release-only
-diagnostics (p95 harness + cost breakdown):
+`cargo test --workspace` — **156 tests, 0 failures** (131 at the 2026-09-10
+re-verification → 156 at the 2026-09-11 adversarial-review fix pass; fmt clean,
+clippy `--all-targets` 0 warnings), plus 3 ignored diagnostics in the default
+build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
+`--features onnx`):
 
 | Suite | Tests | What they cover |
 |---|---|---|
-| recall-core (unit, incl. crypto) | 87 | scorer math + determinism, embedder determinism/edge cases, **embedder selection (`parse_embedder_name`/`select_embedder`: all kinds, case/whitespace tolerance, unknown-name errors, feature-gated errors)**, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination (offset pages tile without overlap) + count_memories, maintenance (checkpoint, vacuum, VACUUM INTO backup restores, keyed backup stays encrypted, overwrite refused), stats, export/import, error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB-cosine bit-equality vs the reference (incl. hoisted-norm variant), **packed-slice cosine bit-equality**, recall top-k heap exactness vs brute force at 300 memories, **packed-cache reuse/rebuild policy (namespace/dim/cap), write invalidation (insert/update/pin/delete/namespace switch), scan-cap parity through the cache**, capture chunking (boundaries, hard wrap, unicode, determinism), key/AEAD/digest properties |
+| recall-core (unit, incl. crypto) | 93 | scorer math + determinism, embedder determinism/edge cases, embedder selection, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination + count_memories (incl. wrapping `usize::MAX` LIMIT/OFFSET saturation, AR-004), maintenance, stats, export/import (**atomic import: a failed import leaves no partial rows or namespaces, AR-023**), error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB/packed-slice cosine bit-equality, recall top-k heap exactness vs brute force at 300 memories, packed-cache reuse/rebuild/write-invalidation/scan-cap parity, capture chunking, key/AEAD/digest properties, **HKDF key separation (RFC 5869 test-vector pin, subkeys ≠ master and ≠ each other, cross-decryption fails, AR-002), pre-HKDF store migration in one transaction (rows re-sealed, FTS digests recomputed, reopen idempotent, wrong key still fails), keyed upgrade shreds plaintext (secure_delete + truncated WAL, forensic canary test, AR-013), `last_accessed_at` is write-time only (AR-018)** |
+| recall-core (proptests) | 4 | crypto roundtrip + AAD binding over arbitrary UTF-8, FTS MATCH-syntax validity + keyed 32-hex digests, chunking cap/content-preservation/determinism, scorer total = weighted component sum + component bounds + future-timestamp clamp (512 cases each by default) |
 | recall-core (eval) | 1 | golden-set hit-rate@5 gate (below) |
 | recall-core (onnx + eval, behind `onnx`) | 4 | model metadata, empty→zero vector, semantic ordering, golden set with OnnxEmbedder |
 | recall-core (ignored, release) | 2 | exact p95 latency harness + cost-breakdown diagnostic (below) |
-| recall-server (lib) | 18 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching properties, OpenAPI drift guards for capture / metrics / pagination / X-Total-Count / 429 shape, 413 body limit, 429 rate limiting with Retry-After + per-key independence, /metrics content (counters, histogram, gauges), timed embedder wrapper, **router embeds with the configured embedder (fixed-vector embedder → cosine 1.0 end-to-end)** |
-| recall-server (api) | 8 | REST integration: namespaces, memories CRUD, recall + breakdown identity + determinism, PATCH update + tag filter, stats, full API-key matrix, list pagination with X-Total-Count, capture ingest e2e (chunking, role tags, recall integration, negative paths) |
-| recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (5 tools, both error paths, API-key honored) |
-| recall-cli (unit) | 7 | API-key precedence, **embedder-name precedence (flag > env > file > default), embedder resolution errors, `--embedder onnx` fails closed without the feature, serve_config glue: file+flags land in `ServerConfig` (bind/rate/burst/body-limit/embedder/api-key, per-knob precedence, burst default), serve_config fail-closed (negative rate, unknown file keys, burst < rate, unknown embedder, zero body limit clamps to 1), serve_config onnx-without-feature refused** |
-| recall-cli (e2e) | 7 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup (restores, recalls, refuses overwrite) + vacuum (keeps data); **`--embedder` end-to-end (unknown name refuses remember and serve, hash round-trips)** |
+| recall-server (lib) | 32 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching, OpenAPI drift guards, 413 body limit, 429 rate limiting with Retry-After + per-key independence, **failed-key requests are throttled by the anonymous bucket (AR-012)**, /metrics content, timed embedder wrapper, router embedder wiring, **AR-001 origin guard: foreign Host → 421, cross-origin Origin → 403 with no CORS grant, same-origin and header-less clients served, `--allow-origin` echo + preflight + other origins still rejected, `--allow-host` extension**, **`page_limit` clamp unit tests (usize::MAX → 10 000)**, **MCP `list_memories` caps usize::MAX end-to-end with 10 001 memories seeded (AR-004)** |
+| recall-server (api) | 8 | REST integration: namespaces, memories CRUD, recall + breakdown identity + determinism, PATCH update + tag filter, stats, full API-key matrix, list pagination with X-Total-Count, capture ingest e2e, **caller-supplied embedding with wrong dims → 400, matched dims → 201 (AR-005)** |
+| recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (6 tools, both error paths, API-key honored) |
+| recall-server (proptests) | 1 | token-bucket partition/burst bound/independent buckets over generated configs |
+| recall-cli (unit) | 7 | API-key precedence, embedder-name precedence, serve_config glue + fail-closed validation, `--allow-origin` validation |
+| recall-cli (e2e) | 7 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup + vacuum; `--embedder` end-to-end |
 | recall-cli (mcp_stdio) | 1 | MCP conformance over stdio as a spawned child process |
 
 `cargo clippy --workspace --all-targets -- -D warnings` — **0 warnings**.
@@ -91,12 +93,26 @@ the D-002 revisit (packed vector file or ANN index — LanceDB first choice on
 windows-gnu) becomes mandatory regardless. Golden-set-scale namespaces recall
 in single-digit milliseconds.
 
-## Encryption at rest (D-14, unchanged in v0.3)
+## Encryption at rest (D-14, hardened 2026-09-11)
 
 Verified by tests that open the database file bytes after writes (unit + real
 binary CLI e2e, WAL included). New in v0.3: `recall-cli backup` copies
 ciphertext verbatim, and the e2e suite proves a keyed backup restores, recalls,
-refuses an unkeyed open, and refuses to overwrite an existing target.
+refuses an unkeyed open, and refuses to overwrite an existing target. New in
+v0.3.1: HKDF key separation is pinned by an RFC 5869 test vector plus
+separation/cross-decryption properties (AR-002); a pre-HKDF store is migrated
+in one transaction with end-to-end assertions; and the in-place plaintext→keyed
+upgrade is proven not to leave a marker plaintext recoverable from the main
+database file or the WAL sidecar (secure_delete + VACUUM + truncated
+checkpoint, AR-013).
+
+## Mutation testing (AR-006, new)
+
+`mutants.toml` gates the review-named modules (`crypto.rs`, `scorer.rs`).
+Result of the first recorded run (2026-09-11, cargo-mutants 27.1.0,
+`--in-place -j 1`, debug profile):
+
+MUTANTS_PLACEHOLDER
 
 ## MCP conformance
 
@@ -119,31 +135,38 @@ Same D-010 story: `cargo llvm-cov` cannot run on windows-gnu (no profiler
 runtime). The gate `cargo llvm-cov -p recall-core --fail-under-lines 90
 --fail-under-branches 90` runs in CI (linux-gnu job). The repo still has no
 `origin` remote, so CI has not executed; coverage remains **unmeasured rather
-than claimed**. Note for the first CI run: v0.3 and the evening pass added
-core code (capture, maintenance, pagination, packed cache, embedder
-selection) and their tests in the same commits; the two ignored release tests
-are excluded from coverage measurement by `--ignored` semantics, as in v0.2.
+than claimed**. Note for the first CI run: v0.3 and the 2026-09-11 pass added
+core code (capture, maintenance, pagination, packed cache, embedder selection,
+HKDF key separation + migration, origin guard, MCP clamp) and their tests in
+the same commits; ignored tests are excluded from coverage measurement by
+`--ignored` semantics, as in v0.2.
 
 ## Limitations
 
 - Recall latency at exactly 10k memories still exceeds the PRD budget on the
   exact harness (p95 ≈ 26–27 ms vs 25 ms; measured above). The blob-read
-  floor is gone (packed cache, D-019); the residual is the FTS keyword pass
-  plus fetch/refresh, and the D-002 ANN/packed-vector revisit remains the
-  structural fix beyond ~100k. Remediation path is dated and measured, not
-  speculative.
+  floor is gone (packed cache, D-019); the residual is the FTS keyword pass,
+  and the D-002 ANN/packed-vector revisit remains the structural fix beyond
+  ~100k. Remediation path is dated and measured, not speculative. Note: the
+  p95 numbers above were measured before the AR-018 removal of the
+  per-recall `last_accessed_at` write, which takes work off this path; the
+  harness has not been re-baselined after that change.
 - HashEmbedder is lexical: synonym/paraphrase queries with zero token overlap
   miss (fixed by the optional `onnx` embedder, which scores 1.000).
 - Encryption (D-014) covers `memories.text` only; namespace names, tags,
-  source, and embedding vectors stay plaintext by design; `export` output is
-  plaintext JSON. In-place-upgraded databases may retain plaintext remnants in
-  freelist pages — `recall-cli vacuum` compacts them; strict guarantees favor
-  `backup` into a fresh keyed database.
-- OpenAI embedder compiles and its request/parse logic is tested, but no live
-  API call has been made (no key available) — not on any default code path.
-- Rate limiting keys on the presented API key (shared `anonymous` bucket when
-  absent) — it throttles per-key floods and key-guessing, not distributed
-  spoofed-key rotation; that threat model needs the Team Server (D-017).
+  source, and embedding vectors stay plaintext by design, and dense
+  embeddings are invertible to text (AR-003 — see D-014/D-021); `export`
+  output is plaintext JSON (the CLI now warns and writes owner-only files).
+  The in-place keyed upgrade shreds plaintext-era pages and WAL frames
+  (AR-013, tested); filesystem copies made before the upgrade still contain
+  plaintext — strict guarantees favor `backup` into a fresh keyed database.
+- OpenAI embedder compiles and its request/parse logic is tested (including
+  dims-mismatch rejection, AR-005), but no live API call has been made (no
+  key available) — not on any default code path.
+- Rate limiting keys on the presented API key and runs before auth (AR-012),
+  so failed-key requests drain the shared `anonymous` bucket — key-guessing
+  is throttled; distributed spoofed-key rotation is not (that threat model
+  needs the Team Server, D-017).
 - CI workflow (`.github/workflows/ci.yml`) is committed but has not executed
   (no remote configured yet).
 - The `/metrics` endpoint counts the `/metrics` request only after its body is

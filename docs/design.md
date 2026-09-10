@@ -99,9 +99,9 @@ One query, in order, with the file that owns each stage:
 4. **Ordering.** Deterministic tie-break: total desc, created_at desc, then
    rowid asc (D-016 changed this from the random UUID id — only
    content-identical duplicates straddling the k-boundary are affected).
-5. **Post-processing.** Top-k full rows fetched; `last_accessed_at` refreshed
-   in one batched UPDATE (deliberately *not* a cache invalidation — the cache
-   carries no such column).
+5. **Post-processing.** Top-k full rows fetched; recall is read-only over
+   `last_accessed_at` (the access-time refresh was removed in the 2026-09-11
+   pass — AR-018: it had no consumer and cost a write per recall).
 
 ## Design decisions that shape everything else
 

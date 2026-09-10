@@ -330,15 +330,18 @@ fn serve_config(
     let embedder = recall_core::select_embedder(&embedder_name)
         .with_context(|| format!("select embedder {embedder_name:?}"))?;
     // Cross-origin opt-in (AR-001): flags replace the config-file list; every
-    // entry is validated so a typo fails the startup, not the first request.
+    // entry is trimmed and validated so a typo fails the startup, not the
+    // first request.
     let allow_origin: Vec<String> = if args.allow_origin.is_empty() {
         file.allow_origins.unwrap_or_default()
     } else {
         args.allow_origin.clone()
-    };
+    }
+    .iter()
+    .map(|o| o.trim().to_string())
+    .collect();
     for origin in &allow_origin {
-        let o = origin.trim();
-        if !o.contains("://") || o.parse::<axum::http::HeaderValue>().is_err() {
+        if !origin.contains("://") || origin.parse::<axum::http::HeaderValue>().is_err() {
             anyhow::bail!("invalid --allow-origin {origin:?}: expected scheme://host[:port]");
         }
     }
@@ -879,6 +882,29 @@ mod tests {
         args.body_limit = Some(0);
         let (config, _) = serve_config(&args, None).unwrap();
         assert_eq!(config.body_limit_bytes, 1);
+    }
+
+    #[test]
+    fn allow_origin_is_validated_fail_closed() {
+        let _guard = env_lock();
+        clear_serve_env();
+        // A malformed origin refuses the startup instead of failing on the
+        // first cross-origin request.
+        let mut args = serve_args();
+        args.allow_origin = vec!["not-a-url".into()];
+        let err = serve_config(&args, None).unwrap_err();
+        assert!(err.to_string().contains("allow-origin"), "got: {err}");
+        // A well-formed origin passes through trimmed.
+        let mut args = serve_args();
+        args.allow_origin = vec![" https://agent.example ".into()];
+        let (config, _) = serve_config(&args, None).unwrap();
+        assert_eq!(config.allowed_origins, vec!["https://agent.example"]);
+        // The config-file list applies when no flag is given.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("origins.json");
+        std::fs::write(&path, r#"{"allow_origins": ["https://from-file.example"]}"#).unwrap();
+        let (config, _) = serve_config(&serve_args(), Some(&path)).unwrap();
+        assert_eq!(config.allowed_origins, vec!["https://from-file.example"]);
     }
 
     #[cfg(not(feature = "onnx"))]

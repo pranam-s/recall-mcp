@@ -1,0 +1,25 @@
+# cargo-mutants configuration (adversarial review AR-006).
+#
+# Mutation testing gates the highest-value pure-logic modules: the crypto
+# primitives (digest truncation, nonce/AAD construction, prefix checks) and
+# the score fusion math (mul_add ordering, clamp bounds, age clamp). The
+# axum/rmcp/CLI shells are excluded: they are covered by integration and
+# conformance tests, and mutating glue buys noise, not power.
+#
+# Run in the unlimited window; on this VM use in-place mode to reuse the
+# shared target/ directory (the default copied-tree mode needs ~4 GB more
+# disk than the shared 12 GB VM can spare alongside other agents):
+#   cargo mutants --in-place -j 1
+# Results are recorded honestly in docs/EVALUATION.md; survived mutants in
+# these modules are either fixed (new test) or explicitly justified there.
+timeout_multiplier = 3.0
+exclude_re = [
+    "benches",
+    "tests",
+]
+# Scope the first runs to the review's named targets (regexes match both
+# slash styles); widen as suites learn.
+examining_re = [
+    "src[\\\\/]crypto\\.rs$",
+    "src[\\\\/]scorer\\.rs$",
+]
