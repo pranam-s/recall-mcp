@@ -10,3 +10,4 @@ test-results/
 spikes/onnx-spike/target/
 spikes/onnx-spike/ort-bin/
 .fastembed_cache/
+mutants.out
