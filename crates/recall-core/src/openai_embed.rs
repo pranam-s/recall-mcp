@@ -15,6 +15,11 @@ pub struct OpenAIEmbedder {
     api_key: String,
     model: String,
     dims: usize,
+    /// Shared HTTP client: reqwest pools connections per client, so building
+    /// one per embed call paid TLS/DNS setup on every single embedding
+    /// (AR-016). Built once here; capturing a 50-chunk transcript reuses it
+    /// for all 50 calls.
+    client: reqwest::blocking::Client,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,11 +58,16 @@ impl OpenAIEmbedder {
                 "embedding dimension must be > 0".into(),
             ));
         }
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| RecallError::Embedder(e.to_string()))?;
         Ok(Self {
             endpoint: endpoint.into(),
             api_key,
             model: model.into(),
             dims,
+            client,
         })
     }
 
@@ -143,11 +153,8 @@ impl Embedder for OpenAIEmbedder {
 
 impl OpenAIEmbedder {
     fn embed_checked(&self, text: &str) -> Result<Vec<f32>> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| RecallError::Embedder(e.to_string()))?;
-        let response = client
+        let response = self
+            .client
             .post(&self.endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")

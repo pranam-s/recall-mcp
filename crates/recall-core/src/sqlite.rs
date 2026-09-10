@@ -1276,6 +1276,18 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn write_tx(&self, f: &mut dyn FnMut(&dyn Store) -> Result<()>) -> Result<()> {
+        self.conn.execute_batch("BEGIN")?;
+        match f(self) {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     fn stats(&self) -> Result<Stats> {
         let total_namespaces = self
             .conn

@@ -65,5 +65,11 @@ pub trait Store: Send {
         now: i64,
     ) -> Result<Vec<RecallHit>>;
 
+    /// Run `f` inside a single write transaction: either every change `f`
+    /// makes commits, or (on error) none of it does. Multi-step writes such
+    /// as import (AR-023) must use this so a failure never leaves partial
+    /// state behind.
+    fn write_tx(&self, f: &mut dyn FnMut(&dyn Store) -> Result<()>) -> Result<()>;
+
     fn stats(&self) -> Result<Stats>;
 }
