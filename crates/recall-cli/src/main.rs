@@ -185,6 +185,19 @@ fn print_json(value: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Write a file restricted to the current user where the OS supports it
+/// (POSIX 0600; Windows uses the default user-profile ACLs). Used for
+/// plaintext exports so sensitive backups are not world-readable (AR-021).
+fn write_private(path: &PathBuf, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 fn env_api_key() -> Option<String> {
     std::env::var("RECALL_MCP_API_KEY").ok()
 }
@@ -558,10 +571,14 @@ async fn main() -> Result<()> {
             let json = serde_json::to_string_pretty(&data)?;
             match out {
                 Some(path) => {
-                    std::fs::write(path, json)
+                    // Exports are plaintext JSON by design (D-014) — write
+                    // them owner-only where the OS allows, and say so in the
+                    // success line (AR-021).
+                    write_private(&path, json.as_bytes())
                         .with_context(|| format!("write {}", path.display()))?;
                     println!(
-                        "exported {} namespaces, {} memories to {}",
+                        "exported {} namespaces, {} memories to {} — WARNING: this file is \
+                         plaintext JSON and bypasses encryption at rest",
                         data.namespaces.len(),
                         data.memories.len(),
                         path.display()

@@ -2,8 +2,8 @@
 
 ## What this is (3 lines)
 Local-first semantic memory broker for AI agents: a Rust MCP server
-(stdio + streamable-HTTP, spec 2026-07-28) exposing remember/recall/forget/
-list_memories over one SQLite file, plus REST, OpenAPI, web UI, CLI.
+(stdio + streamable-HTTP, spec 2026-07-28) exposing remember/recall/forget/update_memory/
+capture/list_memories over one SQLite file, plus REST, OpenAPI, web UI, CLI.
 Retrieval is hybrid BM25 + cosine + recency decay with a per-result score
 breakdown — never a black-box top-k. Read docs/PRD.md and docs/STATUS.md
 before planning work.
