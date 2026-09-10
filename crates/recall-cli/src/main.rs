@@ -574,7 +574,7 @@ async fn main() -> Result<()> {
                     // Exports are plaintext JSON by design (D-014) — write
                     // them owner-only where the OS allows, and say so in the
                     // success line (AR-021).
-                    write_private(&path, json.as_bytes())
+                    write_private(path, json.as_bytes())
                         .with_context(|| format!("write {}", path.display()))?;
                     println!(
                         "exported {} namespaces, {} memories to {} — WARNING: this file is \
