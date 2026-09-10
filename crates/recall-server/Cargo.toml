@@ -24,3 +24,4 @@ subtle = { workspace = true }
 tempfile = "3"
 http-body-util = "0.1"
 mime = "0.3"
+proptest = "1"
