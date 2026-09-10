@@ -146,7 +146,13 @@ upgraded in place (plaintext rows are re-encrypted on first keyed open); an
 encrypted database refuses to open without the key. `recall-cli backup`
 produces encrypted backups. Generate a key with: `openssl rand -hex 32`.
 Caveats (details in D-014): `export` output is plaintext JSON by design, and
-namespace names/tags/embeddings are not encrypted.
+namespace names/tags/embeddings are not encrypted. The embedding caveat
+matters: with the semantic embedders (`onnx`, `openai`), published
+embedding-inversion attacks can reconstruct memory **text** from the stored
+vector with usable fidelity, so keyed mode does not protect text there. The
+server logs a warning at startup when you combine a key with those embedders;
+use the default `hash` embedder when at-rest confidentiality is the
+requirement.
 
 ### Local semantic embeddings (optional `onnx` feature)
 

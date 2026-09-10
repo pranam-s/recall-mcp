@@ -115,6 +115,13 @@ impl Embedder for OpenAIEmbedder {
         self.dims
     }
 
+    fn embedding_invertible(&self) -> bool {
+        // Dense API embeddings (text-embedding-3-class): published
+        // embedding-inversion attacks recover input text with usable
+        // fidelity (AR-003, D-014).
+        true
+    }
+
     fn name(&self) -> &'static str {
         "openai"
     }
@@ -225,5 +232,7 @@ mod tests {
         // Port 1 on localhost refuses connections quickly; proves the error path.
         let e = OpenAIEmbedder::new("http://127.0.0.1:1/v1/embeddings", "k", "m", 4).unwrap();
         assert!(e.embed("hello").is_empty());
+        // Dense API embeddings must flag invertibility (keyed-mode warning).
+        assert!(e.embedding_invertible());
     }
 }

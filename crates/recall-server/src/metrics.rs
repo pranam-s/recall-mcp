@@ -184,6 +184,10 @@ impl recall_core::Embedder for TimedEmbedder {
         self.inner.name()
     }
 
+    fn embedding_invertible(&self) -> bool {
+        self.inner.embedding_invertible()
+    }
+
     fn embed(&self, text: &str) -> Vec<f32> {
         let start = Instant::now();
         let vector = self.inner.embed(text);

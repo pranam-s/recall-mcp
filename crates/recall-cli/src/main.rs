@@ -347,8 +347,22 @@ fn serve_config(
 }
 
 async fn serve(args: &ServeArgs, config_file: Option<&PathBuf>) -> Result<()> {
+    // AR-003 honesty notice: with encryption at rest enabled, a dense neural
+    // embedder still leaks memory text through the plaintext embedding
+    // (published embedding-inversion attacks). Say so at startup instead of
+    // letting the D-014 caveat hide in the docs.
+    let keyed = encryption_key()?.is_some();
     let store = open_store(&args.db)?;
     let (config, bind) = serve_config(args, config_file)?;
+    if keyed && config.embedder.embedding_invertible() {
+        tracing::warn!(
+            embedder = %config.embedder.name(),
+            "encryption at rest is ON but this embedder stores plaintext vectors that \
+             published embedding-inversion attacks can partially reverse into memory text; \
+             keyed mode does NOT protect text here (D-014). Use --embedder hash if at-rest \
+             confidentiality matters"
+        );
+    }
     if args.stdio {
         tracing::info!("serving MCP over stdio");
         // stdio has no metrics; the embedder is used raw.

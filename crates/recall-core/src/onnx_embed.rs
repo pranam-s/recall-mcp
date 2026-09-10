@@ -132,6 +132,12 @@ impl Embedder for OnnxEmbedder {
         self.model.dimensions()
     }
 
+    fn embedding_invertible(&self) -> bool {
+        // Dense MiniLM-class vectors: embedding-inversion attacks (vec2text-
+        // style) recover input text with usable fidelity (AR-003, D-014).
+        true
+    }
+
     fn name(&self) -> &'static str {
         self.model.as_str()
     }

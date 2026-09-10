@@ -10,6 +10,15 @@ pub trait Embedder: Send + Sync {
     fn name(&self) -> &'static str;
     /// Embed `text`; never panics. Empty/whitespace text yields a zero vector.
     fn embed(&self, text: &str) -> Vec<f32>;
+    /// Whether this embedder produces dense neural sentence embeddings — the
+    /// class that published embedding-inversion attacks (vec2text-style) can
+    /// partially reverse into text. The server/CLI use this to warn when
+    /// keyed (encrypted-at-rest) mode runs with such an embedder: the stored
+    /// plaintext embedding then leaks memory text despite the AEAD layer
+    /// (AR-003, D-014). Lexical embedders (hash) are not invertible this way.
+    fn embedding_invertible(&self) -> bool {
+        false
+    }
 }
 
 /// Feature-hashing embedder: deterministic, offline, no model download (ADR-003).
@@ -163,6 +172,8 @@ mod tests {
         let e = HashEmbedder::default();
         assert_eq!(e.dimensions(), 256);
         assert_eq!(e.name(), "hash-256");
+        // Lexical hashing is not invertible: no keyed-mode leak warning.
+        assert!(!e.embedding_invertible());
         let a = e.embed("deploy the service on friday");
         let b = e.embed("deploy the service on friday");
         assert_eq!(a.len(), 256);

@@ -213,9 +213,19 @@ a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
   freelist pages of databases encrypted in place — for strict guarantees,
   export into a fresh keyed database.
 - Scope: `memories.text` only. Namespace names, tags, source, and embeddings
-  (1 KB f32 sketches — statistically weak leak) remain plaintext; exports are
-  plaintext JSON by design (backup format). Documented in README security
-  notes rather than hidden.
+  remain plaintext; exports are plaintext JSON by design (backup format).
+  Documented in README security notes rather than hidden. **The plaintext
+  embedding is a real leak, not a weak one (AR-003):** for dense text
+  embeddings such as the `onnx` (all-MiniLM-class) and `openai` embedders,
+  published embedding-inversion attacks (vec2text-style, since 2023) recover
+  the input text with usable fidelity — so with those embedders, keyed mode
+  does **not** protect memory text against an attacker holding the database
+  file. The default `hash` embedder is lexical and not invertible this way.
+  Server and CLI log a warning at startup when keyed mode runs with
+  `onnx`/`openai`. Tags additionally correlate with FTS digests (same token
+  digests for the same token). Encrypting embeddings/tags is a v2 candidate;
+  until then use the `hash` embedder when at-rest confidentiality of text is
+  the requirement.
 - Alternative rejected: SQLCipher (whole-file encryption) — changes the file
   format for every user (unencrypted DBs too), drags an OpenSSL-shaped
   dependency onto windows-gnu, and still leaves plaintext in the FTS content
