@@ -177,15 +177,18 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
         .route("/v1/capture", post(api::capture))
         .route("/v1/stats", get(api::stats))
         .route("/metrics", get(api::metrics))
-        .layer(limit.clone())
-        .layer(auth.clone());
+        // The limiter wraps auth (runs before it, AR-012): wrong/missing keys
+        // consume the anonymous bucket, so brute-force key guessing costs the
+        // attacker requests even with auth enabled.
+        .layer(auth.clone())
+        .layer(limit.clone());
 
     // The MCP endpoint mounts as its own scoped router so the API-key layer
     // wraps the streamable-HTTP transport cleanly (including its session routes).
     let mcp: Router<AppState> = Router::new()
         .nest_service("/mcp", mcp::streamable_http_service(&state))
-        .layer(limit)
-        .layer(auth);
+        .layer(auth)
+        .layer(limit);
 
     let app = Router::new()
         .merge(open)
@@ -322,6 +325,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(other.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn failed_api_key_requests_are_rate_limited() {
+        // AR-012 regression: with auth on, wrong/missing-key requests used to
+        // be rejected by the auth layer before the limiter was consulted, so
+        // brute-force key guessing cost nothing. The limiter now wraps auth:
+        // after the anonymous bucket is drained, guesses get 429, not 401.
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        std::mem::forget(dir);
+        let app = build_router(
+            store,
+            &ServerConfig {
+                api_key: Some("secret".into()),
+                rate_limit: Some(ratelimit::RateLimit {
+                    rate: 1.0,
+                    burst: 2.0,
+                }),
+                ..ServerConfig::default()
+            },
+        );
+        let guess = || {
+            Request::builder()
+                .method("GET")
+                .uri("/v1/stats")
+                .header("x-api-key", "wrong-guess")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let first = app.clone().oneshot(guess()).await.unwrap();
+        assert_eq!(first.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let second = app.clone().oneshot(guess()).await.unwrap();
+        assert_eq!(second.status(), axum::http::StatusCode::UNAUTHORIZED);
+        // Bucket drained: the third guess is throttled before auth even runs.
+        let third = app.oneshot(guess()).await.unwrap();
+        assert_eq!(
+            third.status(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "wrong-key guessing must be throttled by the anonymous bucket"
+        );
     }
 
     #[tokio::test]
