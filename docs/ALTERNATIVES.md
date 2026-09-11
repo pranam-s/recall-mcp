@@ -44,7 +44,7 @@ adopting.
 ## 2. rmcp (official SDK) vs hand-rolled JSON-RPC
 
 **Evidence.** `modelcontextprotocol/rust-sdk`: 3.9k★, pushed 2026-09-06,
-official Tier-1 SDK; we're on 3.2.0 implementing spec `2026-07-28` (D-004).
+official Tier-1 SDK; we're on 3.3.0 targeting spec `2026-07-28` (D-004).
 That spec revision is the **largest ever** (statelessness: initialize
 handshake and `Mcp-Session-Id` removed; extensions first-class; Tasks
 reworked; JSON Schema 2020-12 tool schemas —
@@ -53,9 +53,11 @@ reworked; JSON Schema 2020-12 tool schemas —
 **Tradeoffs.** Hand-rolling buys full control and no SDK API churn, at the
 price of personally re-implementing every SEP (stateless `_meta` transport,
 `server/discover`, MRTR `requestState`, extensions negotiation). The SDK is
-exactly the artifact that absorbs spec drift; its stdio default is
-`2025-11-25` while HTTP honors `2026-07-28` — a known, tested asymmetry
-(D-004).
+exactly the artifact that absorbs spec drift; since 3.3.0 both transports
+answer a `2026-07-28` `initialize` with `2025-11-25` (the newest legacy
+handshake version — 2026-07-28 replaced the handshake with per-request
+metadata), a behavior change the SDK made deliberately and we pin in the
+conformance tests (D-004).
 
 **Switch cost/benefit.** Cost: re-derive protocol correctness against a
 moving spec; lose conformance smoke tests' meaning. Benefit: none for a

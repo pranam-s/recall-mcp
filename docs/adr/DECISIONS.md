@@ -81,6 +81,14 @@ The official Rust MCP SDK (`rmcp` 3.2.0, released 2026-08-31) implements the
 stateless + JSON-response mode; stdio via `rmcp::transport::io::stdio()`.
 Note: over streamable-HTTP the client's `2026-07-28` request is honored; over stdio
 rmcp negotiates its default `2025-11-25` (SDK behavior, observed in tests).
+Amendment (AR-011, 2026-09-11): the pinned dependency moved to `rmcp` 3.3.0.
+Amendment (2026-09-12, verified live + `negotiate_protocol_version` source):
+rmcp 3.3 changed negotiation on BOTH transports — a client requesting
+`2026-07-28` in `initialize` is answered `2025-11-25`, because the 2026-07-28
+revision replaced the initialize handshake with per-request metadata (the SDK
+answers the newest version that still has a handshake; clients speaking the
+2026-07-28 wire format carry the version via per-request `_meta`). Both
+conformance tests pin the negotiated value.
 
 ## D-005 (ADR-005) — GNU toolchain on Windows, project-scoped
 

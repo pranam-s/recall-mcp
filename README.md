@@ -31,7 +31,8 @@ that is single-tenant organization, not a security boundary: one API key (or
 the open loopback default) can read and write *every* namespace, so do not
 point mutually untrusted agents at one server.
 
-## Quickstart (commands verified green on 2026-09-07)
+## Quickstart (commands verified green on 2026-09-07; test suite, CLI commands,
+## serve, and both MCP handshakes re-verified 2026-09-12)
 
 Prereqs: Rust (GNU toolchain used here; rustup override included in the repo),
 gcc for bundled SQLite, Node 24.
@@ -51,7 +52,10 @@ cargo run -p recall-cli -- serve --bind 127.0.0.1:8787 --db recall.db
 #   Use a different embedder everywhere (hash | onnx | openai):
 cargo run -p recall-cli -- serve --embedder onnx   # needs --features onnx + ORT_DYLIB_PATH
 #   → REST:        http://127.0.0.1:8787/v1/...
-#   → MCP:         http://127.0.0.1:8787/mcp  (streamable-HTTP, spec 2026-07-28)
+#   → MCP:         http://127.0.0.1:8787/mcp  (streamable-HTTP; SDK targets the
+#                  MCP 2026-07-28 spec — `initialize` answers `2025-11-25`, the
+#                  newest legacy handshake version, because 2026-07-28 replaced
+#                  the handshake with per-request metadata — see D-004)
 #   → OpenAPI:     http://127.0.0.1:8787/openapi.json
 #   → Metrics:     http://127.0.0.1:8787/metrics  (Prometheus text)
 #   → Web UI:      http://127.0.0.1:8787/     (after step 4 builds web/dist)
