@@ -132,7 +132,8 @@ created_at desc, id asc.
   crypto roundtrips, export/import) + property-based tests (`proptest`: crypto
   roundtrip/wrong-AAD, FTS query validity, chunking invariants, scorer
   linearity, token-bucket invariants) + mutation testing (`cargo-mutants`,
-  `mutants.toml` gates crypto/scorer/util — results recorded in EVALUATION.md).
+  `mutants.toml` gates `crypto.rs`/`scorer.rs` — first recorded run: 51
+  mutants, 45 caught, 0 missed, 6 unviable; results in EVALUATION.md).
 - recall-server: router-level `oneshot` integration tests + MCP conformance
   over streamable-HTTP and stdio (initialize → tools/list → tools/call, error
   mapping, auth).
