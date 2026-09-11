@@ -313,3 +313,63 @@ streamable-HTTP, and the stdio test asserts the six-tool list.
 Open items are stated in STATUS/EVALUATION: the 10k p95 budget line, coverage
 unmeasurable on this VM and CI not yet executed (no remote), OpenAI embedder
 never called live, encryption scope limits.
+
+## 2026-09-11 (day) — the adversarial review pass: 23 findings, closed in 18 commits
+
+### The fix wave itself
+
+The hostile review (docs/ADVERSARIAL-REVIEW.md, commit b3b4b85) found one P1
+(the loopback server's browser attack surface), crypto-hygiene gaps, a
+correctness pair in the OpenAI embedder, the missing mutation/property
+testing layers, and doc drift. The fixes landed as c0df29f..8572f28, each a
+conventional commit per finding: same-origin CORS default + Host validation
+(AR-001), HKDF subkeys with one-transaction migration of pre-HKDF stores
+(AR-002), embedding-inversion honesty + a keyed-mode startup warning
+(AR-003), the MCP/REST `MAX_PAGE_LIMIT` clamp with a 10 001-memory
+end-to-end proof (AR-004), OpenAI dims validation (AR-005), atomic import
+(AR-023), rate-limiter-wraps-auth (AR-012), secure_delete on keyed upgrades
+with a forensic WAL canary (AR-013), plus the P3 wave and the STATUS/
+ARCHITECTURE true-ups. No finding was marked done without a test or an
+explicit doc statement behind it.
+
+### The mutation run that silently never happened (AR-006)
+
+EVALUATION.md shipped with `MUTANTS_PLACEHOLDER` standing in for the
+mutation score: the first cargo-mutants invocation ran against the wrong
+targets (the default workspace file set — it spent its time mutating
+`recall-cli/src/main.rs`), and the corrected invocation died at the
+unmutated baseline build under the disk pressure that later forced the
+`target/` deletion. The 8572f28 commit fixed the recipe documented in
+`mutants.toml` (cargo-mutants 27.x selects files with `-f` globs, and
+`--in-place` implies `-j 1` — an explicit `--jobs` flag is rejected), but
+the run itself and the score recording were left for this session.
+
+The completed run (21:05 IST, `--in-place`, warm build, 4 min): **51
+mutants — 43 caught, 2 missed, 6 unviable.** The 2 survivors were both
+`key_check_context` literal replacements (`""`, `"xyzzy"`), and they are
+the interesting result: the key-check AAD is applied symmetrically (the
+same function seals and opens the stored check value), so *no behavioral
+test can ever distinguish a mutated literal* — it is on-disk wire format,
+in the same class as `ENC_PREFIX` and the HKDF vector, and it needed a
+format-pinning test (`aad_context_literals_are_pinned_wire_format`), not a
+behavioral one. Re-run: **45 caught, 0 missed, 6 unviable (45/45 viable).**
+
+Two side effects recorded because they will recur on every mutant run:
+proptest appends mutant-specific cases to `*.proptest-regressions` when a
+mutant breaks a property (they pass against real code; revert after each
+run), and `--in-place` mode mutates the working tree itself — verify
+`git status` is clean before and after.
+
+### The count audit the mutation run triggered
+
+Re-verifying the suite for the record surfaced that the test headline had
+drifted: EVALUATION claimed 156, the table summed to 155, and the actual
+count after the pin test is **158** — the cli-unit row had never picked up
+the `--allow-origin` validation test from 743bcd5. Every count is now
+taken from a labeled `cargo test --workspace` log, not carried forward.
+
+**State at close.** 158 tests green (1 + 2 ignored diagnostics), clippy
+`--all-targets` 0 warnings, fmt clean, mutation score recorded with the
+survivor disposition. Remaining honest gaps unchanged: 10k p95 budget line,
+coverage CI-gated but never executed (no remote), OpenAI embedder never
+called live.

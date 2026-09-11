@@ -8,15 +8,18 @@ averaged silently.
 
 ## Test suite (all green)
 
-`cargo test --workspace` — **156 tests, 0 failures** (131 at the 2026-09-10
-re-verification → 156 at the 2026-09-11 adversarial-review fix pass; fmt clean,
+`cargo test --workspace` — **158 tests, 0 failures** (131 at the 2026-09-10
+re-verification → 156 at the 2026-09-11 adversarial-review fix pass → 158
+here: the AR-006 mutation-driven AAD pin test plus a count audit that found
+the previous headline one short — the `--allow-origin` validation test from
+`743bcd5` was never reflected in the cli-unit row; fmt clean,
 clippy `--all-targets` 0 warnings), plus 3 ignored diagnostics in the default
 build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
 `--features onnx`):
 
 | Suite | Tests | What they cover |
 |---|---|---|
-| recall-core (unit, incl. crypto) | 93 | scorer math + determinism, embedder determinism/edge cases, embedder selection, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination + count_memories (incl. wrapping `usize::MAX` LIMIT/OFFSET saturation, AR-004), maintenance, stats, export/import (**atomic import: a failed import leaves no partial rows or namespaces, AR-023**), error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB/packed-slice cosine bit-equality, recall top-k heap exactness vs brute force at 300 memories, packed-cache reuse/rebuild/write-invalidation/scan-cap parity, capture chunking, key/AEAD/digest properties, **HKDF key separation (RFC 5869 test-vector pin, subkeys ≠ master and ≠ each other, cross-decryption fails, AR-002), pre-HKDF store migration in one transaction (rows re-sealed, FTS digests recomputed, reopen idempotent, wrong key still fails), keyed upgrade shreds plaintext (secure_delete + truncated WAL, forensic canary test, AR-013), `last_accessed_at` is write-time only (AR-018)** |
+| recall-core (unit, incl. crypto) | 94 | scorer math + determinism, embedder determinism/edge cases, embedder selection, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination + count_memories (incl. wrapping `usize::MAX` LIMIT/OFFSET saturation, AR-004), maintenance, stats, export/import (**atomic import: a failed import leaves no partial rows or namespaces, AR-023**), error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB/packed-slice cosine bit-equality, recall top-k heap exactness vs brute force at 300 memories, packed-cache reuse/rebuild/write-invalidation/scan-cap parity, capture chunking, key/AEAD/digest properties, **HKDF key separation (RFC 5869 test-vector pin, subkeys ≠ master and ≠ each other, cross-decryption fails, AR-002), pre-HKDF store migration in one transaction (rows re-sealed, FTS digests recomputed, reopen idempotent, wrong key still fails), keyed upgrade shreds plaintext (secure_delete + truncated WAL, forensic canary test, AR-013), `last_accessed_at` is write-time only (AR-018), AAD wire-format literals pinned (mutation-found gap, AR-006)** |
 | recall-core (proptests) | 4 | crypto roundtrip + AAD binding over arbitrary UTF-8, FTS MATCH-syntax validity + keyed 32-hex digests, chunking cap/content-preservation/determinism, scorer total = weighted component sum + component bounds + future-timestamp clamp (512 cases each by default) |
 | recall-core (eval) | 1 | golden-set hit-rate@5 gate (below) |
 | recall-core (onnx + eval, behind `onnx`) | 4 | model metadata, empty→zero vector, semantic ordering, golden set with OnnxEmbedder |
@@ -25,7 +28,7 @@ build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
 | recall-server (api) | 8 | REST integration: namespaces, memories CRUD, recall + breakdown identity + determinism, PATCH update + tag filter, stats, full API-key matrix, list pagination with X-Total-Count, capture ingest e2e, **caller-supplied embedding with wrong dims → 400, matched dims → 201 (AR-005)** |
 | recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (6 tools, both error paths, API-key honored) |
 | recall-server (proptests) | 1 | token-bucket partition/burst bound/independent buckets over generated configs |
-| recall-cli (unit) | 7 | API-key precedence, embedder-name precedence, serve_config glue + fail-closed validation, `--allow-origin` validation |
+| recall-cli (unit) | 8 | API-key precedence, embedder-name precedence, serve_config glue + fail-closed validation, `--allow-origin` validation |
 | recall-cli (e2e) | 7 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup + vacuum; `--embedder` end-to-end |
 | recall-cli (mcp_stdio) | 1 | MCP conformance over stdio as a spawned child process |
 
@@ -112,7 +115,35 @@ checkpoint, AR-013).
 Result of the first recorded run (2026-09-11, cargo-mutants 27.1.0,
 `--in-place -j 1`, debug profile):
 
-MUTANTS_PLACEHOLDER
+**51 mutants: 45 caught, 0 missed, 6 unviable — 45/45 (100%) of viable
+mutants caught.** Final run wall-clock 4 min (warm in-place build). The
+exact invocation lives in `mutants.toml` (cargo-mutants 27.x selects files
+with `-f` globs, not a config key); raw per-mutant outcomes land in the
+gitignored `mutants.out/` and are deleted after recording.
+
+- **Caught (45 = 25 crypto + 20 scorer):** every function-body replacement
+  on `StoreKey` (`decrypt` → `Ok(Default)`, `is_encrypted` → `true/false`,
+  `from_hex` rejections, digest truncation) and the whole fusion formula in
+  `HybridScorer::score` (all `+/-/*//` swaps, `%` substitutions, `-`
+  deletion, `tau > 0.0` guard flips, `mul_add` operand swaps).
+- **Missed on the first run (2), both on `key_check_context`:** replacing
+  the literal with `String::new()` / `"xyzzy"` survived every behavioral
+  test because the key-check AAD is applied symmetrically — the same
+  function seals (sqlite.rs) and opens the stored check value, so any
+  mutated literal still round-trips. The AAD strings are on-disk wire
+  format, not re-derivable logic. **Fix:** a format-pinning unit test
+  (`aad_context_literals_are_pinned_wire_format`, crypto.rs) asserts the
+  exact literals — the same technique as the RFC 5869 vector and
+  `ENC_PREFIX` pins — plus a cross-context rejection. The re-run confirmed
+  **0 missed**; no survived mutant is left unjustified.
+- **Unviable (6, excluded from the denominator — they do not compile):**
+  `MIN_BLOB_LEN` `+`→`-` (const underflow) and five `Default::default()`
+  replacements for the non-`Default` `StoreKey` / `ScoreBreakdown` returns.
+
+Side effect worth recording: mutant runs execute the proptest suites against
+broken code, so proptest appends mutant-specific cases to
+`*.proptest-regressions`; those entries pass against the real code and are
+reverted after each run (they are run artifacts, not regressions).
 
 ## MCP conformance
 
