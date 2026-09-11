@@ -1,15 +1,44 @@
-# STATUS — Recall-MCP v0.3.1 (2026-09-11, adversarial-review fix pass)
+# STATUS — Recall-MCP v0.3.1 (2026-09-12 publication pass)
 
 Exact done/partial list. "Done" means: implemented, tests executed and green on
-this machine, committed. This pass addressed the 2026-09-11 adversarial review
+this machine, committed.
+
+## DONE (2026-09-12 publication pass)
+
+1. **Dependency freshness** — every direct dependency checked live against
+   crates.io (2026-09-12): all at latest except reqwest (0.12.28 → 0.13.5,
+   feature renamed `rustls-tls` → `rustls`; the lockfile keeps reqwest 0.12
+   alongside it for fastembed's `hf-hub 0.5`, which requires `^0.12`, so
+   `--all-features` still resolves). `cargo update` applied (6 transitive
+   bumps). `recall-core` checks and tests green with `--features openai`.
+2. **`ServerConfig` Debug redaction** — the API key no longer prints verbatim
+   in Debug output (a config Debug is exactly what ends up in logs); pinned
+   by test.
+3. **MCP wire-negotiation truth** — live probes + the rmcp 3.3 source showed
+   both transports answer a `2026-07-28` `initialize` with `2025-11-25`
+   (that revision replaced the initialize handshake with per-request
+   metadata). The previously claimed "2026-07-28 honored on HTTP" was stale;
+   corrected across README/ARCHITECTURE/design/ALTERNATIVES/EVALUATION/
+   AGENTS/D-004, and the negotiated value is now pinned in both conformance
+   tests.
+4. **Edge-case tests** — keyed unicode memory round-trip + digest recall
+   (multi-byte text through AEAD, HMAC digests, and digest-mode queries).
+5. **Publishability** — `CITATION.cff` added; CI actions bumped
+   (checkout v5 → v7, upload-artifact v4 → v7; breaking changes reviewed as
+   non-affecting); `lcov.info` gitignored; quickstart commands re-executed
+   (CLI remember/recall/export/import/backup/vacuum, serve + REST endpoints,
+   both MCP handshakes over the wire); no secrets, no absolute personal
+   paths, tree clean of temp files.
+
+## DONE (2026-09-11 security & honesty pass)
+
+The 2026-09-11 pass addressed the 2026-09-11 adversarial review
 (docs/ADVERSARIAL-REVIEW.md): the P1 browser-exploitable loopback surface, two
 crypto-hygiene gaps, the MCP/REST pagination drift, the OpenAI dims bug, the
 owner-mandated mutation/property testing layers, and every actionable P3 plus
 the stale-doc findings. The two v0.3 items below that STATUS previously listed
 as NOT DONE — the MCP `capture` tool and ONNX intra-op thread tuning (D-020) —
 had in fact shipped; they are now correctly listed as DONE.
-
-## DONE (2026-09-11 security & honesty pass)
 
 1. **AR-001 (P1): browser isolation by default** — the Host/Origin guard
    rejects foreign `Host` headers (DNS-rebinding → 421) and cross-origin

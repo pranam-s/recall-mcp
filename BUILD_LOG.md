@@ -373,3 +373,80 @@ taken from a labeled `cargo test --workspace` log, not carried forward.
 survivor disposition. Remaining honest gaps unchanged: 10k p95 budget line,
 coverage CI-gated but never executed (no remote), OpenAI embedder never
 called live.
+
+---
+
+## 2026-09-12 — publication pass: making the repo GitHub-public-ready
+
+### The stale MCP spec claim a conformance gap was hiding
+
+**What.** Re-running the documented quickstart against the built binary —
+not just the test suite — surfaced that an `initialize` naming
+`protocolVersion: "2026-07-28"` is answered `2025-11-25` on BOTH transports.
+Four docs (README, ARCHITECTURE, design, ALTERNATIVES) plus the D-004
+amendment claimed the HTTP transport "honors" the client's `2026-07-28`
+request. Neither conformance test pinned the returned value — one asserted
+`is_some()`, the other didn't look — so the rmcp 3.2 → 3.3 upgrade (AR-011)
+had silently changed wire behavior and every doc had drifted with it.
+
+**Evidence.** Live curl over streamable-HTTP and a stdio pipe probe of the
+real binary, then the SDK source:
+`rmcp-3.3.0/src/service/server.rs::negotiate_protocol_version` documents the
+design — the 2026-07-28 revision *replaced the initialize handshake* with
+per-request metadata, so a client naming that revision is answered with the
+server's newest version that still has a handshake (`2025-11-25`). Behavior
+change by design, not a bug — but a claim-vs-reality defect for the docs.
+
+**Change.** The negotiated value is now pinned in both conformance tests
+(`mcp_http.rs`, `mcp_stdio.rs`) the same way `ENC_PREFIX` and the AAD
+literals are pinned: wire format asserted verbatim, so the next SDK bump
+that changes it is caught, not absorbed. Docs corrected everywhere current
+(README, ARCHITECTURE, design, ALTERNATIVES, EVALUATION, AGENTS, D-004
+amended again, and a dated correction note inside the adversarial-review
+record rather than a silent rewrite of history).
+
+### Dependency freshness: one laggard, one ecosystem constraint
+
+**What.** Live crates.io checks of all 29 direct dependencies: everything
+already at its latest stable except `reqwest` (0.12.28 → 0.13.5 wanted). The
+bump renamed `rustls-tls` → `rustls`; the blocking-client API we use is
+unchanged. First `cargo update -p reqwest --precise 0.13.5` failed: fastembed
+6 → `hf-hub 0.5` requires `reqwest ^0.12`. Plain `cargo update` resolved it
+correctly — the lockfile now carries reqwest 0.12.28 (hf-hub's) *and* 0.13.5
+(ours), semver-incompatible duplicates coexisting, so `--all-features` still
+resolves and the onnx feature's dependency edges are untouched.
+
+**Verification.** `cargo check -p recall-core --features openai` and the
+focused openai tests compile/pass on 0.13.5 (rustls 0.23/aws-lc stack builds
+clean on windows-gnu).
+
+### Small hostile-review catches
+
+- `ServerConfig`'s hand-written `Debug` printed the API key verbatim. A
+  config Debug is exactly what ends up in logs; it now prints
+  `[redacted]`, pinned by test.
+- README claimed a "rustup override included in the repo" — overrides live
+  in rustup's settings, not repos; reworded to match D-005 instead of adding
+  a `rust-toolchain.toml` that would override the directory override and
+  flip local builds off the GNU toolchain.
+- CI actions two majors behind: checkout v5 → v7 (v6/v7 breaks: fork-PR
+  checkout under `pull_request_target`/`workflow_run`, creds moved out of
+  local git config — neither used here), upload-artifact v4 → v7 (v7 adds an
+  opt-in `archive` param; the `name`+`path` usage is unaffected).
+
+### Quickstart re-execution (the whole README block, in a temp dir)
+
+`remember`/`recall`/`export`/`import`/`backup`/`vacuum` — all green as
+documented, including the export plaintext warning line. `serve` +
+`/healthz` + `/openapi.json` (all six `/v1` paths listed) + `/metrics`
+(Prometheus text) + `/v1/stats` + full MCP streamable-HTTP handshake
+(initialize → tools/list → tools/call remember) with the required dual
+`accept` header. One honest doc nuance found by doing this: `/mcp` rejects
+`accept: application/json`-only requests with "Not Acceptable" — correct
+per the streamable-HTTP transport, worth knowing for hand-rolled clients.
+
+**State at close.** 160 tests green (3 ignored diagnostics), clippy
+`--workspace --all-targets -- -D warnings` passes, fmt clean, tree clean.
+Coverage remains CI-gated and unmeasured until a remote exists (D-010,
+unchanged); mutation score unchanged (crypto/scorer sources untouched by
+this pass except the new pin test, which only adds assertions).
