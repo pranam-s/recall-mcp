@@ -2034,6 +2034,38 @@ mod tests {
     }
 
     #[test]
+    fn keyed_store_roundtrips_and_recalls_unicode_text() {
+        // Multi-byte text exercises the full keyed path: AEAD over UTF-8
+        // bytes, FTS digests over unicode tokens, and digest-mode queries.
+        let s = keyed();
+        let e = HashEmbedder::new_256();
+        ns(&s, "w");
+        let text = "中文笔记 — déploiement du service 🚀 vendredi";
+        let m = s
+            .insert_memory(&NewMemory {
+                embedding: Some(e.embed(text)),
+                ..mem("w", text)
+            })
+            .unwrap();
+        assert_eq!(m.text, text);
+        assert_eq!(s.get_memory(&m.id).unwrap().unwrap().text, text);
+        // Keyword recall over an accented token that must survive tokenize.
+        let q = e.embed("déploiement");
+        let hits = s
+            .recall("w", "déploiement", Some(&q), &RecallParams::default(), 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memory.text, text);
+        // The stored FTS document holds only 32-hex digests, never the text.
+        let tokens: String = {
+            let mut stmt = s.conn.prepare("SELECT fts_tokens FROM memories").unwrap();
+            stmt.query_row([], |r| r.get(0)).unwrap()
+        };
+        assert!(tokens.split(' ').all(|t| t.len() == 32));
+        assert!(!tokens.contains("déploiement"));
+    }
+
+    #[test]
     fn wrong_key_fails_at_open_via_key_check() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("k.db");
