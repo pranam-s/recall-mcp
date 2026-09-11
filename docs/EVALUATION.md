@@ -1,4 +1,4 @@
-# Evaluation — Recall-MCP v0.3.1 (2026-09-11; adversarial-review fix pass)
+# Evaluation — Recall-MCP v0.3.1 (2026-09-12; publication pass)
 
 Everything below was actually run on this machine (Windows 11 VM, GNU toolchain,
 rustc 1.98.1). Nothing is claimed that was not executed. Numbers are exact.
@@ -8,23 +8,25 @@ averaged silently.
 
 ## Test suite (all green)
 
-`cargo test --workspace` — **158 tests, 0 failures** (131 at the 2026-09-10
-re-verification → 156 at the 2026-09-11 adversarial-review fix pass → 158
-here: the AR-006 mutation-driven AAD pin test plus a count audit that found
+`cargo test --workspace` — **160 tests, 0 failures** (131 at the 2026-09-10
+re-verification → 156 at the 2026-09-11 adversarial-review fix pass → 158:
+the AR-006 mutation-driven AAD pin test plus a count audit that found
 the previous headline one short — the `--allow-origin` validation test from
-`743bcd5` was never reflected in the cli-unit row; fmt clean,
+`743bcd5` was never reflected in the cli-unit row → 160 at the 2026-09-12
+publication pass: the `ServerConfig` Debug API-key-redaction test and a keyed
+unicode memory round-trip/digest-recall test; fmt clean,
 clippy `--all-targets` 0 warnings), plus 3 ignored diagnostics in the default
 build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
 `--features onnx`):
 
 | Suite | Tests | What they cover |
 |---|---|---|
-| recall-core (unit, incl. crypto) | 94 | scorer math + determinism, embedder determinism/edge cases, embedder selection, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination + count_memories (incl. wrapping `usize::MAX` LIMIT/OFFSET saturation, AR-004), maintenance, stats, export/import (**atomic import: a failed import leaves no partial rows or namespaces, AR-023**), error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB/packed-slice cosine bit-equality, recall top-k heap exactness vs brute force at 300 memories, packed-cache reuse/rebuild/write-invalidation/scan-cap parity, capture chunking, key/AEAD/digest properties, **HKDF key separation (RFC 5869 test-vector pin, subkeys ≠ master and ≠ each other, cross-decryption fails, AR-002), pre-HKDF store migration in one transaction (rows re-sealed, FTS digests recomputed, reopen idempotent, wrong key still fails), keyed upgrade shreds plaintext (secure_delete + truncated WAL, forensic canary test, AR-013), `last_accessed_at` is write-time only (AR-018), AAD wire-format literals pinned (mutation-found gap, AR-006)** |
+| recall-core (unit, incl. crypto) | 95 | scorer math + determinism, embedder determinism/edge cases, embedder selection, namespace/memory CRUD + validation, update path, recall tag filter, FTS sync, ranking/normalization/pinning/k/decay-off/zero-embedding, pagination + count_memories (incl. wrapping `usize::MAX` LIMIT/OFFSET saturation, AR-004), maintenance, stats, export/import (**atomic import: a failed import leaves no partial rows or namespaces, AR-023**), error mapping, auth key extraction, OpenAPI doc validity, keyed FTS query builder, BLOB/packed-slice cosine bit-equality, recall top-k heap exactness vs brute force at 300 memories, packed-cache reuse/rebuild/write-invalidation/scan-cap parity, capture chunking, key/AEAD/digest properties, **HKDF key separation (RFC 5869 test-vector pin, subkeys ≠ master and ≠ each other, cross-decryption fails, AR-002), pre-HKDF store migration in one transaction (rows re-sealed, FTS digests recomputed, reopen idempotent, wrong key still fails), keyed upgrade shreds plaintext (secure_delete + truncated WAL, forensic canary test, AR-013), `last_accessed_at` is write-time only (AR-018), AAD wire-format literals pinned (mutation-found gap, AR-006), keyed unicode round-trip + digest recall** |
 | recall-core (proptests) | 4 | crypto roundtrip + AAD binding over arbitrary UTF-8, FTS MATCH-syntax validity + keyed 32-hex digests, chunking cap/content-preservation/determinism, scorer total = weighted component sum + component bounds + future-timestamp clamp (512 cases each by default) |
 | recall-core (eval) | 1 | golden-set hit-rate@5 gate (below) |
 | recall-core (onnx + eval, behind `onnx`) | 4 | model metadata, empty→zero vector, semantic ordering, golden set with OnnxEmbedder |
 | recall-core (ignored, release) | 2 | exact p95 latency harness + cost-breakdown diagnostic (below) |
-| recall-server (lib) | 32 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching, OpenAPI drift guards, 413 body limit, 429 rate limiting with Retry-After + per-key independence, **failed-key requests are throttled by the anonymous bucket (AR-012)**, /metrics content, timed embedder wrapper, router embedder wiring, **AR-001 origin guard: foreign Host → 421, cross-origin Origin → 403 with no CORS grant, same-origin and header-less clients served, `--allow-origin` echo + preflight + other origins still rejected, `--allow-host` extension**, **`page_limit` clamp unit tests (usize::MAX → 10 000)**, **MCP `list_memories` caps usize::MAX end-to-end with 10 001 memories seeded (AR-004)** |
+| recall-server (lib) | 33 | healthz open with auth on, server-info spec pin, error→status mapping, auth extraction, constant-time key matching, OpenAPI drift guards, 413 body limit, 429 rate limiting with Retry-After + per-key independence, **failed-key requests are throttled by the anonymous bucket (AR-012)**, /metrics content, timed embedder wrapper, router embedder wiring, **AR-001 origin guard: foreign Host → 421, cross-origin Origin → 403 with no CORS grant, same-origin and header-less clients served, `--allow-origin` echo + preflight + other origins still rejected, `--allow-host` extension**, **`page_limit` clamp unit tests (usize::MAX → 10 000)**, **MCP `list_memories` caps usize::MAX end-to-end with 10 001 memories seeded (AR-004)**, **`ServerConfig` Debug redacts the API key** |
 | recall-server (api) | 8 | REST integration: namespaces, memories CRUD, recall + breakdown identity + determinism, PATCH update + tag filter, stats, full API-key matrix, list pagination with X-Total-Count, capture ingest e2e, **caller-supplied embedding with wrong dims → 400, matched dims → 201 (AR-005)** |
 | recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (6 tools, both error paths, API-key honored) |
 | recall-server (proptests) | 1 | token-bucket partition/burst bound/independent buckets over generated configs |
@@ -148,8 +150,11 @@ reverted after each run (they are run artifacts, not regressions).
 ## MCP conformance
 
 Both transports pass the same smoke flow (initialize → tools/list → tools/call):
-- streamable-HTTP (spec `2026-07-28` negotiated, stateless JSON mode)
-- stdio (rmcp negotiates its default `2025-11-25`; SDK behavior, D-004)
+- streamable-HTTP (stateless JSON mode; an `initialize` naming `2026-07-28` is
+  answered `2025-11-25` — the newest legacy handshake version — because the
+  2026-07-28 revision replaced the handshake with per-request metadata; rmcp
+  3.3 behavior, verified live over the wire and pinned in both conformance tests)
+- stdio (same negotiation, same pin)
 
 ## Web UI accessibility / e2e
 

@@ -2,7 +2,9 @@
 
 ## What this is (3 lines)
 Local-first semantic memory broker for AI agents: a Rust MCP server
-(stdio + streamable-HTTP, spec 2026-07-28) exposing remember/recall/forget/update_memory/
+(stdio + streamable-HTTP, built on the SDK for the 2026-07-28 spec — the wire
+`initialize` handshake answers `2025-11-25`, see D-004) exposing
+remember/recall/forget/update_memory/
 capture/list_memories over one SQLite file, plus REST, OpenAPI, web UI, CLI.
 Retrieval is hybrid BM25 + cosine + recency decay with a per-result score
 breakdown — never a black-box top-k. Read docs/PRD.md and docs/STATUS.md
@@ -13,7 +15,7 @@ before planning work.
   no HTTP/JSON types. Models, `Store` trait, `Embedder` trait, `HybridScorer`.
 - `recall-server` (axum + rmcp) and `recall-cli` (clap) are thin shells over
   core. Same engine behind REST, MCP, and CLI — no logic drift between them.
-- Decisions live in docs/adr/DECISIONS.md (D-001…D-015). Do not silently
+- Decisions live in docs/adr/DECISIONS.md (D-001…D-021). Do not silently
   deviate: if a decision is wrong, propose an amendment first.
 
 ## Style guides (load before writing code)

@@ -5,8 +5,10 @@ v1 sketch — sqlite-vec, trait `Scorer`, `--embedding-api`, utoipa — was aban
 during build-out; history is in git, decisions in docs/adr/DECISIONS.md).
 
 **Stack:** Rust 2024 (GNU toolchain, Windows) · Axum 0.8 + Tokio · SQLite via
-rusqlite (bundled, FTS5) · rmcp 3.3 (MCP spec 2026-07-28) · React 19 + Vite 8 +
-TypeScript + Tailwind 4 · `cargo test` + `cargo llvm-cov` + Playwright/axe.
+rusqlite (bundled, FTS5) · rmcp 3.3 (targets the MCP 2026-07-28 spec; the
+wire `initialize` handshake answers `2025-11-25` — see D-004) · React 19 +
+Vite 8 + TypeScript + Tailwind 4 · `cargo test` + `cargo llvm-cov` +
+Playwright/axe.
 
 ## Components
 

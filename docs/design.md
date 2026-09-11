@@ -151,10 +151,12 @@ output stay plaintext; in-place-upgraded databases may retain remnants in
 freelist pages (`vacuum`/`backup` into a fresh keyed DB for strict
 guarantees).
 
-**MCP via the official SDK, no fallback (D-004).** `rmcp` 3.2.0 implements
-the `2026-07-28` spec; tools are macro-defined. One SDK behavior is
-documented rather than fought: streamable-HTTP honors the client's
-`2026-07-28` request; stdio negotiates the SDK default `2025-11-25`. MCP
+**MCP via the official SDK, no fallback (D-004).** `rmcp` 3.3.0 targets the
+`2026-07-28` spec; tools are macro-defined. One SDK behavior is documented
+rather than fought: on both transports an `initialize` naming `2026-07-28`
+is answered `2025-11-25` — the newest version that still has an initialize
+handshake, because the 2026-07-28 revision replaced the handshake with
+per-request metadata (pinned in both conformance tests). MCP
 `remember` and `capture` auto-create namespaces (D-009) because the PRD user
 story is an agent with no setup step; REST stays strict (404 on unknown
 namespace) — the asymmetry is intentional and documented in the tool
