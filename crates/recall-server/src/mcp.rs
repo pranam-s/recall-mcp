@@ -1,9 +1,13 @@
 //! MCP server exposing `remember`, `recall`, `forget`, `update_memory`,
 //! `list_memories`, and `capture`.
 //!
-//! Transport-neutral tool layer (rmcp 3.x, MCP spec 2026-07-28) mounted over
-//! stdio and streamable-HTTP. The streamable-HTTP mount is guarded by the same
-//! API-key middleware as `/v1/*`; stdio needs none (it is a local child process).
+//! Transport-neutral tool layer (rmcp 3.x, built against the MCP 2026-07-28
+//! spec) mounted over stdio and streamable-HTTP. Wire negotiation: rmcp 3.3
+//! answers an `initialize` naming `2026-07-28` with `2025-11-25`, the newest
+//! version that still has an initialize handshake (the 2026-07-28 revision
+//! replaced the handshake with per-request metadata); both conformance tests
+//! pin this. The streamable-HTTP mount is guarded by the same API-key
+//! middleware as `/v1/*`; stdio needs none (it is a local child process).
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;

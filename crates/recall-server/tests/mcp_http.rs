@@ -88,7 +88,12 @@ async fn conformance_initialize_tools_list_call_over_http() {
     assert_eq!(status, axum::http::StatusCode::OK);
     let result = unwrap_result(&body);
     assert_eq!(result["serverInfo"]["name"], "recall-mcp");
-    assert!(result["protocolVersion"].as_str().is_some());
+    // Wire pin: rmcp 3.3 answers an `initialize` naming `2026-07-28` with
+    // `2025-11-25` — the newest version that still HAS an initialize
+    // handshake, because the 2026-07-28 revision replaced the handshake with
+    // per-request metadata (rmcp `negotiate_protocol_version`). Pinned so an
+    // SDK bump that changes the wire answer is caught, not silently absorbed.
+    assert_eq!(result["protocolVersion"], "2025-11-25");
     assert!(
         result["capabilities"]["tools"].is_object(),
         "tools capability must be advertised"
