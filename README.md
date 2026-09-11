@@ -34,7 +34,8 @@ point mutually untrusted agents at one server.
 ## Quickstart (commands verified green on 2026-09-07; test suite, CLI commands,
 ## serve, and both MCP handshakes re-verified 2026-09-12)
 
-Prereqs: Rust (GNU toolchain used here; rustup override included in the repo),
+Prereqs: Rust (the GNU toolchain is used on Windows here — a rustup
+*directory override*, not a committed file, selects it; see D-005),
 gcc for bundled SQLite, Node 24.
 
 ```bash
@@ -226,7 +227,7 @@ Two documented approximations and one honest gap in that pipeline:
 
 ## Repository hygiene
 
-- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings (2026-09-07)
+- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings (2026-09-12)
 - `cargo fmt --all` enforced
 - CI (`.github/workflows/ci.yml`): fmt + clippy, workspace tests, llvm-cov
   90/90 gate on recall-core (linux-gnu, D-010), windows-gnu test job
