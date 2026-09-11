@@ -369,6 +369,24 @@ mod tests {
     }
 
     #[test]
+    fn aad_context_literals_are_pinned_wire_format() {
+        // AAD strings are not re-derivable: they are bound into every sealed
+        // blob and the stored key check, so a store written by any build must
+        // decrypt under exactly these bytes forever. Behavioral tests cannot
+        // pin them (seal and open call the same function symmetrically — a
+        // mutation of the literal round-trips undetected), so the format is
+        // pinned like ENC_PREFIX and the HKDF vector above.
+        assert_eq!(key_check_context(), "recall-mcp:v1:key-check");
+        assert_eq!(text_context("mem-42"), "recall-mcp:v1:text:mem-42");
+        // And the key-check context is the only AAD that opens a value sealed
+        // under it (the property the store's key check relies on).
+        let k = key();
+        let sealed = k.encrypt(&key_check_context(), "check");
+        assert!(k.decrypt(&key_check_context(), &sealed).is_ok());
+        assert!(k.decrypt(&text_context("mem-42"), &sealed).is_err());
+    }
+
+    #[test]
     fn derived_subkeys_are_separated_from_the_master_and_each_other() {
         let master = [7u8; 32];
         let k = StoreKey::from_bytes(&master).unwrap();
