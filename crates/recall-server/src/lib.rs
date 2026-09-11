@@ -79,10 +79,7 @@ impl std::fmt::Debug for ServerConfig {
         // stable, useful part for logs. The API key is redacted: a Debug
         // of the config must never be the thing that leaks it into a log.
         f.debug_struct("ServerConfig")
-            .field(
-                "api_key",
-                &self.api_key.as_ref().map(|_| "[redacted]"),
-            )
+            .field("api_key", &self.api_key.as_ref().map(|_| "[redacted]"))
             .field("web_dir", &self.web_dir)
             .field("rate_limit", &self.rate_limit)
             .field("body_limit_bytes", &self.body_limit_bytes)
