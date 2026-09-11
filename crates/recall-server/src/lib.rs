@@ -76,9 +76,13 @@ pub struct ServerConfig {
 impl std::fmt::Debug for ServerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // `Arc<dyn Embedder>` has no Debug; the embedder's name is the
-        // stable, useful part for logs.
+        // stable, useful part for logs. The API key is redacted: a Debug
+        // of the config must never be the thing that leaks it into a log.
         f.debug_struct("ServerConfig")
-            .field("api_key", &self.api_key)
+            .field(
+                "api_key",
+                &self.api_key.as_ref().map(|_| "[redacted]"),
+            )
             .field("web_dir", &self.web_dir)
             .field("rate_limit", &self.rate_limit)
             .field("body_limit_bytes", &self.body_limit_bytes)
@@ -235,6 +239,17 @@ mod tests {
                 ..ServerConfig::default()
             },
         )
+    }
+
+    #[test]
+    fn server_config_debug_redacts_the_api_key() {
+        let config = ServerConfig {
+            api_key: Some("super-secret".into()),
+            ..ServerConfig::default()
+        };
+        let rendered = format!("{config:?}");
+        assert!(rendered.contains("[redacted]"), "{rendered}");
+        assert!(!rendered.contains("super-secret"), "{rendered}");
     }
 
     #[tokio::test]
