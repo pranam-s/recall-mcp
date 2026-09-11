@@ -23,7 +23,7 @@ fastembed = { version = "6", default-features = false, features = [
     "ort-load-dynamic",
     "hf-hub-rustls-tls",
 ], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
