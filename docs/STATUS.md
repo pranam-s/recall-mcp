@@ -36,9 +36,12 @@ had in fact shipped; they are now correctly listed as DONE.
    caller-supplied embeddings of the wrong length instead of silently
    zeroing all cosines.
 6. **AR-006/AR-007: mutation + property testing** — `mutants.toml` (gated on
-   crypto/scorer/util modules) with the first run recorded in EVALUATION.md;
-   five proptest targets (crypto roundtrip + wrong-AAD, FTS query validity,
-   chunking invariants, scorer linearity/bounds, token-bucket invariants).
+   crypto/scorer/util modules) with the completed run recorded in
+   EVALUATION.md (2026-09-11: 51 mutants — 45 caught, 0 missed, 6 unviable;
+   the 2 first-run survivors were unpinned AAD wire-format literals, closed
+   by a format-pinning test and confirmed on the re-run); five proptest
+   targets (crypto roundtrip + wrong-AAD, FTS query validity, chunking
+   invariants, scorer linearity/bounds, token-bucket invariants).
 7. **P3 wave** — AR-011 rmcp 3.3.0 + uuid 1.26.1; AR-012 rate limiter wraps
    auth so key-guessing is throttled; AR-013 keyed upgrades run with
    `secure_delete=ON` and finish with VACUUM + truncated WAL checkpoint
