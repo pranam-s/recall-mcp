@@ -9,6 +9,15 @@ Initial development phase — the crates (`recall-core`, `recall-server`,
 `recall-cli`) remain at 0.1.0 until first publish. Project milestones so far
 (details and honest done/partial lists in `docs/STATUS.md`):
 
+- **p95 re-baseline pass** (2026-09-14) — the p95 harness re-measured
+  against the current (post-AR-018, read-only-recall) code path: the 25 ms
+  PRD budget is met at exactly 10k memories in steady state (p95
+  20.1–20.9 ms; criterion `hybrid_k5` 15.34 ms), closing the previously
+  recorded 1.2–2.2 ms breach. The harness now warms up 100 untimed recalls
+  before the timed region (cold first-run p95 32.8 ms documented as a
+  one-time-cost caveat), and its stale refresh note was corrected. D-002's
+  ANN revisit stays deferred beyond ~100k memories/namespace — no
+  retrieval-path code changed. Numbers in `docs/EVALUATION.md`.
 - **web UI pass** (2026-09-14) — the console now surfaces the three server
   capabilities it was missing, preserving the keyboard/screen-reader baseline:
   server-driven pagination over `GET /v1/memories` (page-size select, live

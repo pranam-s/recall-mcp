@@ -86,10 +86,11 @@ One query, in order, with the file that owns each stage:
      are rare next to reads); tag-filtered recalls bypass the cache (it
      carries no tags); the packed cosine is bit-identical to the reference.
      Measured: criterion `hybrid_k5` 31.8 → 16.2 ms (−49%); exact-harness p95
-     26–27 ms. The 25 ms PRD budget at exactly 10k on the exact harness is
-     still not met and is reported as not met — the residual is the FTS
-     keyword pass plus fetch/refresh (~15 ms floor), a query-plan problem,
-     not a blob-throughput problem.
+     26–27 ms at the time of the change. Re-baselined 2026-09-14 after AR-018
+     (recalls are read-only): exact-harness p95 20.1–20.9 ms in steady state —
+     the 25 ms PRD budget at exactly 10k is met (EVALUATION.md has the
+     run-by-run numbers; the first run after a fresh build pays one-time
+     packed-cache fill and stays slower).
 3. **Scoring.** `scorer.rs::HybridScorer` computes each component
    independently:
    `total = w_bm25·norm_bm25 + w_vector·cosine + w_recency·exp(−Δdays/τ) +
@@ -215,9 +216,11 @@ the pipeline proved out.
 
 Named here rather than left for a reader to trip over:
 
-- The 25 ms PRD p95 budget is not met at exactly 10k memories on the exact
-  harness (26–27 ms); met comfortably below a few thousand. Remediation path
-  is dated and measured in EVALUATION.md, not speculative.
+- The 25 ms PRD p95 budget is met at exactly 10k memories in steady state
+  (p95 20.1–20.9 ms; re-baselined 2026-09-14 in EVALUATION.md). Cold-open
+  recall (first run after a fresh build) still pays one-time packed-cache
+  fill and breaches briefly; beyond ~100k memories/namespace the D-002 ANN
+  revisit remains the structural fix.
 - The OpenAI embedder compiles and its request/parse logic is tested, but no
   live API call has ever been made (no key); it is not on any default path.
 - Encryption scope is `memories.text` only; `export` is plaintext by design.

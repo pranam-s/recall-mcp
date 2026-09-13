@@ -43,8 +43,9 @@ gcc for bundled SQLite, Node 24.
 cargo test --workspace
 
 # 1b. Measure recall latency on the 10k fixture (criterion + exact percentiles).
-#     Measured: criterion hybrid_k5 ≈ 16 ms; exact-harness p95 ≈ 26-27 ms at 10k —
-#     see docs/EVALUATION.md before trusting the 25 ms PRD budget.
+#     Measured (2026-09-14): criterion hybrid_k5 ≈ 15 ms; exact-harness p95
+#     ≈ 20-21 ms at 10k in steady state (25 ms PRD budget met; the first run
+#     after a fresh build is slower — see docs/EVALUATION.md).
 cargo bench -p recall-core
 cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
 
