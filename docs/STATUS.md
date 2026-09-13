@@ -3,6 +3,39 @@
 Exact done/partial list. "Done" means: implemented, tests executed and green on
 this machine, committed.
 
+## DONE (2026-09-14 web UI pass)
+
+Closed the last P1 gap (inventory #7): the web UI now surfaces the three
+server capabilities it was missing, preserving the keyboard/screen-reader
+baseline (semantic HTML, sr-only table captions, aria-live status regions,
+global `:focus-visible`, no mouse-only interactions; axe AA stays at 0
+violations — Playwright scans both the loaded page and the expanded metrics
+state).
+
+1. **Pagination** — a "Browse memories" section over `GET /v1/memories`
+   (server-driven limit/offset; the unpaginated total comes from
+   `X-Total-Count`): page-size select (10/25/50), Previous/Next page buttons
+   (disabled at the ends), a live "Page x of y · a–b of n · newest first"
+   status region, a stale-response guard for racing page changes, and
+   auto-clamp when the store shrinks under the open page.
+2. **Metrics view** — `GET /metrics` parsed into a name/value table with row
+   headers (plain linear tables, no chart-only presentation) plus the raw
+   Prometheus text in a keyboard-operable disclosure (focusable scrollable
+   `pre`); Refresh announces the sample count politely.
+3. **Capture** — a form over `POST /v1/capture`: free-text namespace with a
+   datalist of existing ones (auto-created on capture, D-009; the pre-fill is
+   applied once and never clobbers user input), dynamic role/content message
+   rows announced as "Message n" fieldset groups with indexed Remove buttons,
+   optional comma-separated tags, and the captured count announced. UI
+   interpretation recorded: per-message timestamps (`at`) and
+   `max_chunk_chars` are not exposed in the form — the server defaults apply
+   (`created_at` = now, 1000-char chunk cap); roles are free text (any
+   non-empty role is prefixed into the text and tagged `role:<role>`).
+
+Web e2e extended to 5 Playwright tests, all green (functional coverage for
+each surface, keyboard-only paging, axe AA on the loaded page and the expanded
+metrics state). Vite dev proxy now forwards `/metrics`.
+
 ## DONE (2026-09-12 publication pass)
 
 1. **Dependency freshness** — every direct dependency checked live against
@@ -108,8 +141,9 @@ had in fact shipped; they are now correctly listed as DONE.
    the structural fix. (Note: recalls are now read-only — see AR-018 — which
    removes a write from the measured path; the p95 harness has not been
    re-baselined after this pass.)
-3. **Web UI** — keyboard/screen-reader accessible, axe-tested; does not yet
-   surface pagination, `/metrics`, or capture; sends no API key (AR-017).
+3. **Web UI** — keyboard/screen-reader accessible, axe-tested; surfaces
+   pagination, `/metrics`, and capture (2026-09-14 pass, above). Sends no API
+   key (AR-017).
 4. **OpenAI embedder** — logic unit-tested (request/parse/dims), selectable
    via `--embedder openai`, but never called live (no key). Not on any
    default code path.
