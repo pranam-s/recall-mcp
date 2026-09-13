@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       // Dev-mode convenience: forward API calls to a locally running server.
       "/v1": "http://127.0.0.1:8787",
+      "/metrics": "http://127.0.0.1:8787",
       "/healthz": "http://127.0.0.1:8787",
     },
   },
