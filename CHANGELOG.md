@@ -9,6 +9,14 @@ Initial development phase — the crates (`recall-core`, `recall-server`,
 `recall-cli`) remain at 0.1.0 until first publish. Project milestones so far
 (details and honest done/partial lists in `docs/STATUS.md`):
 
+- **web UI pass** (2026-09-14) — the console now surfaces the three server
+  capabilities it was missing, preserving the keyboard/screen-reader baseline:
+  server-driven pagination over `GET /v1/memories` (page-size select, live
+  status region, stale-response guard), a `/metrics` view (name/value table
+  plus keyboard-operable raw Prometheus disclosure), and a capture form over
+  `POST /v1/capture` (dynamic message rows, namespace datalist, aria-live
+  result). Playwright e2e extended to 5 tests incl. keyboard-only paging and
+  axe AA scans of the loaded and expanded states. Details in `docs/STATUS.md`.
 - **publication pass** (2026-09-12) — dependency freshness (reqwest 0.12 →
   0.13, feature rename `rustls-tls` → `rustls`; every other direct dependency
   verified at its crates.io latest), `ServerConfig` Debug now redacts the API
