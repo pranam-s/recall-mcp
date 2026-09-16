@@ -4,7 +4,7 @@ members = ["crates/recall-core", "crates/recall-server", "crates/recall-cli"]
 
 [workspace.package]
 license = "MIT"
-repository = "https://github.com/pranam/recall-mcp"
+repository = "https://github.com/pranam-s/recall-mcp"
 
 [workspace.dependencies]
 recall-core = { path = "crates/recall-core" }
