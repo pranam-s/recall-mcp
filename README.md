@@ -1,15 +1,13 @@
 # Recall-MCP
 
-[![CI](https://github.com/pranam/recall-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/pranam/recall-mcp/actions/workflows/ci.yml)
-
-**Local-first semantic memory broker for AI agents** — an MCP server (stdio +
+**Local-first semantic memory broker for AI agents**: an MCP server (stdio +
 streamable-HTTP) that any MCP-capable agent can use to `remember`, `recall`,
 `forget`, `update_memory`, and `list_memories`, backed by one SQLite file. Also
 exposes a plain HTTP/JSON API with an OpenAPI document, a `/metrics` endpoint
 in Prometheus format, transcript auto-capture, a web UI that explains every
 ranking, and a CLI for scripting (including hot backup).
 
-- Status: **v0.3 production hardening** (see [docs/STATUS.md](docs/STATUS.md)
+- Status: **v0.3.1** (see [docs/STATUS.md](docs/STATUS.md)
   for the honest done/partial list and [docs/EVALUATION.md](docs/EVALUATION.md)
   for measured results).
 
@@ -17,8 +15,8 @@ ranking, and a CLI for scripting (including hot backup).
 
 AI agents start every session from zero. Recall-MCP is a vendor-neutral memory
 layer: agents store observations/decisions/preferences as short records and get
-them back via **hybrid retrieval** — BM25 keyword scoring blended with embedding
-similarity, recency decay, and pinned boosts — with a **score breakdown on every
+them back via **hybrid retrieval**: BM25 keyword scoring blended with embedding
+similarity, recency decay, and pinned boosts, with a **score breakdown on every
 result** (`{bm25, vector, recency, pinned_boost, total}`), never a black-box top-k.
 
 ```
@@ -26,15 +24,17 @@ total = w_bm25·norm_bm25 + w_vector·cosine + w_recency·exp(-Δdays/τ) + pinn
 defaults: w = 0.45 / 0.45 / 0.10, τ = 30 days, pinned_boost = 0.2 (all tunable per request)
 ```
 
-Namespaces organize workspaces, and recall always filters by namespace — but
+Namespaces organize workspaces, and recall always filters by namespace, but
 that is single-tenant organization, not a security boundary: one API key (or
 the open loopback default) can read and write *every* namespace, so do not
 point mutually untrusted agents at one server.
 
-## Quickstart (commands verified green on 2026-09-07; test suite, CLI commands,
-## serve, and both MCP handshakes re-verified 2026-09-12)
+## Quickstart
 
-Prereqs: Rust (the GNU toolchain is used on Windows here — a rustup
+Commands verified green on 2026-09-07; the test suite, CLI commands, serve,
+and both MCP handshakes were re-verified 2026-09-12.
+
+Prereqs: Rust (the GNU toolchain is used on Windows here; a rustup
 *directory override*, not a committed file, selects it; see D-005),
 gcc for bundled SQLite, Node 24.
 
@@ -79,7 +79,7 @@ cd web && npm install && npm run build && npx playwright test
 - **stdio:** `recall-cli serve --stdio --db recall.db`
 - **streamable-HTTP:** point the client at `http://127.0.0.1:8787/mcp`
 - **Browser isolation (default, on):** the server validates the `Host`
-  header (loopback hosts only — DNS-rebinding defense, `421` otherwise) and
+  header (loopback hosts only; DNS-rebinding defense, `421` otherwise) and
   enforces a same-origin policy: requests carrying a foreign `Origin` are
   rejected (`403`) and **no CORS headers are granted by default**, so a web
   page you visit cannot read or write your memories while `serve` runs. The
@@ -90,9 +90,9 @@ cd web && npm install && npm run build && npx playwright test
   CORS headers). Non-loopback bindings additionally accept
   `--allow-host <host>` (repeatable) for LAN IPs or healthcheck hostnames.
 - **API key:** set `RECALL_MCP_API_KEY` (or `--api-key`) to require
-  `Authorization: Bearer` or `X-API-Key` on `/v1/*`, `/metrics` and `/mcp` —
-  recommended whenever anything beyond your own user session can reach the
-  port (the web UI does not send an API key; see the note in "Web UI").
+  `Authorization: Bearer` or `X-API-Key` on `/v1/*`, `/metrics` and `/mcp`,
+  which is recommended whenever anything beyond your own user session can
+  reach the port (the web UI does not send an API key; see the note in "Web UI").
   `/healthz` and `/openapi.json` always stay open.
 
 ### Operating the server (v0.3)
@@ -116,7 +116,7 @@ cd web && npm install && npm run build && npx playwright test
   wrote it.
 - **Graceful shutdown**: Ctrl-C/SIGTERM drains in-flight requests and
   checkpoints the WAL before exit.
-- **Metrics**: `GET /metrics` (Prometheus 0.0.4) — request counter, status
+- **Metrics**: `GET /metrics` (Prometheus 0.0.4) with a request counter, status
   codes, per-route latency histogram, embedding timings, rate-limit counter,
   and live store gauges.
 - **Pagination**: `GET /v1/memories?namespace=&limit=&offset=` with
@@ -127,7 +127,7 @@ cd web && npm install && npm run build && npx playwright test
 Served same-origin from the binary at `/` once built (step 4); semantic HTML,
 keyboard-first, axe-tested. Known limitation (AR-017): the UI does not send an
 API key, so it only works against a server running without
-`RECALL_MCP_API_KEY` — the intended local single-user mode. With a key
+`RECALL_MCP_API_KEY`, which is the intended local single-user mode. With a key
 configured, use the CLI/REST/MCP clients, or extend `web/src/api.ts` to
 collect and send `X-API-Key`.
 
@@ -158,7 +158,7 @@ wrap at `max_chunk_chars`, default 1000), embedded server-side, tagged
 Set `RECALL_MCP_KEY` (64 hex chars = 256-bit key, or `RECALL_MCP_KEY_FILE`
 pointing at a file containing them) and every store the CLI/server opens is
 encrypted at rest: memory text is sealed with ChaCha20-Poly1305 and the keyword
-index is built from keyed HMAC token digests, so plaintext never touches disk —
+index is built from keyed HMAC token digests, so plaintext never touches disk;
 keyword search still works. Databases created or first opened with a key are
 upgraded in place (plaintext rows are re-encrypted on first keyed open); an
 encrypted database refuses to open without the key. `recall-cli backup`
@@ -178,7 +178,7 @@ The default `HashEmbedder` is lexical. For semantic matching fully offline,
 build with `--features onnx` and run with `--embedder onnx`
 (`OnnxEmbedder`, all-MiniLM-L6-v2 quantized, 384-dim): the model downloads
 once from Hugging Face into `.fastembed_cache/`, and ONNX Runtime is loaded
-at runtime — set `ORT_DYLIB_PATH` to `onnxruntime.dll` (windows-gnu has no
+at runtime; set `ORT_DYLIB_PATH` to `onnxruntime.dll` (windows-gnu has no
 ort prebuilt; see D-013). On the golden set, HashEmbedder scores 0.980
 hit-rate@5, the ONNX embedder 1.000 (docs/EVALUATION.md). `--embedder openai`
 (`--features openai`, configured via `RECALL_MCP_OPENAI_*` env) exists for
@@ -206,7 +206,7 @@ docs/             # PRD, architecture, decisions, evaluation, status
 
 Ranking pipeline per query: FTS5 `MATCH` candidates (BM25, normalized to the
 candidate set) merged with an exact cosine scan over the namespace's BLOB
-embeddings — slimmed in v0.3 to scan only scoring columns with an exact top-k
+embeddings, slimmed in v0.3 to scan only scoring columns with an exact top-k
 candidate heap (D-016), then served from a packed in-memory vector cache so
 repeat recalls stop re-reading embedding BLOBs from SQLite (D-019; any write
 invalidates it) → `HybridScorer` produces each component → deterministic
@@ -218,7 +218,7 @@ Two documented approximations and one honest gap in that pipeline:
 - **Scan-cap boundary**: the vector scan covers a namespace's first
   `scan_cap` rows in rowid order (default 10 000). In namespaces larger than
   the cap, a keyword hit stored beyond the window gets `vector = 0.0` in its
-  breakdown — the keyword pass still finds it, but its total is lower than
+  breakdown: the keyword pass still finds it, but its total is lower than
   the same memory would earn in a smaller namespace.
 - **Keyword candidate cap**: the FTS pass considers at most `candidate_cap`
   (200) candidates.
@@ -228,7 +228,7 @@ Two documented approximations and one honest gap in that pipeline:
 
 ## Repository hygiene
 
-- `cargo clippy --workspace --all-targets -- -D warnings` — 0 warnings (2026-09-12)
+- `cargo clippy --workspace --all-targets -- -D warnings`: 0 warnings (2026-09-12)
 - `cargo fmt --all` enforced
 - CI (`.github/workflows/ci.yml`): fmt + clippy, workspace tests, llvm-cov
   90/90 gate on recall-core (linux-gnu, D-010), windows-gnu test job

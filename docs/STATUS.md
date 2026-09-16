@@ -1,7 +1,26 @@
-# STATUS — Recall-MCP v0.3.1 (2026-09-14 p95 re-baseline pass)
+# STATUS — Recall-MCP v0.3.1 (2026-09-16 GitHub-migration pass)
 
 Exact done/partial list. "Done" means: implemented, tests executed and green on
 this machine, committed.
+
+## DONE (2026-09-16 GitHub migration)
+
+The repository moved to GitHub as the private repo `pranam-s/recall-mcp`
+(owner-authorized; nothing public, no force pushes). Docs were synced for the
+move: README badge removed while Actions is off and the owner/CITATION URLs
+point at `pranam-s`; CITATION `date-released` re-stamped to the last code
+change (2026-09-14). README and CHANGELOG state the Actions decision.
+
+1. **GitHub Actions disabled by owner decision** — zero paid CI: the account
+   is billing-blocked and the owner declined spend (2026-09-16). Actions were
+   switched off via the API right after the first push, and the README carries
+   a CI note recording the decision and the zero-cost self-hosted-runner path.
+   The workflow file (`.github/workflows/ci.yml`) stays committed, ready for a
+   future runner.
+2. **Quality gates at the recorded HEAD** — every gate this VM can run was
+   executed locally before the push (see "PARTIAL" for the one gate this
+   toolchain cannot measure). The push itself is a verifiable record: the
+   remote HEAD equals the locally verified commits.
 
 ## DONE (2026-09-14 p95 re-baseline pass)
 
@@ -159,9 +178,11 @@ had in fact shipped; they are now correctly listed as DONE.
 
 ## PARTIAL
 
-1. **Coverage gate (90/90 on recall-core)** — enforced by the committed CI
-   (linux-gnu job), not measurable on this windows-gnu VM (D-010). Until the
-   first CI run, coverage is unmeasured, by policy.
+1. **Coverage gate (90/90 on recall-core)** — the workflow that enforces it
+   (linux-gnu job) is committed but GitHub Actions is disabled on the repo by
+   owner decision (2026-09-16, zero paid CI), and this windows-gnu VM cannot
+   run llvm-cov (D-010). Coverage is unmeasured, by policy; it stays that way
+   until a self-hosted runner (or re-enabled Actions) executes the workflow.
 2. **p95 at 10k memories — met in steady state; cold-open caveat** — the
    re-baselined harness measures p95 20.1–20.9 ms at exactly 10k (budget
    25 ms; 2026-09-14 runs in EVALUATION.md). The first run after a fresh
@@ -185,5 +206,6 @@ had in fact shipped; they are now correctly listed as DONE.
 - OAuth/multi-user auth (PRD non-goal), TLS, cloud sync, entity graphs,
   consolidation flows, Team Server / monetization (per owner instruction).
 - Generated TS client from OpenAPI (hand-typed `web/src/api.ts`; D-006).
-- `origin` remote / first CI run — the coverage gate remains unmeasured until
-  the workflow executes.
+- Any CI execution — Actions are disabled on the repo by owner decision
+  (2026-09-16), so the committed workflow has never run; the coverage gate
+  remains unmeasured until a runner executes it.
