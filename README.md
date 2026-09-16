@@ -233,3 +233,7 @@ Two documented approximations and one honest gap in that pipeline:
 - CI (`.github/workflows/ci.yml`): fmt + clippy, workspace tests, llvm-cov
   90/90 gate on recall-core (linux-gnu, D-010), windows-gnu test job
 - Conventional commits; every feature slice landed with its tests
+
+## CI note (2026-09-16)
+
+GitHub Actions is DISABLED on this repository by owner decision (no paid Actions: the account is billing-blocked and the owner declined spend). Every quality gate was verified by local execution at the recorded HEAD. Zero-cost remote option if ever wanted: a self-hosted runner (re-enable via Settings -> Actions, or `gh api -X PUT repos/pranam-s/recall-mcp/actions/permissions -F enabled=true`).
