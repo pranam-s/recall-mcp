@@ -178,11 +178,16 @@ had in fact shipped; they are now correctly listed as DONE.
 
 ## PARTIAL
 
-1. **Coverage gate (90/90 on recall-core)** — the workflow that enforces it
-   (linux-gnu job) is committed but GitHub Actions is disabled on the repo by
-   owner decision (2026-09-16, zero paid CI), and this windows-gnu VM cannot
-   run llvm-cov (D-010). Coverage is unmeasured, by policy; it stays that way
-   until a self-hosted runner (or re-enabled Actions) executes the workflow.
+1. **Coverage gate (90% lines + regions on recall-core)** — measured locally
+   on 2026-09-18 (dev machine now windows-msvc, where llvm-cov runs):
+   recall-core **95.00% lines / 94.03% regions**, gate exit 0; recall-server
+   measured too (96.83% / 96.13%). Method: cargo-llvm-cov 0.9.1, stable rustc
+   1.98.1; numbers in docs/EVALUATION.md. Two honest caveats: the previously
+   recorded `--fail-under-branches` flag does not exist in cargo-llvm-cov 0.9.1
+   (branch instrumentation needs nightly — true branch coverage is unmeasured,
+   D-010 amendment), and CI enforcement still waits on a runner: GitHub
+   Actions is disabled by owner decision (2026-09-16), so the corrected gate
+   in `.github/workflows/ci.yml` has not executed remotely.
 2. **p95 at 10k memories — met in steady state; cold-open caveat** — the
    re-baselined harness measures p95 20.1–20.9 ms at exactly 10k (budget
    25 ms; 2026-09-14 runs in EVALUATION.md). The first run after a fresh
@@ -207,5 +212,6 @@ had in fact shipped; they are now correctly listed as DONE.
   consolidation flows, Team Server / monetization (per owner instruction).
 - Generated TS client from OpenAPI (hand-typed `web/src/api.ts`; D-006).
 - Any CI execution — Actions are disabled on the repo by owner decision
-  (2026-09-16), so the committed workflow has never run; the coverage gate
-  remains unmeasured until a runner executes it.
+  (2026-09-16), so the committed workflow has never run remotely; the
+  coverage gate (lines + regions, D-010 amendment) is enforced locally and
+  waits on a runner for remote enforcement.

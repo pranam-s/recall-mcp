@@ -60,5 +60,7 @@ Sources (live 2026-09-06):
   tests per crate in `tests/`; one doc-test per public API item (C-EXAMPLE).
 - Commands are non-negotiable: `cargo test --workspace`,
   `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
-- windows-gnu caveat: `cargo llvm-cov` cannot run locally (no profiler
-  runtime, D-010) — the 90/90 gate runs on a linux-gnu CI runner only.
+- windows-gnu caveat: `cargo llvm-cov` cannot run on windows-gnu (no profiler
+  runtime, D-010); it runs on windows-msvc and is enforced on linux-gnu CI.
+  Gate: lines + regions >= 90 on recall-core (cargo-llvm-cov 0.9.1 has no
+  branch fail-under — D-010 amendment).

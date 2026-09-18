@@ -27,10 +27,13 @@ before planning work.
 - Gate commands: `cargo test --workspace`, `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`. All green before
   any commit is "done".
-- Coverage: 90% lines AND branches on recall-core via
-  `cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-branches 90`.
-- windows-gnu caveat: llvm-cov cannot run on this VM (no profiler runtime,
-  D-010) — report it as unmeasured locally; it is enforced on linux-gnu CI.
+- Coverage: 90% lines AND regions on recall-core via
+  `cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-regions 90`.
+  (Measured 2026-09-18 on windows-msvc: 95.00% lines / 94.03% regions.
+  cargo-llvm-cov 0.9.1 has no branch fail-under — `--branch` needs nightly —
+  so true branch coverage is a recorded tooling gap, D-010 amendment.)
+- windows-gnu caveat: llvm-cov cannot run on windows-gnu (D-010) — measure on
+  the windows-msvc dev machine or let linux-gnu CI enforce it.
   Never estimate or fabricate a coverage number.
 - Web: `cd web && npm run build && npx playwright test` (axe AA must stay 0 violations).
 - Retrieval quality: evals/ golden set gates hit-rate@5 >= 0.85 in tests.

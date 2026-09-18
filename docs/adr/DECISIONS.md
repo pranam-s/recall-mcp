@@ -140,6 +140,27 @@ standard command (`cargo llvm-cov -p recall-core --fail-under-lines 90
 --fail-under-branches 90`) on a linux-gnu CI runner; on this VM it is reported as
 **not measurable** rather than guessed. See docs/EVALUATION.md.
 
+**Amendment (2026-09-18, dev machine moved to windows-msvc).** Two facts
+changed, one stayed:
+
+1. *Coverage is now measured locally.* The D-005 "MSVC excluded" constraint was
+   a property of the old windows-gnu VM; development now happens on
+   `stable-x86_64-pc-windows-msvc`, where `cargo llvm-cov` runs. Measured
+   2026-09-18 (cargo-llvm-cov 0.9.1, rustc 1.98.1): recall-core **95.00% lines
+   / 94.03% regions / 94.69% functions**; recall-server 96.83% lines / 96.13%
+   regions. Numbers in docs/EVALUATION.md.
+2. *The recorded `--fail-under-branches 90` flag does not exist.* cargo-llvm-cov
+   0.9.1 (latest) offers `--fail-under-{functions,lines,file-lines,regions}`;
+   its `--branch` instrumentation needs nightly rustc
+   (`-Z coverage-options=branch`). The gate as written would have failed with
+   "invalid option" the first time CI ran. The stable-measurable branch-grade
+   proxy is regions (each condition/expression body is a region), so the
+   enforced gate is now `--fail-under-lines 90 --fail-under-regions 90` (both
+   met, above).
+3. *True branch coverage stays a documented gap*, not a silently dropped bar:
+   re-introduce a real branch gate if/when stable rustc ships branch
+   instrumentation (or the project adopts nightly for coverage runs).
+
 ## D-011 — e2e runs against one production-shaped server
 
 `recall-cli serve --web-dir web/dist` serves the built UI and the API from a
