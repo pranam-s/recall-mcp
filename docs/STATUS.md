@@ -1,18 +1,18 @@
 # Recall-MCP status: v0.3.1 (2026-09-18)
 
-Exact done/partial list. "Done" means: implemented, tests executed and green on
-this machine, committed.
+Exact done/partial list. "Done" means: implemented, tests executed and green
+locally, committed.
 
 ## DONE (2026-09-18 release readiness)
 
-Development moved to a new Windows 11 machine (windows-msvc, rustc 1.98.1);
-this build re-verified every gate on it and closed the release-blocking gaps.
+This build re-verified every gate on the current toolchain (windows-msvc,
+rustc 1.98.1) and closed the release-blocking gaps.
 
 1. **The coverage gate was realigned with reality.** The recorded
    `cargo llvm-cov --fail-under-branches` flag does not exist in
    cargo-llvm-cov 0.9.1 (branch instrumentation needs nightly; D-010
    amendment); it had never actually executed anywhere. Coverage is now
-   **measured** on this machine (llvm-cov runs on msvc): recall-core
+   **measured** (llvm-cov runs on msvc): recall-core
    **95.00% lines / 94.03% regions**, gate `--fail-under-lines 90
    --fail-under-regions 90` exit 0; recall-server 96.83% / 96.13%. The
    gate in ci.yml, AGENTS.md, and all docs was corrected to lines+regions.
@@ -36,12 +36,12 @@ this build re-verified every gate on it and closed the release-blocking gaps.
    are generic, details log-only); no key or plaintext logging; the
    encryption docs match the implementation including the
    keyed+invertible-embedder startup warning. One open item: git history carries a
-   personal Gmail address as the commit author address, visible when the repo
-   goes public; rewriting history would change every commit hash, so the
+   personal email address as the commit author address;
+   rewriting history would change every commit hash, so the
    decision is recorded here rather than acted on.
 5. **License audit**: all 395 published locked packages checked at their
-   locked versions (crates.io API; cargo-deny not installed on this
-   machine): all permissive, MIT-compatible; analysis of MIT-vs-Apache-2.0
+   locked versions (crates.io API; cargo-deny not part of the local
+   toolchain): all permissive, MIT-compatible; analysis of MIT-vs-Apache-2.0
    recorded, default stays MIT ([docs/LICENSE-AUDIT.md](LICENSE-AUDIT.md)).
 6. **Docs for a public repo**: README rebuilt for the Reflow-bar
    (real pasted outputs from executed commands, configuration reference
@@ -52,20 +52,17 @@ this build re-verified every gate on it and closed the release-blocking gaps.
 
 ## DONE (2026-09-16 GitHub migration)
 
-The repository moved to GitHub as the private repo `pranam-s/recall-mcp`
-(private; nothing public, no force pushes). Docs were synced for the
-move: README badge removed while Actions is off and the owner/CITATION URLs
-point at `pranam-s`; CITATION `date-released` re-stamped to the last code
+The repository moved to GitHub at `pranam-s/recall-mcp`. Docs were synced for
+the move: README badge removed while Actions is off and the README/CITATION
+URLs point at `pranam-s`; CITATION `date-released` re-stamped to the last code
 change (2026-09-14). README and CHANGELOG state the Actions decision.
 
-1. **GitHub Actions disabled by owner decision**: zero paid CI: the account
-   is billing-blocked and the owner declined spend (2026-09-16). Actions were
-   switched off via the API right after the first push, and the README carries
-   a CI note recording the decision and the zero-cost self-hosted-runner path.
-   The workflow file (`.github/workflows/ci.yml`) stays committed, ready for a
-   future runner.
-2. **Quality gates at the recorded HEAD**: every gate this VM can run was
-   executed locally before the push (see "PARTIAL" for the one gate this
+1. **GitHub Actions disabled on the repository** (2026-09-16): no paid CI
+   minutes. The README carries a CI note recording the decision and the
+   zero-cost self-hosted-runner path. The workflow file
+   (`.github/workflows/ci.yml`) stays committed, ready for a future runner.
+2. **Quality gates at the recorded HEAD**: every gate this toolchain can run
+   was executed locally before the push (see "PARTIAL" for the one gate this
    toolchain cannot measure). The push itself is a verifiable record: the
    remote HEAD equals the locally verified commits.
 
@@ -232,7 +229,7 @@ had in fact shipped; they are now correctly listed as DONE.
    recorded `--fail-under-branches` flag does not exist in cargo-llvm-cov 0.9.1
    (branch instrumentation needs nightly, so true branch coverage is unmeasured,
    D-010 amendment), and CI enforcement still waits on a runner: GitHub
-   Actions is disabled by owner decision (2026-09-16), so the corrected gate
+   Actions is disabled (2026-09-16), so the corrected gate
    in `.github/workflows/ci.yml` has not executed remotely.
 2. **p95 at 10k memories, met in steady state; cold-open caveat**: the
    re-baselined harness measures p95 20.1-20.9 ms at exactly 10k (budget
@@ -255,9 +252,9 @@ had in fact shipped; they are now correctly listed as DONE.
 - Config *file for secrets*: the JSON config intentionally excludes the API
   key and encryption key (no secrets on disk); they remain env/flag-only.
 - OAuth/multi-user auth (PRD non-goal), TLS, cloud sync, entity graphs,
-  consolidation flows, Team Server / monetization (explicit non-goals).
+  consolidation flows, Team Server (multi-user; a different product).
 - Generated TS client from OpenAPI (hand-typed `web/src/api.ts`; D-006).
-- Any CI execution: Actions are disabled on the repo by owner decision
+- Any CI execution: Actions are disabled on the repo
   (2026-09-16), so the committed workflow has never run remotely; the
   coverage gate (lines + regions, D-010 amendment) is enforced locally and
   waits on a runner for remote enforcement.

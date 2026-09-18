@@ -78,7 +78,7 @@ $1: No threat model for stored prompt injection / memory poisoning, the domain-s
 
 $1: STATUS.md falsely reports two shipped features as NOT DONE (the audit doc is wrong).**
 - Category: doc drift. File: `docs/STATUS.md:98` ("MCP `capture` tool, REST-first by design; trivial to add later") and `docs/STATUS.md:99` ("ONNX intra-op thread tuning … not a selection problem").
-- Evidence: Both are implemented and tested: the MCP `capture` tool exists (`crates/recall-server/src/mcp.rs:243-264`, conformance-tested in `tests/mcp_http.rs:218-280`), and intra-op thread tuning shipped as D-020 (`crates/recall-core/src/onnx_embed.rs:63-77`, commit 0c2d07e "feat(core): ONNX intra-op threads tuned by measurement (D-020)"). STATUS.md is the designated honest done/partial list (repo AGENTS.md: "State partial/incomplete work plainly in docs/STATUS.md, the owner audits") and it is stale against the code.
+- Evidence: Both are implemented and tested: the MCP `capture` tool exists (`crates/recall-server/src/mcp.rs:243-264`, conformance-tested in `tests/mcp_http.rs:218-280`), and intra-op thread tuning shipped as D-020 (`crates/recall-core/src/onnx_embed.rs:63-77`, commit 0c2d07e "feat(core): ONNX intra-op threads tuned by measurement (D-020)"). STATUS.md is the designated honest done/partial list (repo AGENTS.md: "State partial/incomplete work plainly in docs/STATUS.md") and it is stale against the code.
 - Fix direction: refresh STATUS.md to v0.3.1 state (capture + D-020 moved to DONE; test-count line updated); add a status-refresh step to the release checklist.
 
 $1: ARCHITECTURE.md still describes the abandoned v1 design and contradicts the implementation.**
@@ -173,7 +173,7 @@ $1: Import is non-atomic: a failure mid-import leaves a partial import (no trans
 
 ## Verification log (this review)
 
-- Environment: cargo 1.98.1 / rustc 1.98.1, Windows 11 windows-gnu, Git Bash. Preflight gate run before heavy commands (OK: 4.4 GB free RAM, 24 GB disk).
+- Environment: cargo 1.98.1 / rustc 1.98.1, windows-gnu toolchain.
 - `cargo test --workspace`: green, 131 passed / 3 ignored (without features). `cargo clippy --workspace --all-targets`: no diagnostics.
 - Live crates.io API checks for 24 direct dependencies; live npm registry checks for the web stack. All current except rmcp 3.2.0→3.3.0 and uuid 1.26.0→1.26.1 (both published 2026-09-10, after the repo's last lockfile refresh).
 - No code was changed by this review; the only artifact is this file.

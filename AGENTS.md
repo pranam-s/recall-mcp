@@ -43,12 +43,12 @@ Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), one
 green slice per commit, tests in the same commit as the change they cover.
 
 ## Accessibility (web/)
-Screen-reader user is the owner. Semantic HTML first; every control
+The web UI targets screen-reader users. Semantic HTML first; every control
 keyboard-operable with visible `:focus-visible`; labels bound to inputs;
 aria-live for async status; test with @axe-core/playwright, keep WCAG 2.1 AA
 at 0 violations. No mouse-only or hover-only interactions.
 
 ## Verify before claiming
-"Done" = implemented, tests executed and green on this machine, committed.
+"Done" = implemented, tests executed and green locally, committed.
 Never claim a pass, benchmark, or coverage number you did not run. State
-partial/incomplete work plainly in docs/STATUS.md — the owner audits.
+partial/incomplete work plainly in docs/STATUS.md — reviews check it.

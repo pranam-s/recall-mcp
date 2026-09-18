@@ -143,24 +143,7 @@ Checked against every player above as of 2026-09-06:
 - **Explainability for agents, not just humans**: score breakdowns let the
   *agent* decide whether to trust/re-query, unexploited by anyone.
 
-## Monetization patterns observed
-
-| Pattern | Who | Evidence |
-|---|---|---|
-| Usage-based SaaS (requests/credits) | Mem0, Zep, Supermemory | Mem0 $19/$249 per 50k/500k req; Zep $125/$375 per 50k/200k credits; Supermemory $19/$100 with usage credits |
-| Per-seat SaaS | Letta Teams ($20/seat), Letta API ($0.10/agent/mo) | docs.letta.com pricing |
-| Open-core + paid self-hosted/team server | **Palace**, Cognee (enterprise), Zep (BYOC) | Palace: MIT solo core, €1,490-€3,490/yr team tiers, €8k+/yr enterprise, license keys verified offline |
-| Free OSS as distribution → paid platform | Mem0 (64.8k★), Cognee (30.5k★), Supermemory (29.2k★) | Stars convert to platform trials |
-
-**Fit for Recall-MCP**: the Palace model, permissive-licensed local core +
-paid, license-keyed Team Server (shared memory, sync, OIDC/SSO, audit),
-matches our architecture (one binary, one file) and this project's values
-(local-first, no cloud dependency). Usage-based SaaS is a poor fit: it
-contradicts the local-first promise and puts us in a margin war with funded
-players. A later hosted convenience tier (managed Team Server) can layer on
-top without changing the core.
-
-## Feature recommendations (ranked by startup value)
+## Feature recommendations (ranked by product value)
 
 1. **Encryption at rest for the memory file** (SQLCipher or OS keychain-wrapped
    key). *Gap*: Cortex markets E2E encryption; Palace markets air-gapped
@@ -170,10 +153,10 @@ top without changing the core.
    plugins). *Gap*: Mem0's entire 2026 changelog is capture hooks (Kimi Code,
    DeepSeek, Strands) because manual `remember()` calls starve the store;
    every local competitor expects the agent to remember to remember.
-3. **Paid Team Server tier** (shared namespaces, sync, OIDC SSO, audit log,
-   offline license keys). *Gap*: Palace proves teams pay €1,490/yr for exactly
+3. **Self-hosted Team Server** (shared namespaces, sync, OIDC SSO, audit log).
+   *Gap*: Palace charges €1,490/yr for exactly
    this; Zep's team features are cloud-only; nobody offers self-hosted team
-   memory with permissive licensing. This is the monetization vehicle.
+   memory with permissive licensing.
 4. **Memory update/consolidation** (edit, merge, dedup, contradiction
    supersede with temporal validity). *Gap*: Mem0 "doesn't learn user
    patterns" (HN) and misdates memories (HN); Letta's answer is to spend agent

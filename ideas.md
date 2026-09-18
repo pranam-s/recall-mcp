@@ -36,7 +36,7 @@ is for the not-yet-decided.
   stable Rust (`--branch` needs nightly; D-010 amendment). Bring the branch
   gate back when stable rustc ships branch instrumentation.
 - **cargo-deny in CI** (licenses + advisories): blocked on Actions being
-  disabled (owner decision, zero paid CI). The manual license audit lives in
+  disabled (zero paid CI). The manual license audit lives in
   `docs/LICENSE-AUDIT.md` until then.
 
 ## Surface
@@ -50,8 +50,8 @@ is for the not-yet-decided.
   UI (generated clients lag the doc and bloat the bundle); revisit if a
   second API consumer appears.
 - **OpenAI embedder live verification**: request/parse/dims logic is unit-
-  tested but the client has never called the live API (no key on the dev
-  machine). One recorded live call would close the last untested-by-execution
+  tested but the client has never called the live API (no key available
+  during development). One recorded live call would close the last untested-by-execution
   path.
 
 ## Not pursuing (decided, do not re-litigate)
@@ -61,4 +61,5 @@ is for the not-yet-decided.
   product with a different threat model).
 - Entity graphs and memory consolidation flows (no demonstrated need at the
   scales this tool targets).
-- Team Server / monetization (owner instruction).
+- Team Server (multi-user shared memory is a different product; see the
+  PRD non-goals).
