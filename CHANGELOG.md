@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **CLI output: embeddings omitted by default** (2026-09-18) — `remember`,
   `recall`, and `update` print their JSON without the stored embedding
-  vector unless `--show-embedding` is passed. The 256-float vector carried
+  vector unless `--show-embedding` is passed. The embedding vector carried
   no signal for a human at a terminal and screen readers announced it as
   hundreds of zeros per record; score breakdowns and all other fields are
   unchanged, and the REST/MCP API surface is unaffected.
