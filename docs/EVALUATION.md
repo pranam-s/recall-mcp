@@ -1,22 +1,19 @@
-# Evaluation — Recall-MCP v0.3.1 (2026-09-12; publication pass)
+# Evaluation — Recall-MCP v0.3.1
 
-Everything below was actually run on this machine (Windows 11 VM, GNU toolchain,
-rustc 1.98.1). Nothing is claimed that was not executed. Numbers are exact.
-This VM (VMware, 6 cores / 12 GB) shows ±10–15% run-to-run variance on the
+Everything below was actually run on the dev machine (Windows 11,
+windows-msvc since 2026-09-18; windows-gnu before that — sections record
+which toolchain and when). Nothing is claimed that was not executed.
+Numbers are exact. The machine shows ±10–15% run-to-run variance on the
 latency benchmarks; where it matters, multiple runs are listed and never
 averaged silently.
 
 ## Test suite (all green)
 
-`cargo test --workspace` — **160 tests, 0 failures** (131 at the 2026-09-10
-re-verification → 156 at the 2026-09-11 adversarial-review fix pass → 158:
-the AR-006 mutation-driven AAD pin test plus a count audit that found
-the previous headline one short — the `--allow-origin` validation test from
-`743bcd5` was never reflected in the cli-unit row → 160 at the 2026-09-12
-publication pass: the `ServerConfig` Debug API-key-redaction test and a keyed
-unicode memory round-trip/digest-recall test; fmt clean,
-clippy `--all-targets` 0 warnings), plus 3 ignored diagnostics in the default
-build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
+`cargo test --workspace` — **161 tests, 0 failures** (160 at the 2026-09-12
+publication pass → 161 at the 2026-09-18 release-readiness pass: the CLI
+embedding-omission contract test; fmt clean, clippy `--all-targets` 0
+warnings), plus 3 ignored diagnostics in the default build (1 core FTS
+query-plan probe + 2 release-only p95/cost harnesses; 4 with
 `--features onnx`):
 
 | Suite | Tests | What they cover |
@@ -31,7 +28,7 @@ build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
 | recall-server (mcp_http) | 2 | MCP conformance over streamable-HTTP (6 tools, both error paths, API-key honored) |
 | recall-server (proptests) | 1 | token-bucket partition/burst bound/independent buckets over generated configs |
 | recall-cli (unit) | 8 | API-key precedence, embedder-name precedence, serve_config glue + fail-closed validation, `--allow-origin` validation |
-| recall-cli (e2e) | 7 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup + vacuum; `--embedder` end-to-end |
+| recall-cli (e2e) | 8 | real binary: export/import round trip; update + tag-filtered recall; encryption-at-rest e2e; backup + vacuum; `--embedder` end-to-end; **CLI JSON omits embedding vectors unless `--show-embedding` (default omit on remember/recall/update + flagged restore)** |
 | recall-cli (mcp_stdio) | 1 | MCP conformance over stdio as a spawned child process |
 
 `cargo clippy --workspace --all-targets -- -D warnings` — **0 warnings**.
@@ -43,9 +40,11 @@ build (1 core FTS query-plan probe + 2 release-only p95/cost harnesses; 4 with
 - **HashEmbedder (default): hit-rate@5 = 0.980 (49/50), gate ≥ 0.85 — PASS**
   (re-measured 2026-09-07 evening with the D-019 packed-cache recall path;
   unchanged, as the cache is bit-identical to the SQL path — unit-tested).
-- **OnnxEmbedder (`onnx` feature): hit-rate@5 = 1.000 (50/50) — PASS** (v0.2
-  result, embedder and golden set untouched since; selectable at runtime via
-  `--embedder onnx` since the evening pass).
+- **OnnxEmbedder (`onnx` feature): hit-rate@5 = 1.000 (50/50) — PASS**
+  (first measured v0.2; re-verified live 2026-09-18 on windows-msvc with
+  fastembed 7.0.1 and onnxruntime-win-x64-1.28.0 via `ORT_DYLIB_PATH` —
+  model downloaded, the four `--features onnx` tests green, selectable at
+  runtime via `--embedder onnx`).
 
 ## Performance — p95 at 10k, re-baselined post-AR-018 (2026-09-14): budget met in steady state
 
@@ -183,18 +182,19 @@ reverted after each run (they are run artifacts, not regressions).
 Both transports pass the same smoke flow (initialize → tools/list → tools/call):
 - streamable-HTTP (stateless JSON mode; an `initialize` naming `2026-07-28` is
   answered `2025-11-25` — the newest legacy handshake version — because the
-  2026-07-28 revision replaced the handshake with per-request metadata; rmcp
-  3.3 behavior, verified live over the wire and pinned in both conformance tests)
+  2026-07-28 revision replaced the handshake with per-request metadata; first
+  verified live over the wire under rmcp 3.3 and pinned in both conformance
+  tests; re-verified live under rmcp 3.4.0 on 2026-09-18 — same negotiation)
 - stdio (same negotiation, same pin)
 
 ## Web UI accessibility / e2e
 
 `npx playwright test` (production server serving `web/dist`): create memory →
-recall → score-breakdown table PASS (incl. keyboard-focus assertion); axe
-(@axe-core/playwright, wcag2a/aa + wcag21a/aa): **0 violations**. Last full
-run: 2026-09-07 22:53 IST (re-run after the evening pass — the server now
-resolves its embedder through `ServerConfig`, default unchanged — and the v0.3
-server changes; the UI's API usage, create/recall/breakdown, is unaffected).
+recall → score-breakdown table, keyboard-only pagination, capture form,
+metrics tables — **5 passed, axe (@axe-core/playwright, wcag2a/aa +
+wcag21a/aa) 0 violations**. Last full run: 2026-09-18 on the refreshed web
+dependency set (react 19.3, vite 8.3, typescript 7.0.2 — all within the
+committed caret ranges; `npm audit` 0 vulnerabilities).
 
 ## Coverage — measured (2026-09-18, windows-msvc); branch-level gap documented
 
@@ -256,7 +256,17 @@ decision) enforces the corrected lines+regions gate.
   so failed-key requests drain the shared `anonymous` bucket — key-guessing
   is throttled; distributed spoofed-key rotation is not (that threat model
   needs the Team Server, D-017).
-- CI workflow (`.github/workflows/ci.yml`) is committed but has not executed
-  (no remote configured yet).
+- CI workflow (`.github/workflows/ci.yml`) is committed but has never
+  executed remotely (GitHub Actions disabled by owner decision, 2026-09-16;
+  every gate is verified by local execution instead).
 - The `/metrics` endpoint counts the `/metrics` request only after its body is
   rendered; scrape-in-scrape self-inclusion is off by one by design.
+
+## Dependency licenses (2026-09-18)
+
+All 395 published packages in `Cargo.lock` audited at their locked versions
+via the crates.io API (method and per-license table in
+[docs/LICENSE-AUDIT.md](LICENSE-AUDIT.md)): all permissive, MIT-compatible;
+no copyleft. The three worth naming: option-ext (MPL-2.0, file-level,
+link-safe), webpki-roots (CDLA-Permissive-2.0, data), r-efi
+(OR-tri-license, LGPL arm never mandatory).

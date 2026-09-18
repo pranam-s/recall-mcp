@@ -5,6 +5,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **release-readiness pass** (2026-09-18) — coverage gate corrected to
+  lines+regions (the recorded `--fail-under-branches` flag does not exist in
+  cargo-llvm-cov 0.9.1; D-010 amendment) and **measured for real**:
+  recall-core 95.00% lines / 94.03% regions, recall-server 96.83% / 96.13%.
+  `cargo update` (rmcp 3.4.0 — negotiated-version conformance re-verified) +
+  fastembed 6 → 7 with the onnx feature verified live against
+  onnxruntime-win-x64-1.28.0. License audit of all 395 published locked
+  packages (docs/LICENSE-AUDIT.md): all permissive, MIT-compatible. Security
+  re-scan clean (tree + full history). README rebuilt for public release
+  (executed quickstart outputs, configuration reference, security/threat
+  model, parse-verified mermaid diagrams); CONTRIBUTING.md and ideas.md
+  added.
 - **CLI output: embeddings omitted by default** (2026-09-18) — `remember`,
   `recall`, and `update` print their JSON without the stored embedding
   vector unless `--show-embedding` is passed. The embedding vector carried
