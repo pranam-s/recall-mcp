@@ -3,7 +3,7 @@
 This is the design narrative for Recall-MCP: how the system is put together, how
 data flows through it, and why each structural choice was made. The
 per-decision record lives in [`docs/adr/DECISIONS.md`](adr/DECISIONS.md)
-(D-001…D-019); this document does not re-litigate those entries — it references
+(D-001…D-021); this document does not re-litigate those entries — it references
 them and adds the connective tissue: the layering, the recall data path, and
 the reasoning that spans multiple decisions. Where a number appears, it was
 measured (see [`docs/EVALUATION.md`](EVALUATION.md) for run-by-run provenance).
@@ -123,9 +123,9 @@ sign from the top bit, L2-normalized): zero downloads, platform-stable, and
 good enough that the golden-set hit-rate@5 is 0.980 against a 0.85 gate. The
 ONNX embedder (all-MiniLM-L6-v2 quantized, 384-dim, behind the `onnx`
 feature) scores 1.000 on the same set — the one lexical miss is fixed by real
-semantics — but requires a runtime DLL on windows-gnu (D-013: no ort prebuilts
-for the GNU toolchain; the MSVC-built DLL is C ABI and loads via
-`ORT_DYLIB_PATH`). Selection is runtime, fail-closed (`--embedder
+semantics — but requires a runtime DLL at runtime (D-013: ort load-dynamic;
+the official ONNX Runtime shared library is loaded via `ORT_DYLIB_PATH`).
+Selection is runtime, fail-closed (`--embedder
 onnx|hash|openai`; unknown names are typed errors; feature-gated embedders
 refuse with the required cargo feature named — never a silent fallback to
 `hash`, which would silently corrupt recall quality). A store must be read
@@ -152,7 +152,7 @@ output stay plaintext; in-place-upgraded databases may retain remnants in
 freelist pages (`vacuum`/`backup` into a fresh keyed DB for strict
 guarantees).
 
-**MCP via the official SDK, no fallback (D-004).** `rmcp` 3.3.0 targets the
+**MCP via the official SDK, no fallback (D-004).** `rmcp` 3.4.0 targets the
 `2026-07-28` spec; tools are macro-defined. One SDK behavior is documented
 rather than fought: on both transports an `initialize` naming `2026-07-28`
 is answered `2025-11-25` — the newest version that still has an initialize
@@ -226,6 +226,6 @@ Named here rather than left for a reader to trip over:
 - Encryption scope is `memories.text` only; `export` is plaintext by design.
 - The rate limiter keys on the presented API key; distributed key-rotation
   floods are out of its threat model.
-- CI is committed but has never executed (no remote configured).
+- CI is committed but has never executed remotely (GitHub Actions disabled by owner decision, 2026-09-16); all gates are verified by local execution.
 - `/metrics` counts its own request only after the body is rendered —
   scrape-in-scrape self-inclusion is off by one by design.
