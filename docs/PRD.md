@@ -51,7 +51,10 @@ decay and source pinning.
 ## Success metrics
 
 - p95 `recall` latency < 25 ms on 10k memories (local).
-- ≥ 90% line and branch coverage on core crates; MCP conformance smoke test passes.
+- ≥ 90% coverage on core crates (amended 2026-09-18: enforced as lines +
+  regions — cargo-llvm-cov 0.9.1 has no stable branch fail-under, D-010
+  amendment; true branch coverage stays a recorded gap); MCP conformance
+  smoke test passes.
 - Retrieval quality: ≥ 0.85 hit-rate@5 on a 50-query golden set (kept in `evals/`).
 
 ## Risks / mitigations

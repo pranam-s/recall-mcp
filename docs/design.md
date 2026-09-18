@@ -47,9 +47,9 @@ web/              React 19 + Vite SPA — a pure API client (D-006), served from
 evals/            fixture corpus (40 memories) + golden set (50 queries)
 ```
 
-The reason for the pure-core crate (D-001) is not aesthetic: the 90/90
-line/branch coverage gate on `recall-core` is only achievable because the
-scorer, store, embedders, chunker and crypto are testable without an HTTP
+The reason for the pure-core crate (D-001) is not aesthetic: the coverage
+gate (>= 90% lines and regions on `recall-core`) is only achievable because
+the scorer, store, embedders, chunker and crypto are testable without an HTTP
 runtime, and the MCP transport is only swappable because nothing in core knows
 it exists. The cost is deliberate duplication at the edges — REST, MCP and CLI
 each re-validate input — accepted because the alternative (a shared
@@ -206,11 +206,11 @@ the pipeline proved out.
 - **E2E + accessibility:** Playwright against one production-shaped server
   (`recall-cli serve --web-dir web/dist`, D-011 — no vite dev server in the
   e2e path), axe wcag2a/aa + wcag21a/aa: 0 violations.
-- **Coverage:** `cargo llvm-cov` 90/90 gate on recall-core runs in CI
-  (linux-gnu); it cannot run on windows-gnu (D-010 — no profiler runtime;
-  three workarounds attempted and documented, none worked). The gate has not
-  executed yet because the repo has no `origin` remote; coverage is reported
-  as **unmeasured rather than claimed**.
+- **Coverage:** `cargo llvm-cov` gate on recall-core (lines + regions >= 90;
+  cargo-llvm-cov 0.9.1 has no branch fail-under, D-010 amendment). Measured
+  locally on the windows-msvc dev machine 2026-09-18: 95.00% lines / 94.03%
+  regions (EVALUATION.md has the per-file table); windows-gnu still cannot
+  run it (D-010), and linux-gnu CI enforces the same gate remotely.
 
 ## Known limitations and debt
 

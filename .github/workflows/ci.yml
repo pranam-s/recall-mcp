@@ -1,11 +1,11 @@
-# CI for Recall-MCP (D-010 companion): the linux-gnu runner is where the
-# llvm-cov 90/90 coverage gate can actually run — windows-gnu lacks the
-# profiler runtime, so coverage is *measured here*, never estimated locally.
+# CI for Recall-MCP (D-010 companion): the linux-gnu runner enforces the
+# llvm-cov coverage gate (lines + regions >= 90); coverage is also measured
+# locally on windows-msvc (windows-gnu lacks the profiler runtime, D-010).
 #
 # Jobs:
 #   1. lint           — cargo fmt --check + clippy -D warnings (ubuntu)
 #   2. test-coverage  — full workspace tests + llvm-cov gate on recall-core
-#   3. windows-gnu    — full workspace tests on the owner's actual toolchain
+#   3. windows-gnu    — full workspace tests on the GNU toolchain
 
 name: CI
 
@@ -31,7 +31,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test-coverage:
-    name: test + coverage 90/90 (linux-gnu)
+    name: test + coverage (linux-gnu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,10 +43,14 @@ jobs:
           tool: cargo-llvm-cov
       - name: Workspace tests
         run: cargo test --workspace
-      - name: Coverage gate (>= 90% lines AND branches on recall-core)
+      # cargo-llvm-cov (0.9.x) has no --fail-under-branches; branch-level
+      # instrumentation needs nightly rustc (--branch, -Z coverage-options).
+      # Regions are the closest stable-measurable proxy and are what the
+      # >= 90 gate enforces alongside lines (D-010 amendment, 2026-09-18).
+      - name: Coverage gate (>= 90% lines AND regions on recall-core)
         run: >
           cargo llvm-cov -p recall-core
-          --fail-under-lines 90 --fail-under-branches 90
+          --fail-under-lines 90 --fail-under-regions 90
           --lcov --output-path lcov.info
       - name: Upload coverage report
         uses: actions/upload-artifact@v7

@@ -211,10 +211,11 @@ ad-hoc micro-profiling; don't make it the gate.
 Rust repos; free tier for public repos; first-class `cargo` caching via
 `Swatinem/rust-cache`; Windows + Linux runners match our matrix.
 
-**Decisive point for this repo:** the linux-gnu runner is the only place
-`cargo llvm-cov` can run (windows-gnu lacks the profiler runtime, D-010) —
-so CI is not optional hygiene, it is the mechanism that finally enforces the
-90/90 coverage gate honestly.
+**Decisive point for this repo:** at the time of writing, windows-gnu lacked
+the profiler runtime for `cargo llvm-cov` (D-010), so CI was the mechanism
+that would finally enforce the coverage gate remotely. The dev machine later
+moved to windows-msvc (where llvm-cov runs and the gate was measured locally
+in 2026-09-18), but the linux-gnu CI job still enforces it independently.
 
 **Recommendation: GitHub Actions with two jobs (high):** (1) `linux-gnu`:
 fmt-check, clippy `-D warnings`, `cargo test --workspace`, llvm-cov gate;

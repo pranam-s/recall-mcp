@@ -31,8 +31,8 @@ evals/               # fixture corpus (40 memories) + golden set (50 queries)
 ```
 
 Rationale (ADR-001): workspace crates keep the domain pure (no axum/rmcp/tokio
-types in core), which is what makes the 90/90 coverage gate achievable and the
-MCP transport swappable.
+types in core), which is what makes the coverage gate (lines + regions >= 90)
+achievable and the MCP transport swappable.
 
 ## Data model (SQLite, single file; D-002 as amended)
 
@@ -142,5 +142,6 @@ created_at desc, id asc.
 - Golden-set eval test: 50 QA pairs, hit-rate@5 ≥ 0.85 gate.
 - e2e: real-binary CLI tests over sockets; UI Playwright + axe AA.
 - Latency: exact p95 harness (ignored by default, release runs) + criterion.
-- Coverage: `cargo llvm-cov --fail-under-lines 90 --fail-under-branches 90`
-  on recall-core, enforced in CI (linux-gnu).
+- Coverage: `cargo llvm-cov --fail-under-lines 90 --fail-under-regions 90`
+  on recall-core (cargo-llvm-cov 0.9.1 has no branch fail-under; D-010
+  amendment), enforced in CI (linux-gnu) and measured locally on windows-msvc.

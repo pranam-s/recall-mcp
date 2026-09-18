@@ -196,17 +196,39 @@ run: 2026-09-07 22:53 IST (re-run after the evening pass — the server now
 resolves its embedder through `ServerConfig`, default unchanged — and the v0.3
 server changes; the UI's API usage, create/recall/breakdown, is unaffected).
 
-## Coverage — gate is CI-enforced; not measurable on this machine
+## Coverage — measured (2026-09-18, windows-msvc); branch-level gap documented
 
-Same D-010 story: `cargo llvm-cov` cannot run on windows-gnu (no profiler
-runtime). The gate `cargo llvm-cov -p recall-core --fail-under-lines 90
---fail-under-branches 90` runs in CI (linux-gnu job). The repo still has no
-`origin` remote, so CI has not executed; coverage remains **unmeasured rather
-than claimed**. Note for the first CI run: v0.3 and the 2026-09-11 pass added
-core code (capture, maintenance, pagination, packed cache, embedder selection,
-HKDF key separation + migration, origin guard, MCP clamp) and their tests in
-the same commits; ignored tests are excluded from coverage measurement by
-`--ignored` semantics, as in v0.2.
+Two changes since the last revision of this section:
+
+- The dev machine moved from windows-gnu (where `cargo llvm-cov` cannot run,
+  D-010) to windows-msvc, where it can. Coverage below is **measured**, not
+  claimed: cargo-llvm-cov 0.9.1, stable rustc 1.98.1, default test suite
+  (ignored tests excluded).
+- The previously recorded gate command was wrong: cargo-llvm-cov 0.9.1 (the
+  latest release) has **no `--fail-under-branches`** option — its `--branch`
+  instrumentation requires nightly rustc (`-Z coverage-options=branch`). The
+  first CI run would have failed with "invalid option". The gate is corrected
+  to lines + regions (regions are the closest stable-measurable branch-grade
+  proxy; see the D-010 amendment).
+
+`cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-regions 90
+--summary-only` — **exit 0**:
+
+| Crate | Lines | Regions | Functions |
+|---|---|---|---|
+| recall-core | **95.00%** (174/3480 missed) | **94.03%** (380/6370 missed) | 94.69% |
+| recall-server (measured, not gated) | 96.83% | 96.13% | 92.02% |
+
+Per-file recall-core: crypto 99.16% lines, scorer/util/error/export/embed
+100%, models 95.73%, capture 93.39%, sqlite 92.96% (the packed vector cache
+and migration paths hold the residual), lib.rs 78.57% (module docs and the
+`unix_now` clock helper).
+
+True branch coverage (not the region proxy) remains **unmeasured**: no stable
+rustc toolchain exposes branch-level instrumentation through cargo-llvm-cov
+today. It is recorded as a tooling gap in the D-010 amendment rather than
+dropped quietly; the linux-gnu CI job (Actions still disabled by owner
+decision) enforces the corrected lines+regions gate.
 
 ## Limitations
 

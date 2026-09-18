@@ -450,3 +450,65 @@ per the streamable-HTTP transport, worth knowing for hand-rolled clients.
 Coverage remains CI-gated and unmeasured until a remote exists (D-010,
 unchanged); mutation score unchanged (crypto/scorer sources untouched by
 this pass except the new pin test, which only adds assertions).
+
+---
+
+## 2026-09-18 — release-readiness pass (fresh clone on the new msvc machine)
+
+### The coverage gate everyone recorded did not exist
+
+**What.** The first release-readiness run on the new machine (windows-msvc,
+not the old windows-gnu VM) tried to execute the coverage gate exactly as
+recorded everywhere: `cargo llvm-cov -p recall-core --fail-under-lines 90
+--fail-under-branches 90`. cargo-llvm-cov 0.9.1 (the latest release) answered
+`error: invalid option '--fail-under-branches'`. Every copy of that command —
+AGENTS.md, ci.yml, README, ARCHITECTURE, design, the D-010 decision — recorded
+a flag the tool never had at this version. The gate had never actually run
+anywhere (Actions disabled, windows-gnu unable to run llvm-cov), so the typo
+survived every earlier verification pass: everyone verified the *tests*, and
+the gate line itself was never executed by anyone.
+
+**Evidence.** `cargo llvm-cov --help` lists `--fail-under-{functions,lines,
+file-lines,regions}` only; branch-level instrumentation exists behind
+`--branch`, which is nightly-only (`-Z coverage-options=branch`, rejected by
+stable rustc 1.98.1 with "1 nightly option were parsed").
+
+**What landed.** The gate was corrected to what stable tooling can measure —
+lines + regions >= 90 — and executed for real, passing: recall-core 95.00%
+lines / 94.03% regions / 94.69% functions; recall-server measured at 96.83% /
+96.13%. On this machine coverage went from "unmeasurable, CI-only" to a
+locally measured number, because D-005's MSVC exclusion died with the old VM.
+The D-010 amendment records the tooling gap honestly: true branch coverage
+stays unmeasured, and the branch gate comes back when stable rustc can
+express it.
+
+### Dependencies: two majors moved, one needed code
+
+`cargo update` pulled rmcp 3.3.0 -> 3.4.0. The release notes listed no
+handshake changes, and the thing that actually proves it is already in the
+tree: both MCP conformance tests pin the negotiated `2025-11-25` answer, and
+both stayed green. fastembed 6 -> 7 (optional `onnx` feature) deprecated
+`InitOptions` (now a `TextInitOptions` alias that warns), so the embedder
+moved to `TextInitOptions`; the four `--features onnx` tests then ran for real
+against onnxruntime-win-x64-1.28.0 via `ORT_DYLIB_PATH` — model downloaded,
+L2-norm and paraphrase-ordering assertions passed, golden set with the ONNX
+embedder passed. First time the onnx feature has been executed on this
+machine.
+
+### The rest of the pass, briefly
+
+- License audit of all 396 locked crates via the crates.io API (cargo-deny
+  not installed on this machine): all permissive. The three worth naming:
+  option-ext (MPL-2.0, file-level copyleft, link-safe), webpki-roots
+  (CDLA-Permissive-2.0 data), r-efi (MIT/Apache/LGPL tri-license — the LGPL
+  arm is one of three choices, never mandatory). No GPL/AGPL anywhere; MIT
+  stands.
+- web/ deps refreshed within existing carets (react 19.3, vite 8.3);
+  `npm audit` 0 vulnerabilities; Playwright suite re-run against a rebuilt
+  production server: 5 passed including the axe AA scans.
+- Prereq note the docs had drifted on: README said "Node 24"; the e2e now
+  runs on Node 26.
+
+**State at close.** 160 tests green (3 ignored diagnostics), clippy `-D
+warnings` clean, fmt clean, coverage gate exit 0. No retrieval-path code
+changed.
