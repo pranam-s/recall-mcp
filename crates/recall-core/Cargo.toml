@@ -19,7 +19,7 @@ hex = "0.4"
 hkdf = "0.13"
 hmac = "0.13"
 sha2 = "0.11"
-fastembed = { version = "6", default-features = false, features = [
+fastembed = { version = "7", default-features = false, features = [
     "ort-load-dynamic",
     "hf-hub-rustls-tls",
 ], optional = true }
