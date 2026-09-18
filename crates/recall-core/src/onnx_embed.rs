@@ -1,8 +1,8 @@
 //! Local semantic embeddings via ONNX, behind the non-default `onnx` feature
-//! (D-013). Uses `fastembed` 6.x on `ort` 2.0.0-rc.13 with ONNX Runtime loaded
-//! at runtime (`ort-load-dynamic`): the windows-gnu toolchain has no ort
-//! prebuilt binaries, but the official MSVC-built `onnxruntime.dll` is C ABI
-//! and loads fine via `ORT_DYLIB_PATH`.
+//! (D-013). Uses `fastembed` 7.x on `ort` 2.0.0-rc.13 with ONNX Runtime loaded
+//! at runtime (`ort-load-dynamic`): no ort prebuilt binaries ship for every
+//! toolchain, but the official `onnxruntime.dll`/`.so` is C ABI and loads fine
+//! via `ORT_DYLIB_PATH`.
 //!
 //! Model download: first construction fetches the model from Hugging Face
 //! (rustls) into the cache dir (`.fastembed_cache/` under the process cwd by
@@ -86,7 +86,7 @@ impl OnnxEmbedder {
     /// [`default_intra_threads`].
     pub fn with_model(model: OnnxModel) -> Result<Self> {
         let inner = fastembed::TextEmbedding::try_new(
-            fastembed::InitOptions::new(model.fastembed())
+            fastembed::TextInitOptions::new(model.fastembed())
                 .with_intra_threads(default_intra_threads()),
         )
         .map_err(|e| RecallError::Embedder(format!("ONNX model init failed: {e}")))?;
@@ -112,7 +112,7 @@ impl OnnxEmbedder {
         cache_dir: std::path::PathBuf,
         intra_threads: Option<usize>,
     ) -> Result<Self> {
-        let mut options = fastembed::InitOptions::new(model.fastembed())
+        let mut options = fastembed::TextInitOptions::new(model.fastembed())
             .with_cache_dir(cache_dir)
             .with_show_download_progress(true);
         if let Some(threads) = intra_threads {
