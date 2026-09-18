@@ -201,7 +201,7 @@ fn print_json(value: serde_json::Value) -> Result<()> {
 
 /// Remove every `embedding` field from serialized memory JSON (works at any
 /// nesting depth, so it covers both a single record and a hit list). The
-/// default CLI output omits the 256-float vector: it is storage detail with
+/// default CLI output omits the vector: it is storage detail with
 /// no signal for a human at a terminal, and for a screen-reader user it is
 /// hundreds of spoken zeros per record. `--show-embedding` opts back in.
 fn strip_embeddings(value: &mut serde_json::Value) {
