@@ -79,7 +79,8 @@ enum Command {
         #[arg(long = "allow-host", value_name = "HOST")]
         allow_host: Vec<String>,
     },
-    /// Store one memory (prints the created record as JSON).
+    /// Store one memory (prints the created record as JSON; the embedding
+    /// vector is omitted unless --show-embedding).
     Remember {
         #[arg(long)]
         namespace: String,
@@ -89,8 +90,14 @@ enum Command {
         tags: Vec<String>,
         #[arg(long)]
         pinned: bool,
+        /// Include the stored embedding vector in the printed JSON. Off by
+        /// default: the vector is storage detail, and for a screen-reader
+        /// user it reads as hundreds of spoken zeros per record.
+        #[arg(long)]
+        show_embedding: bool,
     },
-    /// Recall memories (prints ranked hits with breakdowns as JSON).
+    /// Recall memories (prints ranked hits with breakdowns as JSON; the
+    /// embedding vectors are omitted unless --show-embedding).
     Recall {
         #[arg(long)]
         namespace: String,
@@ -105,8 +112,12 @@ enum Command {
         /// Only return memories carrying ALL of these tags.
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Include each hit's embedding vector in the printed JSON.
+        #[arg(long)]
+        show_embedding: bool,
     },
-    /// Update a memory in place (only the given fields change; prints the record).
+    /// Update a memory in place (only the given fields change; prints the
+    /// record; the embedding vector is omitted unless --show-embedding).
     Update {
         /// Id of the memory to update.
         #[arg(long)]
@@ -120,6 +131,9 @@ enum Command {
         /// Change the pinned flag.
         #[arg(long)]
         pinned: Option<bool>,
+        /// Include the stored embedding vector in the printed JSON.
+        #[arg(long)]
+        show_embedding: bool,
     },
     /// Export the whole store to a JSON file.
     Export {
@@ -183,6 +197,37 @@ fn encryption_key() -> Result<Option<recall_core::crypto::StoreKey>> {
 fn print_json(value: serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+/// Remove every `embedding` field from serialized memory JSON (works at any
+/// nesting depth, so it covers both a single record and a hit list). The
+/// default CLI output omits the 256-float vector: it is storage detail with
+/// no signal for a human at a terminal, and for a screen-reader user it is
+/// hundreds of spoken zeros per record. `--show-embedding` opts back in.
+fn strip_embeddings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove("embedding");
+            for child in map.values_mut() {
+                strip_embeddings(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_embeddings(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Serialize a value for printing, stripping embedding vectors unless the
+/// command's `--show-embedding` flag was passed.
+fn memory_json(mut value: serde_json::Value, show_embedding: bool) -> Result<serde_json::Value> {
+    if !show_embedding {
+        strip_embeddings(&mut value);
+    }
+    Ok(value)
 }
 
 /// Write a file restricted to the current user where the OS supports it
@@ -490,6 +535,7 @@ async fn main() -> Result<()> {
             text,
             tags,
             pinned,
+            show_embedding,
         } => {
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
@@ -513,7 +559,10 @@ async fn main() -> Result<()> {
                 embedding: Some(embedding),
             })?;
             drop(guard);
-            print_json(serde_json::to_value(&memory)?)
+            print_json(memory_json(
+                serde_json::to_value(&memory)?,
+                *show_embedding,
+            )?)
         }
         Command::Recall {
             namespace,
@@ -521,6 +570,7 @@ async fn main() -> Result<()> {
             k,
             tau_days,
             tags,
+            show_embedding,
         } => {
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
@@ -542,13 +592,14 @@ async fn main() -> Result<()> {
                 &params,
                 unix_now(),
             )?;
-            print_json(serde_json::to_value(&hits)?)
+            print_json(memory_json(serde_json::to_value(&hits)?, *show_embedding)?)
         }
         Command::Update {
             id,
             text,
             tags,
             pinned,
+            show_embedding,
         } => {
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
@@ -566,7 +617,10 @@ async fn main() -> Result<()> {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .update_memory(id, &update)?;
-            print_json(serde_json::to_value(&memory)?)
+            print_json(memory_json(
+                serde_json::to_value(&memory)?,
+                *show_embedding,
+            )?)
         }
         Command::Export { out } => {
             let store = open_store(&db)?;

@@ -70,6 +70,10 @@ cargo run -p recall-cli -- import  --db fresh.db --file backup.json
 cargo run -p recall-cli -- backup  --db recall.db --out snapshot.db   # hot, compacted snapshot
 cargo run -p recall-cli -- vacuum  --db recall.db                     # in-place compact + WAL checkpoint
 
+# CLI JSON output omits embedding vectors by default (screen-reader friendly:
+# no hundreds of spoken zeros per record). Pass --show-embedding on
+# remember/recall/update to include them.
+
 # 4. Web UI + accessibility e2e (builds UI, serves it from the Rust binary, runs Playwright + axe)
 cd web && npm install && npm run build && npx playwright test
 ```

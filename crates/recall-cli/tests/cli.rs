@@ -92,6 +92,82 @@ fn cli_remember_recall_export_import_roundtrip() {
     assert_eq!(hits.as_array().unwrap().len(), 1);
 }
 
+/// Accessibility contract for the CLI surface: printed JSON omits the
+/// embedding vector unless `--show-embedding` is passed (a screen reader
+/// would otherwise announce hundreds of zeros per record).
+#[test]
+fn cli_output_omits_embeddings_unless_asked() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("emb.db");
+    let db_str = db.to_str().unwrap();
+
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--namespace",
+            "a11y",
+            "--text",
+            "quiet terminal output",
+        ],
+    );
+    assert!(out.status.success(), "remember failed: {}", out.stdout);
+    let memory: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(
+        memory.get("embedding").is_none(),
+        "default remember output must omit the embedding"
+    );
+    let id = memory["id"].as_str().unwrap().to_string();
+
+    let out = run(
+        db_str,
+        &["recall", "--namespace", "a11y", "--query", "quiet output"],
+    );
+    assert!(out.status.success(), "recall failed: {}", out.stdout);
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(hits.as_array().unwrap().len(), 1);
+    assert!(
+        hits[0].get("embedding").is_none(),
+        "default recall output must omit the embedding"
+    );
+    assert!(
+        hits[0]["breakdown"]["total"].as_f64().unwrap() > 0.0,
+        "breakdown stays"
+    );
+
+    let out = run(db_str, &["update", "--id", &id, "--pinned", "true"]);
+    assert!(out.status.success(), "update failed: {}", out.stdout);
+    let updated: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(
+        updated.get("embedding").is_none(),
+        "default update output must omit the embedding"
+    );
+
+    let out = run(
+        db_str,
+        &[
+            "recall",
+            "--namespace",
+            "a11y",
+            "--query",
+            "quiet output",
+            "--show-embedding",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "flagged recall failed: {}",
+        out.stdout
+    );
+    let hits: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(
+        hits[0]["embedding"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty()),
+        "--show-embedding must restore the vector"
+    );
+}
+
 #[test]
 fn cli_rejects_unknown_namespace_on_strict_paths_and_bad_queries() {
     let dir = tempfile::tempdir().expect("tempdir");
