@@ -1,4 +1,4 @@
-# Ideas — deferred, with reasons
+# Ideas, deferred with reasons
 
 Nothing here is promised. Each item records why it is parked so a future
 session can pick it up (or drop it) with the original reasoning intact.
@@ -9,7 +9,7 @@ is for the not-yet-decided.
 
 - **ANN or packed-vector-file retrieval beyond ~100k memories/namespace**
   (D-002, mandatory revisit beyond that scale). Deferred: the 10k worst case
-  meets its 25 ms p95 budget in steady state (p95 20.1–20.9 ms, re-baselined
+  meets its 25 ms p95 budget in steady state (p95 20.1-20.9 ms, re-baselined
   post-AR-018); building ANN now would add an index format with no problem to
   solve at realistic scales. LanceDB is the recorded first choice when the
   trigger fires.
@@ -22,7 +22,7 @@ is for the not-yet-decided.
   remove it; deferred because it is one-time cost outside the PRD metric,
   documented rather than hidden.
 - **Eviction / recency-of-use policy**: the `last_accessed_at` column is
-  reserved for it (write-time only since AR-018 — recalls no longer touch
+  reserved for it (write-time only since AR-018; recalls no longer touch
   it). Needs a use case before it earns an UPDATE back on the hot path.
 
 ## Trust and encryption
@@ -56,7 +56,7 @@ is for the not-yet-decided.
 
 ## Not pursuing (decided, do not re-litigate)
 
-- Multi-user auth/OAuth, TLS termination, cloud sync (PRD non-goals —
+- Multi-user auth/OAuth, TLS termination, cloud sync (PRD non-goals;
   local-first single-user tool; putting it on the network is a different
   product with a different threat model).
 - Entity graphs and memory consolidation flows (no demonstrated need at the
