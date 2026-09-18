@@ -1,7 +1,54 @@
-# STATUS — Recall-MCP v0.3.1 (2026-09-16 GitHub-migration pass)
+# STATUS — Recall-MCP v0.3.1 (2026-09-18 release-readiness pass)
 
 Exact done/partial list. "Done" means: implemented, tests executed and green on
 this machine, committed.
+
+## DONE (2026-09-18 public-release-readiness pass)
+
+Development moved to a new Windows 11 machine (windows-msvc, rustc 1.98.1);
+this pass re-verified every gate on it and closed the release-blocking gaps.
+
+1. **The coverage gate was realigned with reality.** The recorded
+   `cargo llvm-cov --fail-under-branches` flag does not exist in
+   cargo-llvm-cov 0.9.1 (branch instrumentation needs nightly; D-010
+   amendment) — it had never actually executed anywhere. Coverage is now
+   **measured** on this machine (llvm-cov runs on msvc): recall-core
+   **95.00% lines / 94.03% regions**, gate `--fail-under-lines 90
+   --fail-under-regions 90` exit 0; recall-server 96.83% / 96.13%. The
+   gate in ci.yml, AGENTS.md, and all docs was corrected to lines+regions.
+2. **Dependency freshness** — `cargo update` (26 packages, incl. rmcp
+   3.3.0 → 3.4.0: the pinned `2025-11-25` handshake re-verified by the
+   conformance tests on both transports) and **fastembed 6 → 7** for the
+   optional onnx feature (`InitOptions` → `TextInitOptions`; the deprecated
+   alias warns in 7). The four `--features onnx` tests ran live with
+   onnxruntime-win-x64-1.28.0 via `ORT_DYLIB_PATH` — model downloaded,
+   1.000 hit-rate gate green. web/ deps refreshed within carets (react
+   19.3, vite 8.3); `npm audit` 0 vulnerabilities; Playwright 5/5 with axe
+   AA 0 violations re-run.
+3. **CLI output: embeddings omitted by default** — `remember`/`recall`/
+   `update` strip the embedding vector from their JSON unless
+   `--show-embedding` (a screen reader would read hundreds of zeros per
+   record; the owner navigates by NVDA). Pinned by a new e2e test; 161
+   tests total, 0 failed, 3 ignored diagnostics.
+4. **Security re-scan for going public** — no secrets in the working tree
+   or any of the 76 commits (pattern scan; `sk-test` fixtures are inert and
+   inventoried); no personal paths; client-visible errors stay short (500s
+   are generic, details log-only); no key or plaintext logging; the
+   encryption docs match the implementation including the
+   keyed+invertible-embedder startup warning. One owner-visible note: git
+   history carries the owner's personal Gmail as a commit author address —
+   visible when the repo goes public; rewriting history would change every
+   commit hash, so it is the owner's call, not done here.
+5. **License audit** — all 395 published locked packages checked at their
+   locked versions (crates.io API; cargo-deny not installed on this
+   machine): all permissive, MIT-compatible; analysis of MIT-vs-Apache-2.0
+   recorded, default stays MIT ([docs/LICENSE-AUDIT.md](LICENSE-AUDIT.md)).
+6. **Docs for a public repo** — README rebuilt for the Reflow-bar
+   (real pasted outputs from executed commands, configuration reference
+   table, security/threat-model section, two mermaid diagrams verified
+   with `mermaid.parse()`); `CONTRIBUTING.md` and `ideas.md` added;
+   `docs/design.md` refreshed (D-021 range, rmcp 3.4.0, CI reality);
+   `.gitattributes` pins LF endings.
 
 ## DONE (2026-09-16 GitHub migration)
 
