@@ -1,13 +1,13 @@
-# Style guide — toolchain conventions (Cargo, rustfmt, clippy, performance)
+# Style guide: toolchain conventions (Cargo, rustfmt, clippy, performance)
 
 Sources (live 2026-09-06):
-- Cargo Book (official) — <https://doc.rust-lang.org/cargo/> (workspaces,
+- Cargo Book (official): <https://doc.rust-lang.org/cargo/> (workspaces,
   features, registry/semver conventions)
-- rustfmt — <https://github.com/rust-lang/rustfmt> (default style; the tool
-  is authoritative — do not fight it with a heavily customized
+- rustfmt: <https://github.com/rust-lang/rustfmt> (default style; the tool
+  is authoritative: do not fight it with a heavily customized
   `rustfmt.toml`)
-- Clippy — <https://doc.rust-lang.org/clippy/> (lint groups, `#[allow]` etiquette)
-- The Rust Performance Book — <https://nnethercote.github.io/perf-book/>
+- Clippy: <https://doc.rust-lang.org/clippy/> (lint groups, `#[allow]` etiquette)
+- The Rust Performance Book: <https://nnethercote.github.io/perf-book/>
   (profiling-first methodology; relevant to the p95 < 25 ms recall budget)
 - Feature naming per Rust API Guidelines **C-FEATURE**; metadata per **C-METADATA**
 
@@ -17,7 +17,7 @@ Sources (live 2026-09-06):
   `Cargo.toml` via `[workspace.dependencies]` and `workspace = true` in
   members (cargo 1.64+ feature; keeps the three crates in lockstep).
 - **Semver discipline** (Cargo Book: "Semver Compatibility"): pre-1.0 crates
-  treat minor as breaking — bump `0.x` when a public type changes; document
+  treat minor as breaking: bump `0.x` when a public type changes; document
   in release notes (C-RELNOTES).
 - **Features are additive, noun-named** (C-FEATURE): `openai` exists; new
   ones follow (`onnx`, `sqlcipher`). No `default = [...]` surprises: the
@@ -63,4 +63,4 @@ Sources (live 2026-09-06):
 - windows-gnu caveat: `cargo llvm-cov` cannot run on windows-gnu (no profiler
   runtime, D-010); it runs on windows-msvc and is enforced on linux-gnu CI.
   Gate: lines + regions >= 90 on recall-core (cargo-llvm-cov 0.9.1 has no
-  branch fail-under — D-010 amendment).
+  branch fail-under: D-010 amendment).

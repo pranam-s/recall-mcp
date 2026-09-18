@@ -1,4 +1,4 @@
-# Alternatives memo — implemented-stack review (2026-09-06)
+# Alternatives memo, implemented-stack review (2026-09-06)
 
 For each locked choice: current-state evidence (checked today), tradeoffs,
 cost/benefit of switching NOW vs staying, and a recommendation with
@@ -15,17 +15,17 @@ issues) pulled 2026-09-06; crates.io API; MCP spec release notes.
 | React+Vite vs Leptos/Dioxus | **Stay** with React+Vite | High |
 | Auth: API key vs OAuth resource server | **Stay** API-key locally; OAuth RS only if a hosted/team server ships | High |
 | Benchmarks: criterion vs divan | **criterion** as the gate | Medium |
-| CI: GitHub Actions | **Yes** — it also unblocks the D-010 coverage gate | High |
+| CI: GitHub Actions | **Yes**, it also unblocks the D-010 coverage gate | High |
 
 ## 1. rusqlite (bundled) vs sqlx
 
 **Evidence.** In use: rusqlite 0.40.2, bundled SQLite, WAL, FTS5 (D-002).
 sqlx is alive: 17.5k★, 0.9.0 published 2026-05-21 (crates.io), 141.7M
-downloads — but note the GitHub repo now resolves under the `transact-rs`
+downloads, but note the GitHub repo now resolves under the `transact-rs`
 org (redirect from launchbadge/sqlx observed 2026-09-06; crates.io metadata
 still says launchbadge). Governance churn is a watch item, not a defect.
 
-**Tradeoffs.** rusqlite is synchronous — which is why `recall-core` is pure
+**Tradeoffs.** rusqlite is synchronous, which is why `recall-core` is pure
 and branch-testable without an async runtime (D-001/D-007). sqlx brings
 compile-time-checked SQL and async, but its SQLite support is the weakest of
 its three backends, `SQLX_OFFLINE`/prepared-query friction is real, and
@@ -47,7 +47,7 @@ adopting.
 official Tier-1 SDK; we're on 3.3.0 targeting spec `2026-07-28` (D-004).
 That spec revision is the **largest ever** (statelessness: initialize
 handshake and `Mcp-Session-Id` removed; extensions first-class; Tasks
-reworked; JSON Schema 2020-12 tool schemas —
+reworked; JSON Schema 2020-12 tool schemas;
 [release note](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/)).
 
 **Tradeoffs.** Hand-rolling buys full control and no SDK API churn, at the
@@ -55,7 +55,7 @@ price of personally re-implementing every SEP (stateless `_meta` transport,
 `server/discover`, MRTR `requestState`, extensions negotiation). The SDK is
 exactly the artifact that absorbs spec drift; since 3.3.0 both transports
 answer a `2026-07-28` `initialize` with `2025-11-25` (the newest legacy
-handshake version — 2026-07-28 replaced the handshake with per-request
+handshake version; 2026-07-28 replaced the handshake with per-request
 metadata), a behavior change the SDK made deliberately and we pin in the
 conformance tests (D-004).
 
@@ -68,11 +68,11 @@ this was the right call.
 
 ## 3. HashEmbedder vs local ONNX vs API embedders
 
-**Evidence.** HashEmbedder (256-dim feature hashing) is lexical-only — it
+**Evidence.** HashEmbedder (256-dim feature hashing) is lexical-only, so it
 cannot match synonyms/paraphrase. Local ONNX is healthy in 2026:
 `fastembed-rs` (1.0k★, Apache-2.0, **pushed 2026-08-27**) packages ONNX
 embedding models + rerankers on `ort` (2.5k★, **2 open issues**, pushed
-2026-09-02 — very active). Kalosm exists but is a broader framework, less
+2026-09-02, very active). Kalosm exists but is a broader framework, less
 focused for this one job. API embedders: `OpenAIEmbedder` is already
 implemented behind the `openai` feature (D-003), unexercised against the
 live API.
@@ -80,10 +80,10 @@ live API.
 **Tradeoffs.** HashEmbedder: deterministic, offline, tiny, but caps
 retrieval quality (our golden-set hit-rate 0.980 is lexical-friendly).
 ONNX: real semantic recall, still fully offline, but adds a model download,
-ONNX Runtime native dep (Windows GNU compat must be validated — same class
-of risk as D-005's bundled-SQLite story) and ~30–100 MB binary/data. API:
+ONNX Runtime native dep (Windows GNU compat must be validated, same class
+of risk as D-005's bundled-SQLite story) and ~30-100 MB binary/data. API:
 best quality-per-model-size but breaks local-first, adds latency, cost, and
-a key requirement — precisely the OpenMemory MCP complaint.
+a key requirement, precisely the OpenMemory MCP complaint.
 
 **Switch cost/benefit.** Adding `fastembed-rs` behind a non-default `onnx`
 feature is incremental (implement `Embedder`, ship a benchmark comparing
@@ -116,11 +116,11 @@ new test harness. Benefit: none measurable.
 ## 5. SQLite (+ brute-force cosine) vs LanceDB / Qdrant-embedded / sqlite-vec
 
 **Evidence.** LanceDB: 11.4k★, Apache-2.0, Rust-native embedded retrieval,
-actively pushed 2026-09-06 — a genuine embedded alternative for ANN at
+actively pushed 2026-09-06, a genuine embedded alternative for ANN at
 scale. sqlite-vec: 8.1k★ but C-extension distribution (last push
-2026-05-18) — blocked on windows-gnu by extension-loading risk (D-002).
+2026-05-18), blocked on windows-gnu by extension-loading risk (D-002).
 Qdrant: designed as a standalone server; no first-class embedded,
-Windows-GNU-friendly mode — it's a deployment, not a dependency.
+Windows-GNU-friendly mode; it is a deployment, not a dependency.
 
 **Tradeoffs.** Exact brute-force cosine is O(namespace rows) per query but
 deterministic, explainable, extension-free, and matches our PRD ceiling
@@ -131,7 +131,7 @@ D-007) in exchange for sub-linear ANN we don't need yet. One SQLite file
 
 **Switch cost/benefit.** Cost: new storage engine, dual-format migration,
 async contagion in core. Benefit: appears only past ~100k memories/namespace
-or if p95 recall regresses past 25 ms (unmeasured — see benchmarks below).
+or if p95 recall regresses past 25 ms (unmeasured, see benchmarks below).
 
 **Recommendation: stay (high).** Codify the revisit trigger: benchmark
 first (below), then only if numbers breach budget. If we ever need ANN,
@@ -146,8 +146,8 @@ Tailwind 4 + Playwright/axe with **0 axe violations** (D-012, STATUS).
 
 **Tradeoffs.** Leptos/Dioxus give one-language purity and Wasm size wins,
 but: the accessibility tooling (axe-core, testing-library patterns, screen-
-reader documentation, ARIA examples) is deepest in the React ecosystem —
-and the owner is an NVDA user, making a11y the binding constraint, not
+reader documentation, ARIA examples) is deepest in the React ecosystem;
+and accessibility is the binding constraint here, not
 bundle size. Rust UI frameworks still have thinner ARIA patterns, fewer
 audited component primitives, and smaller hiring/future-agent-maintenance
 pools.
@@ -162,7 +162,7 @@ UI is disposable; revisit only if a desktop packaging need emerges
 ## 7. Auth: API-key vs OAuth resource server (planned feature)
 
 **Evidence.** The 2026-07-28 spec overhaul realigned MCP auth with real
-OAuth 2.0/OIDC deployments: six SEPs — RFC 9207 `iss` validation (SEP-2468),
+OAuth 2.0/OIDC deployments: six SEPs: RFC 9207 `iss` validation (SEP-2468),
 DCR `application_type` for desktop/CLI clients (SEP-837), credential
 issuer-binding (SEP-2352), refresh-token guidance (SEP-2207), step-up scope
 clarifications (SEP-2350/2351)
@@ -173,7 +173,7 @@ open-by-default loopback use.
 
 **Tradeoffs.** OAuth resource-server semantics would let enterprise MCP
 clients do dynamic registration and token audience validation against a
-real AS — meaningless for a single local user, significant for a hosted
+real AS, meaningless for a single local user, significant for a hosted
 team server. API keys are zero-infrastructure, transparent, and match the
 local-first promise; their weakness (no expiry/rotation) is acceptable when
 the threat model is "loopback plus LAN".
@@ -181,7 +181,7 @@ the threat model is "loopback plus LAN".
 **Recommendation: keep API-key for the local product (high).** If/when a
 Team Server ships (COMPETITORS.md rec #3), implement it as an OAuth 2.0
 resource server (RFC 9207 `iss`, DCR `application_type=native` for desktop
-clients) per the 2026-07-28 SEPs — that spec section becomes the spec to
+clients) per the 2026-07-28 SEPs, and that spec section becomes the spec to
 conform to, not an alternative to it.
 
 ## 8. Benchmarks: criterion vs divan (planned feature)
@@ -194,7 +194,7 @@ allocation tracking, less boilerplate; community (HN thread
 speed/simplicity but notes fewer statistical guarantees than criterion.
 
 **Tradeoffs.** Our PRD metric is a latency budget (p95 < 25 ms on 10k
-memories) — we need (a) trustworthy distributions for a gate, and (b) a
+memories), we need (a) trustworthy distributions for a gate, and (b) a
 server-level harness (real SQLite, real query mix), which neither crate
 provides out of the box. divan measures niceties (alloc counts) that matter
 less than the p95 number; criterion's change detection is what turns a
@@ -225,7 +225,7 @@ windows-gnu spike job only behind a flag.
 
 ## Watchlist (next review: after Team Server decision or 100k-memory trigger)
 
-- sqlx governance (`transact-rs` org) and SQLite backend health — affects
+- sqlx governance (`transact-rs` org) and SQLite backend health all affect
   any future "async core" temptation.
 - rmcp minor releases for `2026-07-28` Final-spec conformance suite.
 - `ort`/`fastembed-rs` windows-gnu compatibility (the D-005 story repeating).

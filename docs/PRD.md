@@ -1,10 +1,10 @@
-# PRD — Recall-MCP
+# Recall-MCP PRD
 
 **Status:** Draft v1 (2026-09-06) · **Owner:** Pranam · **Stack:** Rust (Axum, Tokio, SQLite) + MCP + React 19/Vite UI
 
 ## Problem
 
-AI agents (ZCode, AutoClaw, Claude-family tools, custom builds) are amnesiac. Every session starts
+AI agents (MCP clients, custom builds) are amnesiac. Every session starts
 from zero; context is re-pasted, decisions are re-explained, and user preferences are re-learned.
 Existing "memory" features are vendor-locked. What's missing is a **local-first, vendor-neutral
 memory layer that any agent can use through an open protocol**.
@@ -19,7 +19,7 @@ decay and source pinning.
 ## Goals (v1)
 
 1. Implement an **MCP server** (stdio + streamable-HTTP transports) exposing tools:
-   `remember`, `recall`, `forget`, `list-memories` — per the current MCP specification.
+   `remember`, `recall`, `forget`, `list-memories`, per the current MCP specification.
 2. Hybrid retrieval: keyword (BM25-ish scoring) blended with embedding similarity; recency decay
    knob; deterministic, explainable ranking with score breakdowns in API responses.
 3. Multi-workspace namespacing (`workspace_id` scoping) so different projects never leak memories.
@@ -36,7 +36,7 @@ decay and source pinning.
 ## Innovations (resume differentiators)
 
 1. **MCP-native memory**: among the first local memory brokers exposing itself as an MCP server
-   rather than a REST SaaS — plugs into ZCode/AutoClaw/any MCP client with zero glue code.
+   rather than a REST SaaS: plugs into any MCP client with zero glue code.
 2. **Explainable hybrid retrieval**: every result ships its score decomposition
    (keyword/vector/recency), not a black-box top-k.
 3. **Local-first with zero dependencies**: one SQLite file; no daemon services, no cloud round-trip.
@@ -52,7 +52,7 @@ decay and source pinning.
 
 - p95 `recall` latency < 25 ms on 10k memories (local).
 - ≥ 90% coverage on core crates (amended 2026-09-18: enforced as lines +
-  regions — cargo-llvm-cov 0.9.1 has no stable branch fail-under, D-010
+  regions; cargo-llvm-cov 0.9.1 has no stable branch fail-under, D-010
   amendment; true branch coverage stays a recorded gap); MCP conformance
   smoke test passes.
 - Retrieval quality: ≥ 0.85 hit-rate@5 on a 50-query golden set (kept in `evals/`).

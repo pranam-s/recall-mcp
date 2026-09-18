@@ -1,9 +1,9 @@
-# Design — Recall-MCP
+# Recall-MCP design
 
 This is the design narrative for Recall-MCP: how the system is put together, how
 data flows through it, and why each structural choice was made. The
 per-decision record lives in [`docs/adr/DECISIONS.md`](adr/DECISIONS.md)
-(D-001…D-021); this document does not re-litigate those entries — it references
+(D-001…D-021); this document does not re-litigate those entries; it references
 them and adds the connective tissue: the layering, the recall data path, and
 the reasoning that spans multiple decisions. Where a number appears, it was
 measured (see [`docs/EVALUATION.md`](EVALUATION.md) for run-by-run provenance).
@@ -17,7 +17,7 @@ HTTP/JSON API (`/v1/*`) with a hand-written OpenAPI document, and a CLI for
 scripting that uses the same engine. One SQLite file is the whole store. The
 product thesis is **explainable retrieval**: every recall result carries its
 score breakdown `{bm25, vector, recency, pinned_boost, total}`, never a
-black-box top-k — the web UI renders the breakdown per result, which is the
+black-box top-k; the web UI renders the breakdown per result, which is the
 reason the scorer's components are individually computed and unit-tested
 rather than folded into one opaque similarity number.
 
@@ -51,8 +51,8 @@ The reason for the pure-core crate (D-001) is not aesthetic: the coverage
 gate (>= 90% lines and regions on `recall-core`) is only achievable because
 the scorer, store, embedders, chunker and crypto are testable without an HTTP
 runtime, and the MCP transport is only swappable because nothing in core knows
-it exists. The cost is deliberate duplication at the edges — REST, MCP and CLI
-each re-validate input — accepted because the alternative (a shared
+it exists. The cost is deliberate duplication at the edges (REST, MCP and CLI
+each re-validate input), accepted because the alternative (a shared
 validation layer typed for async HTTP) would drag axum types back into core.
 
 ## The recall data path
@@ -64,7 +64,7 @@ One query, in order, with the file that owns each stage:
    (in `sqlite.rs`). BM25 ranks candidates; the BM25 score is normalized
    against the candidate set, not the corpus, so `norm_bm25` is comparable
    across queries. In encrypted mode (D-014) both documents and queries are
-   HMAC token digests — BM25 sees identical token multiplicities, plaintext
+   HMAC token digests, so BM25 sees identical token multiplicities, plaintext
    never touches disk.
 2. **Candidate generation, vector side.** An exact cosine scan over the
    namespace's embedding BLOBs. This is the D-002 decision: no sqlite-vec, no
@@ -76,7 +76,7 @@ One query, in order, with the file that owns each stage:
      (`util::cosine_f32_blob*`, bit-identical to the reference, unit-tested),
      and keeps a bounded max-heap of the k best *vector-only* rows. Outside
      the FTS candidate set bm25 is 0, so a row's vector-only total **is** its
-     final total — the heap provably contains every row that could reach the
+     final total; the heap provably contains every row that could reach the
      final top-k. Full rows are fetched only for survivors (≤ candidate_cap +
      k rows). Measured: p95 67.2 → ~34 ms at 10k.
    - **D-019 (packed vector cache):** the first untagged vector pass packs the
@@ -86,23 +86,23 @@ One query, in order, with the file that owns each stage:
      are rare next to reads); tag-filtered recalls bypass the cache (it
      carries no tags); the packed cosine is bit-identical to the reference.
      Measured: criterion `hybrid_k5` 31.8 → 16.2 ms (−49%); exact-harness p95
-     26–27 ms at the time of the change. Re-baselined 2026-09-14 after AR-018
-     (recalls are read-only): exact-harness p95 20.1–20.9 ms in steady state —
+     26-27 ms at the time of the change. Re-baselined 2026-09-14 after AR-018
+     (recalls are read-only): exact-harness p95 20.1-20.9 ms in steady state;
      the 25 ms PRD budget at exactly 10k is met (EVALUATION.md has the
      run-by-run numbers; the first run after a fresh build pays one-time
      packed-cache fill and stays slower).
 3. **Scoring.** `scorer.rs::HybridScorer` computes each component
    independently:
    `total = w_bm25·norm_bm25 + w_vector·cosine + w_recency·exp(−Δdays/τ) +
-   pinned_boost`, defaults 0.45/0.45/0.10, τ=30d, boost 0.2 — all tunable per
+   pinned_boost`, defaults 0.45/0.45/0.10, τ=30d, boost 0.2, all tunable per
    request. Components are summed, never blended before the breakdown is
    recorded; this is what makes the web UI's explanation honest.
 4. **Ordering.** Deterministic tie-break: total desc, created_at desc, then
-   rowid asc (D-016 changed this from the random UUID id — only
+   rowid asc (D-016 changed this from the random UUID id; only
    content-identical duplicates straddling the k-boundary are affected).
 5. **Post-processing.** Top-k full rows fetched; recall is read-only over
    `last_accessed_at` (the access-time refresh was removed in the 2026-09-11
-   pass — AR-018: it had no consumer and cost a write per recall).
+   pass, AR-018: it had no consumer and cost a write per recall).
 
 ## Design decisions that shape everything else
 
@@ -114,7 +114,7 @@ risk on windows-gnu, and approximate ANN is the wrong trade at a documented
 1M-row ceiling when exactness is what makes breakdowns explainable); a
 client-side vector DB (breaks the single-file property). Revisit trigger,
 formally measured, not speculative: beyond ~100k memories/namespace, or if the
-remaining ~15 ms FTS floor ever matters — LanceDB is the first choice on
+remaining ~15 ms FTS floor ever matters; LanceDB is the first choice on
 windows-gnu when that day comes.
 
 **HashEmbedder by default (D-003), real semantics behind a feature (D-013).**
@@ -122,12 +122,12 @@ The default embedder is deterministic feature hashing (FNV-1a to 256 buckets,
 sign from the top bit, L2-normalized): zero downloads, platform-stable, and
 good enough that the golden-set hit-rate@5 is 0.980 against a 0.85 gate. The
 ONNX embedder (all-MiniLM-L6-v2 quantized, 384-dim, behind the `onnx`
-feature) scores 1.000 on the same set — the one lexical miss is fixed by real
-semantics — but requires a runtime DLL at runtime (D-013: ort load-dynamic;
+feature) scores 1.000 on the same set, and the one lexical miss is fixed by real
+semantics, but it requires a runtime DLL at runtime (D-013: ort load-dynamic;
 the official ONNX Runtime shared library is loaded via `ORT_DYLIB_PATH`).
 Selection is runtime, fail-closed (`--embedder
 onnx|hash|openai`; unknown names are typed errors; feature-gated embedders
-refuse with the required cargo feature named — never a silent fallback to
+refuse with the required cargo feature named, never a silent fallback to
 `hash`, which would silently corrupt recall quality). A store must be read
 with the embedder that wrote it.
 
@@ -137,13 +137,13 @@ with the embedder that wrote it.
 trait requires only `Send`. The D-019 cache lives in a `RefCell` inside
 `SqliteStore`, sound under the same single-threaded-access argument. A
 re-entrant lock bug in the CLI remember path was caught by e2e and fixed by
-holding one guard per logical operation — the pattern is now "one guard per
+holding one guard per logical operation; the pattern is now "one guard per
 logical operation" everywhere.
 
 **Encryption as an application layer, not a file format (D-014).** ChaCha20-
 Poly1305 over `memories.text` with per-record nonces and AAD binding to the
 row id; keyword search survives because FTS5 indexes HMAC-SHA256 token
-digests under the same key. Alternative rejected: SQLCipher — whole-file
+digests under the same key. Alternative rejected: SQLCipher, whole-file
 encryption changes the file format for every user, drags an OpenSSL-shaped
 dependency onto windows-gnu, and still leaves the FTS content table
 plaintext unless separately encrypted. The scope is stated plainly:
@@ -155,17 +155,17 @@ guarantees).
 **MCP via the official SDK, no fallback (D-004).** `rmcp` 3.4.0 targets the
 `2026-07-28` spec; tools are macro-defined. One SDK behavior is documented
 rather than fought: on both transports an `initialize` naming `2026-07-28`
-is answered `2025-11-25` — the newest version that still has an initialize
+is answered `2025-11-25`, the newest version that still has an initialize
 handshake, because the 2026-07-28 revision replaced the handshake with
 per-request metadata (pinned in both conformance tests). MCP
 `remember` and `capture` auto-create namespaces (D-009) because the PRD user
 story is an agent with no setup step; REST stays strict (404 on unknown
-namespace) — the asymmetry is intentional and documented in the tool
+namespace); the asymmetry is intentional and documented in the tool
 description.
 
 **Hardening defaults that keep loopback ergonomics (D-017).** Constant-time
 API-key comparison; 1 MiB body limit; optional per-key token-bucket rate
-limiting (off by default — the local-first single-user default — with a
+limiting (off by default, the local-first single-user default, with a
 shared `anonymous` bucket that also throttles key-guessing when on);
 Prometheus metrics; graceful shutdown that drains in-flight requests and
 checkpoints the WAL (SIGTERM is a no-op arm on Windows); config precedence
@@ -182,7 +182,7 @@ tag-filtered recall works without new tables. The chunk/embed/commit pipeline
 lives in `recall-server::capture`, shared verbatim by `POST /v1/capture` and
 the MCP `capture` tool (added 2026-09-08, closing D-018), so the two surfaces
 cannot drift; embedding happens outside the store lock on both paths.
-REST-first was deliberate — hooks speak HTTP — with the MCP tool added once
+REST-first was deliberate (hooks speak HTTP), with the MCP tool added once
 the pipeline proved out.
 
 ## Testing and verification
@@ -195,16 +195,16 @@ the pipeline proved out.
 - **Quality gate:** golden-set hit-rate@5 ≥ 0.85
   (`crates/recall-core/tests/golden_eval.rs`, 50 queries in
   `evals/golden.json`): Hash 0.980, ONNX 1.000.
-- **Latency:** two harnesses on a 10k fixture — criterion
+- **Latency:** two harnesses on a 10k fixture: criterion
   (`crates/recall-core/benches/recall_latency.rs`) and an exact-percentile
-  release-only test (`tests/p95_latency.rs`) — because criterion means and
+  release-only test (`tests/p95_latency.rs`), because criterion means and
   exact p95 answer different questions. Run-to-run variance on this VM is
-  ±10–15%; multiple runs are listed in EVALUATION.md, never averaged silently.
+  ±10-15%; multiple runs are listed in EVALUATION.md, never averaged silently.
 - **MCP conformance:** the same initialize → tools/list → tools/call smoke
   over both transports (`recall-server/tests/mcp_http.rs`,
   `recall-cli/tests/mcp_stdio.rs`).
 - **E2E + accessibility:** Playwright against one production-shaped server
-  (`recall-cli serve --web-dir web/dist`, D-011 — no vite dev server in the
+  (`recall-cli serve --web-dir web/dist`, D-011, no vite dev server in the
   e2e path), axe wcag2a/aa + wcag21a/aa: 0 violations.
 - **Coverage:** `cargo llvm-cov` gate on recall-core (lines + regions >= 90;
   cargo-llvm-cov 0.9.1 has no branch fail-under, D-010 amendment). Measured
@@ -217,7 +217,7 @@ the pipeline proved out.
 Named here rather than left for a reader to trip over:
 
 - The 25 ms PRD p95 budget is met at exactly 10k memories in steady state
-  (p95 20.1–20.9 ms; re-baselined 2026-09-14 in EVALUATION.md). Cold-open
+  (p95 20.1-20.9 ms; re-baselined 2026-09-14 in EVALUATION.md). Cold-open
   recall (first run after a fresh build) still pays one-time packed-cache
   fill and breaches briefly; beyond ~100k memories/namespace the D-002 ANN
   revisit remains the structural fix.
@@ -227,5 +227,5 @@ Named here rather than left for a reader to trip over:
 - The rate limiter keys on the presented API key; distributed key-rotation
   floods are out of its threat model.
 - CI is committed but has never executed remotely (GitHub Actions disabled by owner decision, 2026-09-16); all gates are verified by local execution.
-- `/metrics` counts its own request only after the body is rendered —
+- `/metrics` counts its own request only after the body is rendered;
   scrape-in-scrape self-inclusion is off by one by design.

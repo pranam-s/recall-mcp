@@ -3,21 +3,21 @@
 **A local-first memory broker for AI agents.** One SQLite file, one server,
 and every answer shows its work: agents `remember` decisions and `recall`
 them later through MCP (stdio or streamable-HTTP), REST, or a CLI, and each
-hit comes back with the score breakdown that ranked it —
+hit comes back with the score breakdown that ranked it:
 `{bm25, vector, recency, pinned_boost, total}`. Keyword search works out of
 the box; an optional local ONNX embedder adds semantic matching without
 sending a byte anywhere; optional per-database encryption at rest seals
 memory text with ChaCha20-Poly1305.
 
 Status: **v0.3.1** (see [docs/STATUS.md](docs/STATUS.md)
-for the honest done/partial list and [docs/EVALUATION.md](docs/EVALUATION.md)
+for the done/partial list and [docs/EVALUATION.md](docs/EVALUATION.md)
 for measured results).
 
 ## Why
 
 AI agents start every session from zero. Recall-MCP is a vendor-neutral
 memory layer: agents store observations, decisions, and preferences as short
-records and get them back via hybrid retrieval — BM25 keyword scoring blended
+records and get them back via hybrid retrieval: BM25 keyword scoring blended
 with embedding similarity, recency decay, and pinned boosts.
 
 ```
@@ -125,11 +125,11 @@ $ curl -s http://127.0.0.1:8787/mcp -X POST -H 'content-type: application/json' 
 
 On the protocol version: the SDK targets the MCP `2026-07-28` spec, which
 replaced the initialize handshake with per-request metadata, so a client
-sending `2026-07-28` gets `2025-11-25` back — the newest legacy handshake
+sending `2026-07-28` gets `2025-11-25` back, the newest legacy handshake
 version (D-004, verified over the wire and pinned in the conformance tests).
 
 `create_namespace` via REST is strict (a memory for an unknown namespace is
-a 404); the MCP tools and the CLI auto-create namespaces instead — deliberate,
+a 404); the MCP tools and the CLI auto-create namespaces instead, a deliberate,
 documented asymmetry (D-008).
 
 Web UI + accessibility e2e (builds the UI, serves it from the Rust binary,
@@ -241,7 +241,7 @@ talk to it"; everything beyond that is opt-in and stated plainly.
   with the semantic embedders (`onnx`, `openai`), published
   embedding-inversion attacks can reconstruct memory **text** from the
   stored vector with usable fidelity, so keyed mode does not protect text
-  there — the server logs a warning at startup when you combine a key with
+there; the server logs a warning at startup when you combine a key with
   those embedders, and the default `hash` embedder is the at-rest
   confidentiality choice. `export` output is plaintext JSON by design; the
   CLI warns and writes owner-only files.
@@ -303,7 +303,7 @@ flowchart TD
     RANK --> TOPK["top-k with breakdowns"]
 ```
 
-Three documented approximations and one honest gap in that pipeline:
+Three documented approximations and one open gap in that pipeline:
 
 - **Scan-cap boundary**: the vector scan covers a namespace's first
   `scan_cap` rows in rowid order (default 10 000). In namespaces larger than
@@ -317,7 +317,7 @@ Three documented approximations and one honest gap in that pipeline:
   eviction/recency-of-use policy.
 - **Cold open**: the first recall after a fresh build is slower (p95 32.8 ms
   at 10k) while the packed vector cache fills; steady state meets the
-  25 ms budget (p95 20.1–20.9 ms). Beyond ~100k memories/namespace the
+  25 ms budget (p95 20.1-20.9 ms). Beyond ~100k memories/namespace the
   D-002 ANN revisit applies (see [ideas.md](ideas.md)).
 
 ## Repository hygiene
@@ -326,7 +326,7 @@ Three documented approximations and one honest gap in that pipeline:
 - `cargo fmt --all` enforced
 - Coverage measured with llvm-cov: recall-core 95.00% lines / 94.03%
   regions, gate at 90/90 (docs/EVALUATION.md; branch-level instrumentation
-  needs a nightly toolchain — recorded in D-010)
+  needs a nightly toolchain, recorded in D-010)
 - CI (`.github/workflows/ci.yml`): fmt + clippy, workspace tests, llvm-cov
   gate on recall-core (linux-gnu), windows-gnu test job
 - Conventional commits; every feature slice landed with its tests
@@ -339,6 +339,6 @@ GitHub Actions is DISABLED on this repository by owner decision (no paid Actions
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Contributions are welcome; see
+MIT; see [LICENSE](LICENSE). Contributions are welcome; see
 [CONTRIBUTING.md](CONTRIBUTING.md) for the gates and conventions. Deferred
 product ideas live in [ideas.md](ideas.md).

@@ -78,14 +78,14 @@ aria-live for async status, visible focus. No mouse-only interactions.
 Bug fixes, hardening, docs, test coverage, toolchain and dependency
 maintenance. Larger product ideas (ANN retrieval beyond ~100k
 memories/namespace, cold-open latency work, encrypted embeddings) are
-deliberately deferred — see `ideas.md` before proposing an implementation.
+deliberately deferred; see `ideas.md` before proposing an implementation.
 
 ## Reporting issues
 
 Include: what you ran, the exact command, expected vs actual, and the
 `cargo clippy`/`cargo test` state of your tree. For MCP questions, state the
 client and the negotiated protocol version (the server answers `2025-11-25`
-to a `2026-07-28` initialize — that revision replaced the handshake with
+to a `2026-07-28` initialize; that revision replaced the handshake with
 per-request metadata; see D-004).
 
 ## License
