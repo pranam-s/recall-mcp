@@ -1,6 +1,6 @@
 # Recall-MCP PRD
 
-**Status:** Draft v1 (2026-09-06) · **Owner:** Pranam · **Stack:** Rust (Axum, Tokio, SQLite) + MCP + React 19/Vite UI
+**Status:** Draft v1 (2026-09-06) · **Stack:** Rust (Axum, Tokio, SQLite) + MCP + React 19/Vite UI
 
 ## Problem
 

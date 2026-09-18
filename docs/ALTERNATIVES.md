@@ -219,7 +219,7 @@ in 2026-09-18), but the linux-gnu CI job still enforces it independently.
 
 **Recommendation: GitHub Actions with two jobs (high):** (1) `linux-gnu`:
 fmt-check, clippy `-D warnings`, `cargo test --workspace`, llvm-cov gate;
-(2) `windows-gnu`: build + `cargo test --workspace` (what the VM runs),
+(2) `windows-gnu`: build + `cargo test --workspace`,
 plus the web job (`npm run build`, Playwright, axe). Trigger the ONNX
 windows-gnu spike job only behind a flag.
 

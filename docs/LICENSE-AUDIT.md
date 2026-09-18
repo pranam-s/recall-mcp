@@ -2,9 +2,9 @@
 
 Every package in `Cargo.lock` at its locked version, checked against the
 crates.io registry API (one request per crate-version pair, 395 published
-packages + this workspace). `cargo-deny` would automate this; it is not
-installed on the dev machine (installing needs owner approval per tool
-policy), so the review ran manually. Re-run after any dependency change.
+packages + this workspace). `cargo-deny` would automate this; it is not part
+of the local toolchain, so the review ran manually. Re-run after any
+dependency change.
 
 ## Result: no copyleft conflict with the MIT license
 

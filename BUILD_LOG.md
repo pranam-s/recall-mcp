@@ -6,8 +6,8 @@ one and the change that followed. The clean final state hides exactly what a
 reviewer most wants to see: a plan that turned out wrong, a tool that failed
 silently, a budget that was missed and reported anyway. Decisions behind the
 changes live in `docs/adr/DECISIONS.md`; this file records how each landed in
-practice. All times IST. Every claim below was executed on this machine
-(Windows 11 VM, GNU toolchain); nothing is reconstructed from memory alone;each entry cross-references the commit that carries it.
+practice. All times IST. Every claim below was executed for real
+(GNU toolchain on Windows); nothing is reconstructed from memory alone; each entry cross-references the commit that carries it.
 
 
 ## 2026-09-06, v0.1: the whole vertical, in one night
@@ -49,7 +49,8 @@ compiler-rt sources not shipped). Alternatives surveyed: cargo-tarpaulin
 runtime), MSVC toolchain (excluded by D-005, the GNU-toolchain decision).
 
 **Consequence.** The gate runs in CI on a linux-gnu job with the standard
-command; on this VM coverage is reported as **not measurable**, never guessed.
+command; on the windows-gnu toolchain coverage is reported as **not
+measurable**, never guessed.
 (The repo has no `origin` remote yet, so CI itself has not executed, stated
 in STATUS rather than papered over.)
 
@@ -113,8 +114,8 @@ a 10k-memory fixture (the documented worst case for an exact scan) read
 criterion means and exact p95 answer different questions).
 
 **Evidence.** Two harnesses, same fixture: criterion `hybrid_k5` 80.5 ms mean;
-exact harness p95 67.2-72.5 ms across runs. The VM shows ±10-15%
-run-to-run variance, so EVALUATION.md lists every run and never averages
+exact harness p95 67.2-72.5 ms across runs. Run-to-run variance is ±10-15%,
+so EVALUATION.md lists every run and never averages
 silently.
 
 **Consequence.** v0.2 shipped with the breach stated in STATUS/EVALUATION
@@ -225,7 +226,7 @@ buffer.
 
 **Evidence discipline worth copying.** The pre-change baseline was re-measured
 **immediately before** the change (22:07 IST, same-day baseline 55.9 ms p95 on
-the exact harness) so the comparison shares the VM's load and temperature.
+the exact harness) so the comparison shares the load and thermal conditions.
 Post-change: criterion `hybrid_k5` 31.8 → **16.16 ms** (−49.1%, CI −50.1 to
 −48.2); exact-harness p95 26.2-27.2 ms across 3 runs. Cost-breakdown
 diagnostic: the vector pass went from ≈ +23 ms over the keyword floor to −4
@@ -241,7 +242,7 @@ re-run with the cache: 0.980 (49/50), unchanged, as expected, since the cache
 is bit-identical to the SQL path.
 
 **The headline.** The 25 ms PRD budget is **still breached at exactly
-10k** on the exact harness (by 1.2-2.2 ms; the VM's ±10-15% variance spans the
+10k** on the exact harness (by 1.2-2.2 ms; the ±10-15% run-to-run variance spans the
 line). The residual is the FTS keyword pass plus fetch/refresh (~15 ms floor)
 : a query-plan problem with no documented one-line remedy. Reported as not
 met, not massaged.
@@ -302,7 +303,7 @@ streamable-HTTP, and the stdio test asserts the six-tool list.
 
 **State at close.** 126 tests green, clippy `-D warnings` clean, fmt clean.
 Open items are stated in STATUS/EVALUATION: the 10k p95 budget line, coverage
-unmeasurable on this VM and CI not yet executed (no remote), OpenAI embedder
+unmeasurable on the windows-gnu toolchain and CI not yet executed (no remote), OpenAI embedder
 never called live, encryption scope limits.
 
 ## 2026-09-11 (day), the adversarial review: 23 findings, closed in 18 commits
@@ -441,12 +442,12 @@ unchanged); mutation score unchanged (crypto/scorer sources untouched by
 this build except the new pin test, which only adds assertions).
 
 
-## 2026-09-18, release readiness (fresh clone on the new msvc machine)
+## 2026-09-18, release readiness (fresh clone, windows-msvc toolchain)
 
 ### The coverage gate everyone recorded did not exist
 
-**What.** The first release-readiness run on the new machine (windows-msvc,
-not the old windows-gnu VM) tried to execute the coverage gate exactly as
+**What.** The first release-readiness run on the new toolchain (windows-msvc,
+not the earlier windows-gnu one) tried to execute the coverage gate exactly as
 recorded everywhere: `cargo llvm-cov -p recall-core --fail-under-lines 90
 --fail-under-branches 90`. cargo-llvm-cov 0.9.1 (the latest release) answered
 `error: invalid option '--fail-under-branches'`. Every copy of that command;AGENTS.md, ci.yml, README, ARCHITECTURE, design, the D-010 decision, recorded
@@ -462,8 +463,9 @@ stable rustc 1.98.1 with "1 nightly option were parsed").
 
 **What landed.** The gate was corrected to what stable tooling can measure: lines + regions >= 90. It executed for real, passing: recall-core 95.00%
 lines / 94.03% regions / 94.69% functions; recall-server measured at 96.83% /
-96.13%. On this machine coverage went from "unmeasurable, CI-only" to a
-locally measured number, because D-005's MSVC exclusion died with the old VM.
+96.13%. Coverage went from "unmeasurable, CI-only" to a
+locally measured number, because D-005's MSVC exclusion no longer applies
+with the GNU toolchain.
 The D-010 amendment records the tooling gap: true branch coverage
 stays unmeasured, and the branch gate comes back when stable rustc can
 express it.
@@ -484,7 +486,7 @@ machine.
 ### The rest of the pass, briefly
 
 - License audit of all 396 locked crates via the crates.io API (cargo-deny
-  not installed on this machine): all permissive. The three worth naming:
+  not installed locally): all permissive. The three worth naming:
   option-ext (MPL-2.0, file-level copyleft, link-safe), webpki-roots
   (CDLA-Permissive-2.0 data), r-efi (MIT/Apache/LGPL tri-license, and the LGPL
   arm is one of three choices, never mandatory). No GPL/AGPL anywhere; MIT

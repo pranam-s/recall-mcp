@@ -32,13 +32,11 @@ Initial development phase: the crates (`recall-core`, `recall-server`,
 `recall-cli`) remain at 0.1.0 until first publish. Project milestones so far
 (details and done/partial lists in `docs/STATUS.md`):
 
-- **GitHub migration** (2026-09-16): repository pushed to the private GitHub
-  repo `pranam-s/recall-mcp` (owner-authorized). GitHub Actions is DISABLED on
-  the repository by owner decision (no paid Actions: the account is
-  billing-blocked and the owner declined spend); every quality gate was
-  verified by local execution at the recorded HEAD, and the README records the
-  decision plus the zero-cost self-hosted-runner path. Doc sync for the move:
-  README/CITATION URLs point at `pranam-s`, the (dead while Actions is off)
+- **GitHub migration** (2026-09-16): repository moved to the GitHub
+  repo `pranam-s/recall-mcp`. GitHub Actions is disabled on
+  the repository (no paid Actions minutes); every quality gate was
+  verified by local execution at the recorded HEAD. Doc sync for the move:
+  README/CITATION URLs point at `pranam-s`, the
   CI badge is removed, README status tag corrected to v0.3.1, CITATION
   `date-released` re-stamped to 2026-09-14.
 

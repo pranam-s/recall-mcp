@@ -198,7 +198,7 @@ the pipeline proved out.
 - **Latency:** two harnesses on a 10k fixture: criterion
   (`crates/recall-core/benches/recall_latency.rs`) and an exact-percentile
   release-only test (`tests/p95_latency.rs`), because criterion means and
-  exact p95 answer different questions. Run-to-run variance on this VM is
+  exact p95 answer different questions. Run-to-run variance is
   ±10-15%; multiple runs are listed in EVALUATION.md, never averaged silently.
 - **MCP conformance:** the same initialize → tools/list → tools/call smoke
   over both transports (`recall-server/tests/mcp_http.rs`,
@@ -226,6 +226,6 @@ Named here rather than left for a reader to trip over:
 - Encryption scope is `memories.text` only; `export` is plaintext by design.
 - The rate limiter keys on the presented API key; distributed key-rotation
   floods are out of its threat model.
-- CI is committed but has never executed remotely (GitHub Actions disabled by owner decision, 2026-09-16); all gates are verified by local execution.
+- CI is committed but has never executed remotely (GitHub Actions disabled, 2026-09-16); all gates are verified by local execution.
 - `/metrics` counts its own request only after the body is rendered;
   scrape-in-scrape self-inclusion is off by one by design.

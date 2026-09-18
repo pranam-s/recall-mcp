@@ -12,7 +12,7 @@
 #     -f 'crates/recall-core/src/crypto.rs' \
 #     -f 'crates/recall-core/src/scorer.rs'
 # In-place mode reuses the shared target/ directory (the default copied-tree
-# mode needs several GB the 12 GB shared VM cannot spare) and implies -j 1.
+# mode needs several GB of spare disk) and implies -j 1.
 # Results are recorded honestly in docs/EVALUATION.md; survived mutants in
 # these modules are either fixed (new test) or explicitly justified there.
 timeout_multiplier = 3.0

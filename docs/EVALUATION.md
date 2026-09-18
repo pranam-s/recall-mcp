@@ -1,9 +1,9 @@
 # Recall-MCP evaluation: v0.3.1
 
-Everything below was actually run on the dev machine (Windows 11,
-windows-msvc since 2026-09-18; windows-gnu before that; sections record
+Everything below was actually run locally (windows-msvc since 2026-09-18;
+windows-gnu before that; sections record
 which toolchain and when). Nothing is claimed that was not executed.
-Numbers are exact. The machine shows ±10-15% run-to-run variance on the
+Numbers are exact. Run-to-run variance is ±10-15% on the
 latency benchmarks; where it matters, multiple runs are listed and never
 averaged silently.
 
@@ -227,8 +227,8 @@ and migration paths hold the residual), lib.rs 78.57% (module docs and the
 True branch coverage (not the region proxy) remains **unmeasured**: no stable
 rustc toolchain exposes branch-level instrumentation through cargo-llvm-cov
 today. It is recorded as a tooling gap in the D-010 amendment rather than
-dropped quietly; the linux-gnu CI job (Actions still disabled by owner
-decision) enforces the corrected lines+regions gate.
+dropped quietly; the linux-gnu CI job (Actions still disabled) enforces the
+corrected lines+regions gate.
 
 ## Limitations
 
@@ -257,7 +257,7 @@ decision) enforces the corrected lines+regions gate.
   is throttled; distributed spoofed-key rotation is not (that threat model
   needs the Team Server, D-017).
 - CI workflow (`.github/workflows/ci.yml`) is committed but has never
-  executed remotely (GitHub Actions disabled by owner decision, 2026-09-16;
+  executed remotely (GitHub Actions disabled, 2026-09-16;
   every gate is verified by local execution instead).
 - The `/metrics` endpoint counts the `/metrics` request only after its body is
   rendered; scrape-in-scrape self-inclusion is off by one by design.

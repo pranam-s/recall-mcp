@@ -335,7 +335,7 @@ Three documented approximations and one open gap in that pipeline:
 
 ## CI note (2026-09-16)
 
-GitHub Actions is DISABLED on this repository by owner decision (no paid Actions: the account is billing-blocked and the owner declined spend). Every quality gate was verified by local execution at the recorded HEAD. Zero-cost remote option if ever wanted: a self-hosted runner (re-enable via Settings -> Actions, or `gh api -X PUT repos/pranam-s/recall-mcp/actions/permissions -F enabled=true`).
+GitHub Actions is disabled on this repository (no paid Actions minutes). Every quality gate was verified by local execution at the recorded HEAD. A zero-cost remote option, if wanted later, is a self-hosted runner.
 
 ## License
 

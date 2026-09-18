@@ -34,7 +34,7 @@ remedy, implemented in `recall-core::sqlite`:
   (`Store` is `Send`-only behind the shared mutex; no reference into the
   cell is held across a re-entrant borrow).
 
-Measured (10k fixture, this VM, release; see EVALUATION.md for run lists):
+Measured (10k fixture, release build; see EVALUATION.md for run lists):
 criterion `hybrid_k5` 31.8 ms → **16.2 ms** (−49%); the exact-percentile
 harness p95 55.9 ms → **26.2-27.2 ms** across three runs (the same runs
 measured 55.9 before). The 25 ms PRD budget is still not met at exactly
@@ -135,14 +135,15 @@ adding `profiler_builtins` to build-std (build fails inside profiler_builtins)c
 grcov (same `-C instrument-coverage` requirement → same missing runtime), MSVC
 toolchain (excluded by D-005). Resolution: the 90/90 gate is enforced via the
 standard command (`cargo llvm-cov -p recall-core --fail-under-lines 90
---fail-under-branches 90`) on a linux-gnu CI runner; on this VM it is reported as
+--fail-under-branches 90`) on a linux-gnu CI runner; on windows-gnu it is
+reported as
 **not measurable** rather than guessed. See docs/EVALUATION.md.
 
-**Amendment (2026-09-18, dev machine moved to windows-msvc).** Two facts
+**Amendment (2026-09-18, dev toolchain moved to windows-msvc).** Two facts
 changed, one stayed:
 
 1. *Coverage is now measured locally.* The D-005 "MSVC excluded" constraint was
-   a property of the old windows-gnu VM; development now happens on
+   a property of the windows-gnu toolchain; development now happens on
    `stable-x86_64-pc-windows-msvc`, where `cargo llvm-cov` runs. Measured
    2026-09-18 (cargo-llvm-cov 0.9.1, rustc 1.98.1): recall-core **95.00% lines
    / 94.03% regions / 94.69% functions**; recall-server 96.83% lines / 96.13%
@@ -317,7 +318,7 @@ was re-engineered (2026-09-07), keeping results exact:
 - Session pragmas `cache_size = -8000` (8 MiB) and `mmap_size = 128 MiB` keep
   large scans off the OS read path. Semantics-neutral.
 
-Measured on the 10k fixture (this VM, release): criterion `hybrid_k5`
+Measured on the 10k fixture (release build): criterion `hybrid_k5`
 80.5 ms → 28.3 ms mean; `keyword_only_k5` 41.7 ms → 9.9 ms; exact-percentile
 harness p95 69.4 ms → 33-35 ms (see EVALUATION.md for run-by-run numbers).
 A rejected experiment: rewriting the FTS namespace filter as
@@ -416,7 +417,7 @@ Position:
 
 ## D-020 : ONNX intra-op threads capped at min(logical CPUs, 4) (shipped 0c2d07e)
 
-The fastembed/ort default uses every logical CPU; on the 6-vCPU reference VM
+The fastembed/ort default uses every logical CPU; on the reference machine
 that starved the SQLite store and the Tokio runtime during capture bursts.
 Measured (D-020, `onnx_embed.rs::default_intra_threads`): 4 intra-op threads
 beat the all-CPU default by 1.3-1.8x on capture-sized chunks and never lost a
