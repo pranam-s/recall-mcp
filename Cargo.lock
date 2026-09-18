@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "recall-core"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "recall-server"
-version = "0.1.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "axum",

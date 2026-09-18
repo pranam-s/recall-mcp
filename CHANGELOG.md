@@ -3,6 +3,10 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.1] - 2026-09-18
+
+- Shipped binary version aligned with the recorded project status (v0.3.1). The full milestone history lives in docs/STATUS.md; the Unreleased section below carries post-release work.
+
 ## [Unreleased]
 
 - **Release readiness** (2026-09-18): coverage gate corrected to
