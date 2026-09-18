@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **CLI output: embeddings omitted by default** (2026-09-18) — `remember`,
+  `recall`, and `update` print their JSON without the stored embedding
+  vector unless `--show-embedding` is passed. The 256-float vector carried
+  no signal for a human at a terminal and screen readers announced it as
+  hundreds of zeros per record; score breakdowns and all other fields are
+  unchanged, and the REST/MCP API surface is unaffected.
+
 Initial development phase — the crates (`recall-core`, `recall-server`,
 `recall-cli`) remain at 0.1.0 until first publish. Project milestones so far
 (details and honest done/partial lists in `docs/STATUS.md`):
