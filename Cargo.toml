@@ -3,12 +3,18 @@ resolver = "3"
 members = ["crates/recall-core", "crates/recall-server", "crates/recall-cli"]
 
 [workspace.package]
+version = "0.4.0"
 license = "MIT"
 repository = "https://github.com/pranam-s/recall-mcp"
 
 [workspace.dependencies]
-recall-core = { path = "crates/recall-core" }
-recall-server = { path = "crates/recall-server" }
+# Published crate names carry the recall-mcp- prefix: `recall-server` and
+# `recall-cli` are already owned by unrelated projects on crates.io (pimlabs/
+# recall, OriginalMHV/recall; checked 2026-09-20). The keys keep the short
+# names so in-code imports (recall_core::, recall_server::) are untouched,
+# and the CLI binary keeps its user-facing `recall-cli` name.
+recall-core = { package = "recall-mcp-core", path = "crates/recall-core", version = "0.4.0" }
+recall-server = { package = "recall-mcp-server", path = "crates/recall-server", version = "0.4.0" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

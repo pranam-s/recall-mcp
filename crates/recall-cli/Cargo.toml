@@ -1,10 +1,12 @@
 [package]
-name = "recall-cli"
-version = "0.1.0"
+name = "recall-mcp-cli"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 repository.workspace = true
 description = "CLI for Recall-MCP: serve (HTTP + MCP), remember, recall, export, import"
+keywords = ["mcp", "memory", "cli", "agent"]
+readme = "../../README.md"
 
 [[bin]]
 name = "recall-cli"
