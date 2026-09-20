@@ -1,7 +1,40 @@
-# Recall-MCP status: v0.3.1 (2026-09-18)
+# Recall-MCP status: v0.4.0 (2026-09-20)
 
 Exact done/partial list. "Done" means: implemented, tests executed and green
 locally, committed.
+
+## DONE (2026-09-20 release engineering: 0.4.0 tag + publishability)
+
+1. **Baseline re-verified at as-found HEAD** (`dd2d2d0`): 161 tests
+   passed / 0 failed / 3 ignored, llvm-cov recall-core 95.00% lines /
+   94.03% regions, fmt + clippy clean — all matching the recorded
+   2026-09-18 numbers.
+2. **Crate names made publishable** (`029321f`): `cargo publish
+   --dry-run` proved `recall-server` and `recall-cli` unpublishable —
+   both names are owned on crates.io by unrelated projects (pimlabs/
+   recall, OriginalMHV/recall). Published packages renamed to
+   `recall-mcp-core` / `recall-mcp-server` / `recall-mcp-cli` (all
+   three verified free, 2026-09-20); `[lib]` sections pin the short
+   lib names so imports are untouched; the CLI binary stays
+   `recall-cli`. Path dependencies now carry `version` (publish
+   rejects bare paths). Crate versions in lockstep at workspace 0.4.0;
+   the MCP `server_info` version literal followed (the pinning test
+   caught the drift, as designed).
+3. **Dependency audit**: `cargo audit` (0.22.2, installed via `cargo
+   install` — the one tool this pass had to add) over the 396-package
+   lock: zero vulnerabilities; one allowed warning for unmaintained
+   transitive `paste` (RUSTSEC-2024-0436, via rmcp's macro stack; no
+   upstream fix, not a vulnerability).
+4. **Release stamped**: CHANGELOG restructured to Keep-a-Changelog
+   order (Unreleased on top; the inverted 0.3.1/Unreleased block and
+   the stale "crates remain at 0.1.0" line fixed), [0.4.0] - 2026-09-20
+   recorded, notes in `releases/NOTES-0.4.0.md`, Releases section in
+   README, CITATION.cff corrected from the stale 0.1.0 to 0.4.0.
+   Publishing stays owner-gated; publish order core → server → cli.
+5. **Not re-run this pass**: the web Playwright suite (last verified
+   green with axe AA 0 violations, 2026-09-14/18 records) and the
+   cosmic-ray mutation session; no retrieval or web code changed here
+   (manifests + one version literal + docs only).
 
 ## DONE (2026-09-18 release readiness)
 
