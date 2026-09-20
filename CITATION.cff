@@ -8,8 +8,8 @@ authors:
   - given-names: Pranam
     family-names: Srivastava
 identifier: recall-mcp
-version: 0.1.0
-date-released: "2026-09-18"
+version: 0.4.0
+date-released: "2026-09-20"
 license: MIT
 repository-code: "https://github.com/pranam-s/recall-mcp"
 abstract: >-

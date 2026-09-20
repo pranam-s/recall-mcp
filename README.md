@@ -333,6 +333,17 @@ Three documented approximations and one open gap in that pipeline:
 - Dependency licenses audited against Cargo.lock (docs/LICENSE-AUDIT.md):
   all permissive, MIT-compatible
 
+## Releases
+
+Releases are tagged `v0.4.0`, `v0.5.0`, ... (annotated; tags stay local until
+the owner publishes). The crates publish to crates.io as `recall-mcp-core`,
+`recall-mcp-server`, and `recall-mcp-cli` — the unprefixed `recall-server` and
+`recall-cli` names belong to unrelated projects on crates.io. Per-version
+notes live in [releases/](releases/), history in
+[CHANGELOG.md](CHANGELOG.md), and the publish checklist (crates.io token,
+publish order core → server → cli) in
+[releases/NOTES-0.4.0.md](releases/NOTES-0.4.0.md).
+
 ## CI note (2026-09-16)
 
 GitHub Actions is disabled on this repository (no paid Actions minutes). Every quality gate was verified by local execution at the recorded HEAD. A zero-cost remote option, if wanted later, is a self-hosted runner.

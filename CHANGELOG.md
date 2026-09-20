@@ -3,12 +3,21 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.3.1] - 2026-09-18
-
-- Shipped binary version aligned with the recorded project status (v0.3.1). The full milestone history lives in docs/STATUS.md; the Unreleased section below carries post-release work.
-
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-20
+
+- **Publishable crate names** (2026-09-20): the published package names are
+  now `recall-mcp-core`, `recall-mcp-server`, and `recall-mcp-cli` — the old
+  `recall-server` and `recall-cli` names are owned by unrelated projects on
+  crates.io (pimlabs/recall, OriginalMHV/recall), so they could never have
+  been published. Lib targets keep their short names (`recall_core`,
+  `recall_server`) via explicit `[lib]` sections and the CLI binary keeps
+  its user-facing `recall-cli` name, so no import, command, or API changed.
+  The path-dependency entries now carry `version` requirements (publish
+  rejects them without) and every crate manifest gained `keywords` and the
+  root README. Verified free on crates.io 2026-09-20; publish order is
+  core, then server, then cli.
 - **Release readiness** (2026-09-18): coverage gate corrected to
   lines+regions (the recorded `--fail-under-branches` flag does not exist in
   cargo-llvm-cov 0.9.1; D-010 amendment) and **measured for real**:
@@ -27,10 +36,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no signal for a human at a terminal and screen readers announced it as
   hundreds of zeros per record; score breakdowns and all other fields are
   unchanged, and the REST/MCP API surface is unaffected.
+- **Dependency audit** (2026-09-20): `cargo audit` over the full 396-package
+  lock reports zero vulnerabilities; the only finding is an allowed warning
+  for the unmaintained transitive `paste` 1.0.15 (RUSTSEC-2024-0436, via
+  rmcp's macro stack — no fix exists upstream and it is not a vulnerability).
 
-Initial development phase: the crates (`recall-core`, `recall-server`,
-`recall-cli`) remain at 0.1.0 until first publish. Project milestones so far
-(details and done/partial lists in `docs/STATUS.md`):
+## [0.3.1] - 2026-09-18
+
+- Shipped binary version aligned with the recorded project status (v0.3.1). The full milestone history lives in docs/STATUS.md; the sections below carry the milestones that predate the crate-version split.
 
 - **GitHub migration** (2026-09-16): repository moved to the GitHub
   repo `pranam-s/recall-mcp`. GitHub Actions is disabled on
