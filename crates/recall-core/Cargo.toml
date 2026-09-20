@@ -1,10 +1,12 @@
 [package]
-name = "recall-core"
-version = "0.3.1"
+name = "recall-mcp-core"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 repository.workspace = true
 description = "Pure domain layer for Recall-MCP: models, SQLite store with FTS5, embedders, explainable hybrid scorer"
+keywords = ["mcp", "memory", "embeddings", "search", "agent"]
+readme = "../../README.md"
 
 [dependencies]
 rusqlite = { workspace = true }
@@ -41,3 +43,10 @@ openai = ["dep:reqwest"]
 # Optional local ONNX embeddings via fastembed/ort (D-013). Requires
 # onnxruntime.dll at runtime (ORT_DYLIB_PATH) — see docs/adr/DECISIONS.md.
 onnx = ["dep:fastembed"]
+
+# The lib target keeps the short name: integration tests and the CLI
+# import recall_core::/recall_server::, while the published package
+# carries the recall-mcp- prefix (see workspace Cargo.toml).
+[lib]
+name = "recall_core"
+path = "src/lib.rs"
