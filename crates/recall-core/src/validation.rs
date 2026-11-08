@@ -28,6 +28,8 @@ pub const MAX_EMBEDDING_DIMS: usize = 8192;
 pub const MAX_CAPTURE_MESSAGES: usize = 1_000;
 /// Most total transcript characters accepted in one capture request.
 pub const MAX_CAPTURE_CHARS: usize = 2_000_000;
+/// Most chunks one capture request may produce after splitting.
+pub const MAX_CAPTURE_CHUNKS: usize = 2_000;
 /// Largest chunk size the capture pipeline will honor.
 pub const MAX_CHUNK_CHARS: usize = 8_000;
 
@@ -167,7 +169,7 @@ pub fn validate_embedding(embedding: Option<&[f32]>) -> Result<()> {
     Ok(())
 }
 
-/// A capture request: message count and total character budget.
+/// A capture request: message count, total character budget, and chunk count.
 pub fn validate_capture(message_count: usize, total_chars: usize) -> Result<()> {
     if message_count == 0 {
         return Err(RecallError::InvalidInput(
@@ -182,6 +184,17 @@ pub fn validate_capture(message_count: usize, total_chars: usize) -> Result<()> 
     if total_chars > MAX_CAPTURE_CHARS {
         return Err(RecallError::InvalidInput(format!(
             "transcript must be at most {MAX_CAPTURE_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
+
+/// A capture's post-split chunk count.
+pub fn validate_capture_chunks(chunk_count: usize) -> Result<()> {
+    if chunk_count > MAX_CAPTURE_CHUNKS {
+        return Err(RecallError::InvalidInput(format!(
+            "capture would produce {chunk_count} chunks; the limit is {MAX_CAPTURE_CHUNKS}. \
+             Use a larger max_chunk_chars or split the transcript"
         )));
     }
     Ok(())
@@ -236,5 +249,7 @@ mod tests {
         assert!(validate_capture(0, 10).is_err());
         assert!(validate_capture(MAX_CAPTURE_MESSAGES + 1, 10).is_err());
         assert!(validate_capture(1, MAX_CAPTURE_CHARS + 1).is_err());
+        assert!(validate_capture_chunks(MAX_CAPTURE_CHUNKS).is_ok());
+        assert!(validate_capture_chunks(MAX_CAPTURE_CHUNKS + 1).is_err());
     }
 }

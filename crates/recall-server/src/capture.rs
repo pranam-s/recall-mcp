@@ -71,6 +71,9 @@ pub fn prepare(
             _ => content.to_string(),
         };
         for chunk in recall_core::capture::chunk_text(&text, max_chars)? {
+            if memories.len() >= recall_core::validation::MAX_CAPTURE_CHUNKS {
+                recall_core::validation::validate_capture_chunks(memories.len() + 1)?;
+            }
             let mut tags = body.tags.clone();
             if let Some(role) = message
                 .role
@@ -119,4 +122,48 @@ pub fn commit(store: &dyn Store, prepared: &PreparedCapture) -> Result<Vec<Memor
         Ok(())
     })?;
     Ok(captured)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ZeroEmbedder;
+    impl Embedder for ZeroEmbedder {
+        fn dimensions(&self) -> usize {
+            4
+        }
+        fn name(&self) -> &'static str {
+            "zero-test"
+        }
+        fn embed(&self, _text: &str) -> Vec<f32> {
+            vec![0.0; 4]
+        }
+    }
+
+    #[test]
+    fn prepare_rejects_a_capture_that_would_explode_into_too_many_chunks() {
+        // Three 70k-character messages at a 100-character chunk cap would
+        // produce about 2,100 chunks, above the 2,000 chunk ceiling.
+        let body = CaptureRequest {
+            namespace: "too-many".into(),
+            transcript: (0..3)
+                .map(|_| CaptureMessage {
+                    role: None,
+                    content: "a ".repeat(35_000),
+                    at: None,
+                })
+                .collect(),
+            tags: vec![],
+            max_chunk_chars: Some(100),
+            include_memories: false,
+            include_embedding: false,
+        };
+        let err = prepare(&ZeroEmbedder, &body)
+            .err()
+            .expect("too many chunks must fail")
+            .to_string();
+        assert!(err.contains("chunks"), "{err}");
+        assert!(err.contains("2000"), "{err}");
+    }
 }

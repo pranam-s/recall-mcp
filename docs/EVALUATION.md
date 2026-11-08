@@ -7,7 +7,7 @@ claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: **200 passed, 0 failed, 3 ignored**.
+`cargo test --workspace --locked`: **201 passed, 0 failed, 3 ignored**.
 
 | Suite | Passed | Covers |
 |---|---:|---|
@@ -15,7 +15,7 @@ claimed.
 | recall-core golden eval | 2 | 100-query golden gate and hash semantic diagnostic |
 | recall-core proptests | 4 | crypto roundtrip/AAD, FTS syntax, chunking invariants, scorer linearity and bounds |
 | recall-core ignored | 3 | FTS query-plan probe, p95 harness, cost breakdown (manual gates) |
-| recall-server unit | 37 | error/status mapping, JSON error contract, auth, rate limiting and bucket bound, Host/Origin scheme, security headers, slow-embedder responsiveness, MCP info, list cap/offset, capture, OpenAPI drift, metrics |
+| recall-server unit | 38 | error/status mapping, JSON error contract, auth, rate limiting and bucket bound, Host/Origin scheme, security headers, slow-embedder responsiveness, MCP info, list cap/offset, capture, OpenAPI drift, metrics |
 | recall-server API | 12 | REST CRUD, auth matrix, pagination, compact/full views, 400/404/405/413/415/429 JSON errors, security headers, origin scheme, capture rollback |
 | recall-server MCP HTTP | 6 | initialize/tools/list/tools/call, stateless 2026-07-28 discover/list/call, API key, tools/list byte budget, compact vs full vs text sizes |
 | recall-server metadata | 2 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes |
@@ -29,7 +29,7 @@ Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
 with onnxruntime 1.28.0 and a model cache: **122 passed, 2 ignored** (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured **207 passed, 0 failed,
+`cargo test --workspace --all-features` run measured **208 passed, 0 failed,
 4 ignored**.
 
 Formatting and lints:
