@@ -83,5 +83,11 @@ recall --version
 recall serve --bind 127.0.0.1:8787 --db recall.db
 ```
 
+A Windows x86_64 archive with `recall.exe`, `recall-cli.exe`, `LICENSE`, and
+`README.md` is attached to this release. SHA-256:
+`2a8e53dcaaad18ef16094841cc53908efab3a1a920205067abd1000bf6bd410c`.
+Linux and macOS binaries are built by the release workflow when Actions is
+available; they are not attached to this publication.
+
 Crate order if publishing manually: `recall-mcp-core`, then
 `recall-mcp-server`, then `recall-mcp-cli`. See `RELEASING.md`.
