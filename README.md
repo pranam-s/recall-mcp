@@ -275,7 +275,7 @@ in [docs/EVALUATION.md](docs/EVALUATION.md).
   0 warnings.
 - `cargo test --workspace`: green (exact counts in EVALUATION).
 - Coverage on recall-core, measured with llvm-cov on windows-msvc:
-  **95.34% lines / 94.15% regions**, gate 90/90.
+  **95.39% lines / 94.19% regions**, gate 90/90.
 - `cargo audit` and `cargo deny check`: pass; one allowed unmaintained
   transitive `paste` warning with a review note.
 - Web: `npm run build` and 8 Playwright tests pass with axe WCAG 2.1 AA at

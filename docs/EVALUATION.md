@@ -43,13 +43,13 @@ Formatting and lints:
 `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90
 --summary-only --locked`, windows-msvc, 2026-11-08:
 
-- **recall-core: 95.34% lines, 94.15% regions** (gate 90/90, exit 0).
+- **recall-core: 95.39% lines, 94.19% regions** (gate 90/90, exit 0).
 - Branch coverage is unmeasured: cargo-llvm-cov 0.9.1 has no branch fail-under
   on stable (D-010 amendment).
 
 Per-file lines: crypto 99.16%, embed 100%, error 100%, export 100%, scorer
-100%, util 100%, validation 98.35%, views 99.27%, sqlite 93.69%, capture
-93.39%, models 93.24%, lib 78.57%.
+100%, util 100%, validation 98.35%, views 99.27%, sqlite 93.73%, capture
+94.21%, models 93.24%, lib 78.57%.
 
 ## Retrieval quality
 

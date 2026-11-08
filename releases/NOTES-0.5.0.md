@@ -54,7 +54,7 @@ Local, windows-msvc, rustc 1.99.1, 2026-11-08. Exact output is in
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D
   warnings`: 0 warnings.
 - `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90
-  --fail-under-regions 90`: 95.34% lines, 94.15% regions.
+  --fail-under-regions 90`: 95.39% lines, 94.19% regions.
 - Golden eval: 98/100 hit-rate@5 (0.980), MRR@10 0.975.
 - Semantic eval with ONNX: 50/50 hit-rate@5 (1.000), MRR@10 0.740. Hash
   diagnostic: 31/50 (0.620).

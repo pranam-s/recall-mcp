@@ -19,8 +19,8 @@ These amend earlier entries without rewriting their text or their history.
 - **D-007:** the connection sets a 5 s `busy_timeout`; multi-step writes use
   `BEGIN IMMEDIATE`. A second process waits for the write lock instead of
   failing at COMMIT.
-- **D-010:** coverage was re-measured on 2026-11-08: recall-core 95.34% lines
-  and 94.15% regions, gate 90/90. Branch coverage remains unmeasured on stable
+- **D-010:** coverage was re-measured on 2026-11-08: recall-core 95.39% lines
+  and 94.19% regions, gate 90/90. Branch coverage remains unmeasured on stable
   cargo-llvm-cov.
 - **D-014:** every plaintext-to-keyed transition, including a legacy-schema
   upgrade, runs with `secure_delete`, VACUUM, and a truncated WAL checkpoint.

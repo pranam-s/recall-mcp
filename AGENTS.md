@@ -43,7 +43,7 @@ and docs/adr/DECISIONS.md before planning work.
   All green before any commit is "done".
 - Coverage: 90% lines AND regions on recall-core via
   `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90`.
-  (Measured 2026-11-08 on windows-msvc: 95.34% lines / 94.15% regions.
+  (Measured 2026-11-08 on windows-msvc: 95.39% lines / 94.19% regions.
   cargo-llvm-cov 0.9.1 has no branch fail-under; `--branch` needs nightly,
   so true branch coverage is a recorded tooling gap, D-010 amendment.)
 - windows-gnu caveat: llvm-cov cannot run on windows-gnu (D-010); measure on
