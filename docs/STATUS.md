@@ -98,11 +98,11 @@ GitHub Actions has not run (billing), so no CI result is claimed.
 
 ## Partial
 
-1. **p95 at 10k memories.** The ignored release harness measured p95 32.7 to
+1. **p95 at 10k memories.** The ignored release harness measured p95 29.6 to
    33.1 ms on this host on 2026-11-08, against the 25 ms PRD budget. It is a
    measured failure, recorded in EVALUATION, and the threshold was not lowered.
-   Steady-state variance and the cold-cache fill are part of the record. This
-   is the main performance gap in 0.5.0.
+   Host-load variance is part of the record. This is the main performance gap
+   in 0.5.0.
 2. **CI enforcement.** GitHub Actions is disabled for billing. Workflows are
    committed and locally reviewed but have no remote run. Coverage, audit,
    deny, web, and cross-platform jobs were executed locally where this host
