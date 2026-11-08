@@ -135,6 +135,27 @@ fn tag_filter_sql(alias: &str, tags: &[String], start_index: usize) -> String {
     )
 }
 
+/// Candidate query for the FTS keyword pass. Untagged recalls pin the join to
+/// the covering namespace index: the probe then reads `(namespace_id, rowid)`
+/// instead of each wide `memories` row (including the embedding BLOB).
+fn keyword_candidate_sql(required_tags: &[String], candidate_cap: usize) -> String {
+    let join = if required_tags.is_empty() {
+        "JOIN memories m INDEXED BY idx_memories_namespace \
+         ON m.rowid = memories_fts.rowid"
+    } else {
+        "JOIN memories m ON m.rowid = memories_fts.rowid"
+    };
+    let tag_sql = tag_filter_sql("m", required_tags, 3);
+    format!(
+        "SELECT m.rowid, bm25(memories_fts) AS rank_score
+         FROM memories_fts
+         {join}
+         WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2{tag_sql}
+         ORDER BY rank_score, m.rowid
+         LIMIT {candidate_cap}"
+    )
+}
+
 /// One vector-pass survivor before its full row is fetched (D-016). Carries
 /// exactly what candidate selection needs — rowid, similarity, and the total
 /// the row scores if it stays outside the keyword set (there bm25 is 0, so
@@ -1243,16 +1264,7 @@ impl Store for SqliteStore {
         // Keyed by rowid; ids are resolved when the surviving rows are fetched.
         let mut keyword: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         if let Some(fts_query) = build_fts_query(query, self.key.as_ref()) {
-            let tag_sql = tag_filter_sql("m", &required_tags, 3);
-            let sql = format!(
-                "SELECT m.rowid, bm25(memories_fts) AS rank_score
-                 FROM memories_fts
-                 JOIN memories m ON m.rowid = memories_fts.rowid
-                 WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2{tag_sql}
-                 ORDER BY rank_score, m.rowid
-                 LIMIT {}",
-                p.candidate_cap
-            );
+            let sql = keyword_candidate_sql(&required_tags, p.candidate_cap);
             let mut stmt = self.conn.prepare(&sql)?;
             let mut bind: Vec<String> = vec![fts_query, ns.clone()];
             bind.extend(required_tags.iter().cloned());
@@ -1700,6 +1712,30 @@ mod tests {
             Some("\"a\" OR \"b\" OR \"or\" OR \"c\"".to_string())
         );
         assert_eq!(build_fts_query("\"\"", None), None);
+    }
+
+    #[test]
+    fn untagged_fts_candidates_use_the_covering_namespace_index() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = SqliteStore::open(dir.path().join("plan.db")).expect("open store");
+        s.create_namespace("bench").expect("namespace");
+        let ns_id = s.find_namespace("bench").expect("lookup").expect("ns").id;
+        let sql = keyword_candidate_sql(&[], 200);
+        let mut stmt = s
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .expect("explain prepares");
+        let fts_query = build_fts_query("deploy", None).expect("fts query");
+        let plan: Vec<String> = stmt
+            .query_map(params![fts_query, ns_id], |r| r.get(3))
+            .expect("explain queries")
+            .map(|row| row.expect("plan row"))
+            .collect();
+        assert!(
+            plan.iter()
+                .any(|detail| detail.contains("idx_memories_namespace")),
+            "untagged FTS candidates must probe the covering index: {plan:?}"
+        );
     }
 
     #[test]

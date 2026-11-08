@@ -7,11 +7,11 @@ dependency gates on push and pull requests. No external benchmark is claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: 208 passed, 0 failed, 3 ignored.
+`cargo test --workspace --locked`: 209 passed, 0 failed, 3 ignored.
 
 | Suite | Passed | Covers |
 |---|---:|---|
-| recall-core unit | 118 | models, validation, views, crypto, embedders, scorer, store CRUD, update, recall ranking and ties, tag filters, packed cache, `data_version`, encryption upgrade and forensic cleanup, embedder guard, schema version, export/import, capture chunking, OpenAI request/dimension/redaction |
+| recall-core unit | 119 | models, validation, views, crypto, embedders, scorer, store CRUD, update, recall ranking and ties, tag filters, packed cache, `data_version`, encryption upgrade and forensic cleanup, embedder guard, schema version, export/import, capture chunking, OpenAI request/dimension/redaction |
 | recall-core golden eval | 2 | 100-query golden gate and hash semantic diagnostic |
 | recall-core proptests | 4 | crypto roundtrip/AAD, FTS syntax, chunking invariants, scorer linearity and bounds |
 | recall-core ignored | 3 | FTS query-plan probe, p95 harness, cost breakdown (manual gates) |
@@ -27,9 +27,9 @@ dependency gates on push and pull requests. No external benchmark is claimed.
 Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
-with onnxruntime 1.28.0 and a model cache: 126 passed, 2 ignored (the
+with onnxruntime 1.28.0 and a model cache: 127 passed, 2 ignored (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured 215 passed, 0 failed,
+`cargo test --workspace --all-features` run measured 216 passed, 0 failed,
 4 ignored.
 
 Formatting and lints:

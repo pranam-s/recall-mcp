@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Untagged keyword recalls probe the covering namespace index instead of
+  reading each wide memory row, which cuts the FTS candidate pass.
+
 ### Fixed
 
 - The web capture form no longer prefills the namespace, which removes a race
