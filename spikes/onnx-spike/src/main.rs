@@ -1,14 +1,13 @@
 //! Spike: minimal fastembed-rs build + embed test on windows-gnu.
 //! Verdict recorded in docs/adr/DECISIONS.md (D-013).
 
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
 fn main() -> anyhow::Result<()> {
     let model = EmbeddingModel::AllMiniLML6V2Q; // quantized, ~17 MB download
     let t0 = std::time::Instant::now();
-    let mut embedder = TextEmbedding::try_new(
-        InitOptions::new(model).with_show_download_progress(true),
-    )?;
+    let mut embedder =
+        TextEmbedding::try_new(TextInitOptions::new(model).with_show_download_progress(true))?;
     eprintln!("model init (incl. download): {:?}", t0.elapsed());
 
     let texts = [
@@ -41,11 +40,16 @@ fn main() -> anyhow::Result<()> {
     let again = embedder.embed(vec![texts[0]], None)?;
     assert_eq!(again[0], again[0]);
     let solo = embedder.embed(vec![texts[0]], None)?;
-    assert_eq!(format!("{:?}", &solo[0][..16]), format!("{:?}", &again[0][..16]));
+    assert_eq!(
+        format!("{:?}", &solo[0][..16]),
+        format!("{:?}", &again[0][..16])
+    );
     let solo2 = embedder.embed(vec![texts[0]], None)?;
     assert_eq!(solo[0], solo2[0], "same-shape embeds must be deterministic");
     let batched_cos = dot(&again[0], &vecs[0]);
-    println!("cos(solo embed, batched embed) of same text = {batched_cos:.4} (batch-shape variance)");
+    println!(
+        "cos(solo embed, batched embed) of same text = {batched_cos:.4} (batch-shape variance)"
+    );
     println!("SPIKE OK: fastembed on windows-gnu embeds deterministically");
     Ok(())
 }

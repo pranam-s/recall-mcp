@@ -5,13 +5,13 @@ name = "onnx-spike"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Throwaway spike: does fastembed-rs (ort 2.0.0-rc.13) work on x86_64-pc-windows-gnu?"
+description = "Throwaway spike: does fastembed-rs (current ort) work on x86_64-pc-windows-gnu?"
 
 [dependencies]
 anyhow = "1"
 # Attempt 2: ort/download-binaries has no windows-gnu prebuilts (attempt 1 failed),
 # so load ONNX Runtime at runtime from onnxruntime.dll (ORT_DYLIB_PATH) instead.
-fastembed = { version = "6", default-features = false, features = [
+fastembed = { version = "7", default-features = false, features = [
     "ort-load-dynamic",
     "hf-hub-rustls-tls",
 ] }
