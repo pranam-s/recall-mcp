@@ -1,4 +1,4 @@
-//! JSON export/import of the whole store (backup and migration, PRD user story 4).
+//! JSON export/import of the whole store (backup and migration).
 
 use serde::{Deserialize, Serialize};
 

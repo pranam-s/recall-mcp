@@ -31,6 +31,6 @@ What you expected instead.
 
 ## Verification
 
-- [ ] I ran `cargo test --workspace` (or the relevant package)
+- [ ] I ran `cargo test --workspace --locked` (or the relevant package)
 - [ ] I checked `README.md` and `docs/EVALUATION.md`
 - [ ] I removed real keys, usernames, and personal paths from this report

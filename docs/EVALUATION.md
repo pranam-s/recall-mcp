@@ -1,13 +1,16 @@
 # Recall-MCP evaluation: 0.5.0
 
-The measured results on this page come from runs on 2026-11-08 on the Windows
-MSVC development machine with rustc 1.99.1, unless a row names another
-toolchain. GitHub Actions runs the same test, lint, coverage, web, and
-dependency gates on push and pull requests. No external benchmark is claimed.
+The measured results on this page come from runs on 2026-11-08 in a Windows
+MSVC build with rustc 1.99.1, unless a row names another toolchain. No external
+benchmark is claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: 209 passed, 0 failed, 3 ignored.
+`cargo test --workspace --locked`: 210 passed, 0 failed, 3 ignored.
+
+These numbers are from master after the v0.5.0 tag. The tag measured 207 passed
+and 3 ignored, and 214 passed and 4 ignored with all features; three regression
+tests were added afterward.
 
 | Suite | Passed | Covers |
 |---|---:|---|
@@ -18,7 +21,7 @@ dependency gates on push and pull requests. No external benchmark is claimed.
 | recall-server unit | 40 | error/status mapping, JSON error contract, auth, rate limiting and bucket bound, Host/Origin scheme, security headers, slow-embedder responsiveness, MCP info, list cap/offset, capture, OpenAPI drift, metrics |
 | recall-server API | 12 | REST CRUD, auth matrix, pagination, compact/full views, 400/404/405/413/415/429 JSON errors, security headers, origin scheme, capture rollback |
 | recall-server MCP HTTP | 6 | initialize/tools/list/tools/call, stateless 2026-07-28 discover/list/call, API key, tools/list byte budget, compact vs full vs text sizes |
-| recall-server metadata | 2 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes |
+| recall-server metadata | 3 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes; README contents and internal-note guard |
 | recall-server proptest | 1 | token-bucket partition and burst bound |
 | recall-cli unit | 9 | config precedence, embedder selection, origin validation, BOM tolerance |
 | recall-cli e2e | 12 | remember/recall/export/import, update, encryption, backup/vacuum, compact defaults, text format, list page, stats, capture, keygen, forget, `recall` alias, env fallbacks |
@@ -29,7 +32,7 @@ Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
 with onnxruntime 1.28.0 and a model cache: 127 passed, 2 ignored (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured 216 passed, 0 failed,
+`cargo test --workspace --all-features` run measured 217 passed, 0 failed,
 4 ignored.
 
 Formatting and lints:
@@ -41,7 +44,7 @@ Formatting and lints:
 ## Coverage
 
 `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90
---summary-only --locked`, on the Windows MSVC machine, 2026-11-08:
+--summary-only --locked`, in a Windows MSVC build on 2026-11-08:
 
 - recall-core: 95.39% lines, 94.19% regions, above the 90% gate.
 - Branch coverage is unmeasured: cargo-llvm-cov 0.9.1 has no branch fail-under
@@ -51,8 +54,8 @@ Per-file lines: crypto 99.16%, embed 100%, error 100%, export 100%, scorer
 100%, util 100%, validation 98.35%, views 99.27%, sqlite 93.73%, capture
 94.21%, models 93.24%, lib 78.57%.
 
-The GitHub Actions coverage job runs on Linux. `llvm-cov` cannot run on
-windows-gnu (D-010), so the local measurement uses Windows MSVC.
+`llvm-cov` cannot run on windows-gnu (D-010), so coverage is measured in a
+Windows MSVC build.
 
 ## Retrieval quality
 
@@ -90,22 +93,15 @@ cargo test -p recall-mcp-core --release --test p95_latency -- --ignored --nocapt
 ```
 
 Run it with `--test-threads=1`: the cost-breakdown test seeds its own 10k store
-and distorts p95 when both ignored tests run in parallel. The harness is manual
-and does not run in CI.
+and distorts p95 when both ignored tests run in parallel. The harness runs only
+when invoked manually.
 
 ## Token budgets
 
-Measured by `cargo test -p recall-mcp-server --test mcp_http -- --nocapture`:
-
-| Surface | Bytes |
-|---|---:|
-| tools/list (six tools) | 3,370 |
-| remember compact / full | 200 / 1,403 |
-| recall one compact / full hit | 598 / 3,004 |
-| recall one text hit | 384 |
-
-The tools/list budget is 4,600 bytes; headroom is 1,230 bytes. Method and the
-trimming results are in [TOKEN-EFFICIENCY.md](TOKEN-EFFICIENCY.md).
+`cargo test -p recall-mcp-server --test mcp_http -- --nocapture` measures the
+budgets: `tools/list` stays at 3,370 bytes against a 4,600-byte budget, and one
+compact recall hit is 598 bytes, with the full table and method in
+[TOKEN-EFFICIENCY.md](TOKEN-EFFICIENCY.md).
 
 ## Web UI
 
@@ -134,12 +130,12 @@ and API-key save/clear with sessionStorage persistence.
 - Primary: windows-msvc through `scripts/with-msvc.ps1` (vcvars64).
 - Secondary: `cargo +stable-x86_64-pc-windows-gnu test --workspace --target
   x86_64-pc-windows-gnu --locked`.
-- MSRV: 1.89 default features, 1.92 all features. CI runs both checks.
+- MSRV: 1.89 default features, 1.92 all features. Run both checks locally.
 
 ## Gaps and unmeasured areas
 
-- No Docker image is published. The Dockerfile is in the repository but has
-  not been built in CI, and `server.json` does not list an OCI package yet.
+- No Docker image is published. The Dockerfile is in the repository, and
+  `server.json` does not list an OCI package yet.
 - Branch coverage: no stable fail-under flag.
 - OpenAI calls: the embedder has never been called live; no API key was
   available.

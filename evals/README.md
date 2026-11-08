@@ -35,22 +35,11 @@ test suite; the ONNX semantic gate needs the `onnx` feature.
 6. Do not edit a query to chase a score without writing down why the old label
    was wrong. A label change is a test change and needs the same review as code.
 
-## Method and recorded results
+## Method and results
 
-Measured on 2026-11-08 on the Windows MSVC development machine with
-`cargo test`. Exact output:
-
-```text
-golden: 98/100 hit-rate@5 = 0.980 (gate >= 0.85), MRR@10 = 0.975
-  embedder: hash-256
-semantic (diagnostic): 31/50 hit-rate@5 = 0.620 (gate >= 0.85), MRR@10 = 0.508
-  embedder: hash-256
-semantic: 50/50 hit-rate@5 = 1.000 (gate >= 0.85), MRR@10 = 0.740
-  embedder: onnx:all-minilm-l6-v2-q
-```
-
-The ONNX run used fastembed 7.6.1 with onnxruntime 1.28.0 (`ORT_DYLIB_PATH`),
-one test thread, and a fresh model cache, on the Windows MSVC machine.
+The fixtures and labelling rules above define the runs. The measured results,
+including the exact output and the ONNX run conditions, are recorded in
+[../docs/EVALUATION.md](../docs/EVALUATION.md).
 
 The hash diagnostic shows the expected limitation of lexical hashing on
 paraphrases. It does not gate; the ONNX run is the semantic gate.

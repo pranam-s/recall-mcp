@@ -3,6 +3,32 @@
 One entry per notable decision, appended as decisions land. D-001 to D-006
 expand the summaries in `docs/ARCHITECTURE.md`; later numbers are new.
 
+## Index
+
+| ID | Decision | Date |
+|---|---|---|
+| D-001 | Rust workspace with a pure-core crate | not recorded |
+| D-002 | SQLite with FTS5 and a brute-force cosine scan | not recorded |
+| D-003 | HashEmbedder default and opt-in OpenAI embedder | not recorded |
+| D-004 | rmcp SDK with no hand-rolled fallback | not recorded |
+| D-005 | Project-scoped GNU toolchain on Windows | not recorded |
+| D-006 | Web UI as a pure API client with hand-written OpenAPI | not recorded |
+| D-007 | `Send` store trait shared through `Arc<Mutex<dyn Store>>` | not recorded |
+| D-008 | API-key auth for the MCP auth gap | not recorded |
+| D-009 | MCP `remember` auto-creates namespaces | not recorded |
+| D-010 | llvm-cov cannot run on windows-gnu | 2026-09-18 (amendment) |
+| D-011 | e2e against one production-shaped server | not recorded |
+| D-012 | Frontend stack versions verified against npm | 2026-09-06 |
+| D-013 | Local ONNX embeddings behind the `onnx` feature | 2026-09-07 (amendment) |
+| D-014 | Encryption at rest for memory text and keyed FTS digests | not recorded |
+| D-015 | In-place memory update and ALL-of tag filter | not recorded |
+| D-016 | Exact top-k heap and slim BLOB scan | 2026-09-07 |
+| D-017 | Hardening defaults for the HTTP and MCP surface | 2026-09-07 |
+| D-018 | Auto-capture with deterministic chunking | 2026-09-11 (shipped note) |
+| D-019 | Packed in-process vector cache | 2026-09-07 |
+| D-020 | ONNX intra-op threads capped at four | not recorded |
+| D-021 | Stored prompt injection as an accepted threat | not recorded |
+
 ## 0.5.0 amendments (2026-11-08)
 
 These amend earlier entries without rewriting the original text.
@@ -74,14 +100,14 @@ pass re-read every embedding BLOB from SQLite on every recall, with about
   (`Store` is `Send`-only behind the shared mutex; no reference into the
   cell is held across a re-entrant borrow).
 
-On the 10k fixture, the change cut the criterion mean by about half and cut
-the exact-percentile harness p95 by about half. The residual cost is now the
-FTS keyword pass plus the survivor fetch and refresh, with a keyword-only
-floor; the vector scan is no longer the bottleneck. The 10k design target is
-25 ms p95. Beyond about 100k memories per namespace, the D-002 revisit (packed
-vector file or ANN index, LanceDB first choice on windows-gnu) remains the
-structural next step. Within a namespace the packed cache keeps 10k-row recall
-at roughly 2× the keyword floor.
+Local measurements on the 10k fixture showed lower criterion means and a lower
+exact-percentile harness p95. Those runs were historical and specific to one
+machine; they are not a portable benchmark. The residual cost is now the FTS
+keyword pass plus the survivor fetch and refresh, with a keyword-only floor, and
+the vector scan is no longer the bottleneck. The 10k design target is 25 ms p95.
+Beyond about 100k memories per namespace, the D-002 revisit (packed vector file
+or ANN index, LanceDB first choice on windows-gnu) remains the structural next
+step.
 
 ## D-001 (ADR-001): Rust workspace with a pure-core crate
 
@@ -110,15 +136,15 @@ the hash's top bit, L2-normalized). It needs no network and produces the same
 vectors on every platform, which is adequate for lexical retrieval.
 `OpenAIEmbedder` (OpenAI-compatible `/v1/embeddings`, rustls) compiles behind the
 non-default `openai` feature. Its request and parse logic is unit tested; the
-live HTTP call is not, because CI has no key.
+live HTTP call is not, because no key was available.
 
 ## D-004 (ADR-004): rmcp 3.2.0 SDK; no hand-rolled fallback
 
 The official Rust MCP SDK (`rmcp` 3.2.0, released 2026-08-31) implements the
 `2026-07-28` spec, so no fallback is needed. Tools are defined with
-`#[tool_router]`, `#[tool]`, and `#[tool_handler]`. Streamable-HTTP uses
-`StreamableHttpService` in stateless JSON-response mode; stdio uses
-`rmcp::transport::io::stdio()`. Over streamable-HTTP the client's `2026-07-28`
+`#[tool_router]`, `#[tool]`, and `#[tool_handler]`. The streamable HTTP transport
+uses `StreamableHttpService` in stateless JSON-response mode; stdio uses
+`rmcp::transport::io::stdio()`. Over streamable HTTP the client's `2026-07-28`
 request is honored; over stdio rmcp negotiates its default `2025-11-25` (SDK
 behavior, observed in tests).
 
@@ -183,10 +209,13 @@ because the compiler-rt sources are not shipped. Alternatives: cargo-tarpaulin
 the same missing runtime), and the MSVC toolchain, which D-005 excluded at the
 time.
 
-Resolution: a linux-gnu CI runner enforces the 90/90 gate with
+Resolution: a Linux GNU run enforced the 90/90 gate with
 `cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-branches 90`.
 On windows-gnu the result is reported as not measurable, with no estimate. See
 docs/EVALUATION.md.
+
+The 2026-09-18 amendment below supersedes this resolution: coverage is measured
+on Windows MSVC with the lines and regions gate.
 
 Amendment (2026-09-18, toolchain moved to windows-msvc).
 
@@ -200,7 +229,7 @@ Amendment (2026-09-18, toolchain moved to windows-msvc).
    0.9.1 (latest) offers `--fail-under-{functions,lines,file-lines,regions}`;
    its `--branch` instrumentation needs nightly rustc
    (`-Z coverage-options=branch`). The gate as written would have failed with
-   "invalid option" the first time CI ran. The stable-measurable proxy for
+   "invalid option" the first time the gate ran. The stable-measurable proxy for
    branch grade is regions (each condition and expression body is a region), so
    the enforced gate is now `--fail-under-lines 90 --fail-under-regions 90`,
    and both are met.
@@ -260,8 +289,9 @@ identically.
 
 ## D-014: Encryption at rest: AEAD over `memories.text` + keyed FTS token digests
 
-Competitor research listed plaintext single-file storage as a marketed
-weakness. The design lives in `recall-core::crypto` and the store:
+A single-file store leaves memory text readable to anyone who can read the file,
+so the store seals that column. The implementation lives in
+`recall-core::crypto` and the store:
 
 - The key is 256 bits, from `RECALL_MCP_KEY` (64 hex characters) or
   `RECALL_MCP_KEY_FILE`, and encryption turns on when a key is present. It is a
@@ -372,14 +402,14 @@ swapping storage engines, the brute-force scan itself was re-engineered
 - Session pragmas `cache_size = -8000` (8 MiB) and `mmap_size = 128 MiB` keep
   large scans off the OS read path. They do not change query semantics.
 
-On the 10k fixture, the change cut the criterion mean by roughly two thirds
-for `hybrid_k5` and roughly three quarters for `keyword_only_k5`, and cut the
-exact-percentile harness p95 by roughly half. A rejected experiment: rewriting
-the FTS namespace filter as `rowid IN (SELECT ...)` made SQLite correlate the
-subquery per FTS match, so the JOIN formulation stays. The residual cost is
-SQLite blob-read throughput in the O(n) scan. The structural fix is the D-002
-revisit (packed in-process vectors or an ANN index), and the trigger is now
-backed by benchmark results.
+Local measurements on the 10k fixture showed lower criterion means for
+`hybrid_k5` and `keyword_only_k5` and a lower exact-percentile harness p95.
+Those runs were historical and specific to one machine; they are not a portable
+benchmark. A rejected experiment: rewriting the FTS namespace filter as `rowid
+IN (SELECT ...)` made SQLite correlate the subquery per FTS match, so the JOIN
+formulation stays. The residual cost is SQLite blob-read throughput in the O(n)
+scan. The structural fix is the D-002 revisit (packed in-process vectors or an
+ANN index), and local benchmark results support the trigger.
 
 ## D-017: Production hardening defaults for the HTTP/MCP surface
 
@@ -441,7 +471,7 @@ tags?, max_chunk_chars?}` and stores memories with `source = "capture"`.
   merged in, and message `at` timestamps pass through to `created_at`.
 - The namespace is auto-created, mirroring MCP `remember` (D-009): capture is
   the agent-shaped, no-setup path. Insertions happen under one store lock.
-- REST-first was deliberate: hooks (session-end, IDE, CI) speak HTTP, and an
+- REST-first was deliberate: hooks (session-end, IDE, automation) speak HTTP, and an
   MCP `capture` tool would mostly duplicate `remember` for interactive agents.
   If demand appeared, the same core chunking could sit behind a tool.
 
@@ -474,14 +504,15 @@ Position:
   surfaced in recall results (source is already stored and shown), and
   insertion-time content screening.
 
-## D-020: ONNX intra-op threads capped at min(logical CPUs, 4) (shipped 0c2d07e)
+## D-020: ONNX intra-op threads capped at min(logical CPUs, 4)
 
-The fastembed/ort default uses every logical CPU, which on the Windows MSVC
-development machine starved the SQLite store and the Tokio runtime during
-capture bursts. Measured in `onnx_embed.rs::default_intra_threads`: 4 intra-op
-threads beat the all-CPU default by 1.3-1.8x on capture-sized chunks
-and never lost a run overall; 1-2 threads were clearly worse on long inputs.
-Production constructors (`new`, `with_model`, `with_cache_dir`) therefore use
-`available_parallelism` capped at 4 (floored at 1). Trade-off accepted: peak
-single-embed latency on an otherwise idle large host is slightly below its
-theoretical best, in exchange for headroom for the rest of the process.
+The fastembed/ort default uses every logical CPU, which on a large host can
+starve the SQLite store and the Tokio runtime during capture bursts. In local
+testing in `onnx_embed.rs::default_intra_threads`, 4 intra-op threads performed
+better than the all-CPU default on capture-sized chunks, and 1 to 2 threads were
+worse on long inputs. Those runs were historical and specific to one machine;
+they are not a portable benchmark. Production constructors (`new`, `with_model`,
+`with_cache_dir`) therefore use `available_parallelism` capped at 4 (floored at
+1). Trade-off accepted: peak single-embed latency on an otherwise idle large host
+is slightly below its theoretical best, in exchange for headroom for the rest of
+the process.

@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Transport: stdio or streamable-HTTP (`POST /mcp`). The server targets the
+Transport: stdio or streamable HTTP (`POST /mcp`). The server targets the
 `2026-07-28` spec. A legacy `initialize` naming `2026-07-28` is answered with
 `2025-11-25`, the newest version with a handshake. The newer lifecycle starts
 with `server/discover`, then sends per-request metadata in `_meta` plus the
@@ -25,16 +25,16 @@ decay), `pinned_boost` (default 0.2), `format` (`json` default, `text`), and
 Returns hits with a `breakdown` (`bm25`, `vector`, `recency`, `pinned_boost`,
 `total`). `format: "text"` cannot be combined with embeddings.
 
+## `forget`
+
+Argument: `id`. Permanently deletes one memory. Unknown ids are invalid-params
+errors.
+
 ## `update_memory`
 
 Arguments: `id`, any of `text`, `tags`, `pinned`, plus `include_embedding`.
 Only the fields you pass change. Changing text re-embeds it. Unknown ids are
 invalid-params errors, matching REST's 404.
-
-## `forget`
-
-Argument: `id`. Permanently deletes one memory. Unknown ids are invalid-params
-errors.
 
 ## `list_memories`
 

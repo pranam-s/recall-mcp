@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Latency histogram buckets in seconds (recall's PRD budget is 25 ms).
+/// Latency histogram buckets in seconds (recall's design target is 25 ms).
 const LATENCY_BUCKETS_SECS: [f64; 11] = [
     0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
 ];

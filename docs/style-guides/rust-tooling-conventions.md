@@ -31,7 +31,7 @@ Sources (checked 2026-09-06):
 
 ## rustfmt
 
-Use the default style and run `cargo fmt --all` in CI and pre-commit. Do not
+Use the default style and run `cargo fmt --all` before each commit. Do not
 add a `rustfmt.toml` without a concrete need; the rustfmt project treats the
 default style as the ecosystem norm, and stable-channel options are frozen.
 
@@ -65,6 +65,6 @@ default style as the ecosystem norm, and stable-channel options are frozen.
   `cargo fmt --all -- --check`, and
   `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`.
 - `cargo llvm-cov` cannot run on windows-gnu because the profiler runtime is
-  missing (D-010). It runs on Windows MSVC and is enforced on the Linux CI
-  coverage job. The gate is 90% lines and 90% regions on `recall-core`
-  (cargo-llvm-cov 0.9.1 has no branch fail-under; see the D-010 amendment).
+  missing (D-010). It runs on Windows MSVC, where coverage is measured. The gate
+  is 90% lines and 90% regions on `recall-core` (cargo-llvm-cov 0.9.1 has no
+  branch fail-under; see the D-010 amendment).

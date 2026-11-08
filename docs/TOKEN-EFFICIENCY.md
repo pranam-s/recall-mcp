@@ -6,7 +6,7 @@ CLI, plus a text format for recall. The full record is still one flag away.
 
 ## Measured bytes
 
-Measured on 2026-11-08 on the Windows MSVC development machine by
+Measured on 2026-11-08 in a Windows MSVC build by
 `cargo test -p recall-mcp-server --test mcp_http -- --nocapture`. The numbers
 are serialized JSON-RPC response sizes (`body.to_string().len()`), not token
 counts, because token counts depend on the client's tokenizer. The tests
