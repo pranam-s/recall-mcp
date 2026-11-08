@@ -119,6 +119,18 @@ mod tests {
                 "missing error response {response}"
             );
         }
+        // Every operation can be called with the wrong method; document the
+        // 405 (and its Allow header) everywhere rather than only on /v1/stats.
+        for (path, operations) in paths {
+            for method in ["get", "post", "delete", "patch", "put"] {
+                if let Some(operation) = operations.get(method) {
+                    assert!(
+                        operation["responses"]["405"].is_object(),
+                        "{method} {path} must document the JSON 405 response"
+                    );
+                }
+            }
+        }
         // MCP doc names all six tools and the 2026-07-28 discover lifecycle.
         let mcp = paths["/mcp"]["post"]["description"].as_str().unwrap();
         for tool in [

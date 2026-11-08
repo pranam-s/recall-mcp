@@ -437,6 +437,12 @@ async fn stats_and_healthz_and_openapi() {
     assert_eq!(stats["total_memories"], 1);
     assert_eq!(stats["pinned_memories"], 1);
     assert_eq!(stats["per_namespace"][0]["count"], 1);
+    assert_eq!(stats["embedder"]["name"], "hash-256");
+    assert_eq!(stats["embedder"]["dimensions"], 256);
+    assert_eq!(
+        stats["embedder"]["fingerprint"], "hash-256@256",
+        "stats must expose the inner embedder's stable fingerprint"
+    );
 
     let res = app
         .clone()

@@ -15,7 +15,8 @@
           "200": {
             "description": "Server is up",
             "content": { "application/json": { "schema": { "type": "object", "required": ["status", "service", "version"], "properties": { "status": { "type": "string" }, "service": { "type": "string" }, "version": { "type": "string" } } } } }
-          }
+          },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" }
         }
       }
     },
@@ -23,7 +24,10 @@
       "get": {
         "summary": "This document",
         "security": [],
-        "responses": { "200": { "description": "OpenAPI 3.1 document" } }
+        "responses": {
+          "200": { "description": "OpenAPI 3.1 document" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" }
+        }
       }
     },
     "/v1/namespaces": {
@@ -35,6 +39,7 @@
             "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Namespace" } } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
@@ -51,6 +56,7 @@
           "409": { "$ref": "#/components/responses/Conflict" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -73,6 +79,7 @@
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/NotFound" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
@@ -89,6 +96,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -99,8 +107,10 @@
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "maxLength": 256 } }],
         "responses": {
           "204": { "description": "Deleted" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/NotFound" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
@@ -121,6 +131,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -175,6 +186,7 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -237,6 +249,7 @@
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -248,6 +261,7 @@
         "responses": {
           "200": { "description": "Metrics in text/plain; version=0.0.4" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -259,6 +273,7 @@
         "responses": {
           "200": { "description": "JSON-RPC response" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
           "413": { "$ref": "#/components/responses/PayloadTooLarge" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }

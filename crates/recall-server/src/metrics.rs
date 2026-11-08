@@ -184,6 +184,12 @@ impl recall_core::Embedder for TimedEmbedder {
         self.inner.name()
     }
 
+    fn fingerprint(&self) -> String {
+        // Delegate: the wrapper is an implementation detail, and stats/web
+        // must show the same identity the store guard compares against.
+        self.inner.fingerprint()
+    }
+
     fn embedding_invertible(&self) -> bool {
         self.inner.embedding_invertible()
     }
@@ -253,6 +259,36 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
+    }
+
+    #[test]
+    fn timed_embedder_forwards_the_fingerprint() {
+        #[derive(Debug)]
+        struct Fingerprinted;
+        impl recall_core::Embedder for Fingerprinted {
+            fn dimensions(&self) -> usize {
+                3
+            }
+            fn name(&self) -> &'static str {
+                "custom"
+            }
+            fn fingerprint(&self) -> String {
+                "custom:model@3".into()
+            }
+            fn embed(&self, _text: &str) -> Vec<f32> {
+                vec![0.0; 3]
+            }
+        }
+        let metrics = Arc::new(Metrics::new());
+        let embedder = TimedEmbedder {
+            inner: Arc::new(Fingerprinted),
+            metrics,
+        };
+        assert_eq!(
+            embedder.fingerprint(),
+            "custom:model@3",
+            "stats and the store guard must see the inner embedder's identity, not the wrapper default"
+        );
     }
 
     #[test]
