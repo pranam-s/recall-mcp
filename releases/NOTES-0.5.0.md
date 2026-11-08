@@ -47,7 +47,7 @@ otherwise the guard names both sides and requires
 Local, windows-msvc, rustc 1.99.1, 2026-11-08. Exact output is in
 `docs/EVALUATION.md`.
 
-- `cargo test --workspace --locked`: 199 passed, 0 failed, 3 ignored.
+- `cargo test --workspace --locked`: 200 passed, 0 failed, 3 ignored.
 - `cargo test --workspace --all-features --locked` with onnxruntime 1.28.0:
   206 passed, 0 failed, 4 ignored.
 - `cargo fmt --all -- --check`: clean.

@@ -7,7 +7,7 @@ claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: **199 passed, 0 failed, 3 ignored**.
+`cargo test --workspace --locked`: **200 passed, 0 failed, 3 ignored**.
 
 | Suite | Passed | Covers |
 |---|---:|---|
@@ -17,7 +17,7 @@ claimed.
 | recall-core ignored | 3 | FTS query-plan probe, p95 harness, cost breakdown (manual gates) |
 | recall-server unit | 37 | error/status mapping, JSON error contract, auth, rate limiting and bucket bound, Host/Origin scheme, security headers, slow-embedder responsiveness, MCP info, list cap/offset, capture, OpenAPI drift, metrics |
 | recall-server API | 12 | REST CRUD, auth matrix, pagination, compact/full views, 400/404/405/413/415/429 JSON errors, security headers, origin scheme, capture rollback |
-| recall-server MCP HTTP | 5 | initialize/tools/list/tools/call, stateless 2026-07-28 discover/list/call, API key, tools/list byte budget, compact vs full vs text sizes |
+| recall-server MCP HTTP | 6 | initialize/tools/list/tools/call, stateless 2026-07-28 discover/list/call, API key, tools/list byte budget, compact vs full vs text sizes |
 | recall-server metadata | 2 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes |
 | recall-server proptest | 1 | token-bucket partition and burst bound |
 | recall-cli unit | 8 | config precedence, embedder selection, origin validation |

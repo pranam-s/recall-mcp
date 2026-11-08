@@ -10,17 +10,18 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 fn app_with(api_key: Option<String>) -> axum::Router {
+    app_with_config(ServerConfig {
+        api_key,
+        web_dir: None,
+        ..Default::default()
+    })
+}
+
+fn app_with_config(config: ServerConfig) -> axum::Router {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = shared(recall_core::SqliteStore::open(dir.path().join("mcp.db")).expect("db"));
     std::mem::forget(dir);
-    build_router(
-        store,
-        &ServerConfig {
-            api_key,
-            web_dir: None,
-            ..Default::default()
-        },
-    )
+    build_router(store, &config)
 }
 
 async fn rpc(app: &axum::Router, payload: Value) -> (axum::http::StatusCode, Value) {
@@ -179,6 +180,42 @@ async fn compact_and_text_responses_stay_smaller_than_full_records() {
         "one compact hit must stay under 900 bytes: {}",
         compact_hits.len()
     );
+}
+
+#[tokio::test]
+async fn mcp_host_allowlist_rejects_foreign_and_accepts_listed_hosts() {
+    let app = app_with_config(ServerConfig {
+        allowed_hosts: vec!["mem.internal".into()],
+        ..ServerConfig::default()
+    });
+    let list = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": { "_meta": draft_meta() }
+    });
+    // The outer guard rejects a foreign Host on the MCP mount.
+    let foreign = Request::post("/mcp")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("host", "attacker.example")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/list")
+        .body(Body::from(list.to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(foreign).await.unwrap();
+    assert_eq!(res.status(), axum::http::StatusCode::MISDIRECTED_REQUEST);
+    // A host in the allowlist reaches the transport.
+    let allowed = Request::post("/mcp")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("host", "mem.internal:8787")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "tools/list")
+        .body(Body::from(list.to_string()))
+        .unwrap();
+    let res = app.oneshot(allowed).await.unwrap();
+    assert_eq!(res.status(), axum::http::StatusCode::OK);
 }
 
 #[tokio::test]
