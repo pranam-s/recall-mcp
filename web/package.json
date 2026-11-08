@@ -1,7 +1,7 @@
 {
   "name": "recall-mcp-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Accessible React UI for Recall-MCP: namespaces, memory search with score breakdowns, stats",
   "scripts": {

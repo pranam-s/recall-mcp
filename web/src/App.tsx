@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { api } from "./api";
-import type { MemoryPage, Namespace, RecallHit, Stats } from "./api";
+import { api, errorMessage, getApiKey, setApiKey } from "./api";
+import type { Memory, MemoryPage, Namespace, RecallHit, Stats } from "./api";
 
 function formatScore(value: number): string {
   return value.toFixed(3);
@@ -31,6 +31,9 @@ export default function App() {
         <nav aria-label="Section navigation" className="mt-2">
           <ul className="flex flex-wrap gap-4">
             <li>
+              <a className="text-blue-700 underline" href="#connection">Connection</a>
+            </li>
+            <li>
               <a className="text-blue-700 underline" href="#namespaces">Namespaces</a>
             </li>
             <li>
@@ -52,6 +55,7 @@ export default function App() {
         </nav>
       </header>
 
+      <ConnectionSection />
       <NamespacesSection namespaces={namespaces} onRefresh={refreshNamespaces} />
       <SearchSection namespaces={namespaces} onRefresh={refreshNamespaces} />
       <MemoriesSection namespaces={namespaces} />
@@ -63,6 +67,76 @@ export default function App() {
         Local-first memory broker · REST + MCP · scores explained on every result.
       </footer>
     </div>
+  );
+}
+
+function ConnectionSection() {
+  const [key, setKey] = useState(getApiKey());
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setApiKey(key);
+    setKey("");
+    setError(null);
+    setStatus(
+      key.trim()
+        ? "API key saved for this tab. Requests now send X-API-Key."
+        : "API key cleared. Requests are sent without a key.",
+    );
+  };
+
+  const clear = () => {
+    setApiKey("");
+    setKey("");
+    setError(null);
+    setStatus("API key cleared. Requests are sent without a key.");
+  };
+
+  return (
+    <section id="connection" aria-labelledby="connection-heading" className="mt-8">
+      <h2 id="connection-heading" className="text-xl font-semibold">Connection</h2>
+      <p className="mt-1 text-sm text-gray-700">
+        If the server requires an API key, save it here. It is kept in this tab's
+        sessionStorage only and sent as <code>X-API-Key</code>.
+      </p>
+      <form onSubmit={save} className="mt-3 flex flex-wrap items-end gap-2">
+        <div className="grow">
+          <label htmlFor="api-key" className="block text-sm font-medium">API key</label>
+          <input
+            id="api-key"
+            type="password"
+            value={key}
+            autoComplete="off"
+            aria-describedby="api-key-help"
+            onChange={(e) => setKey(e.target.value)}
+            className="mt-1 w-full rounded border border-gray-400 px-2 py-1"
+          />
+          <p id="api-key-help" className="mt-1 text-sm text-gray-700">
+            Leave blank and choose Clear to send no key. The key is never shown
+            again after saving; paste it again to replace it.
+          </p>
+        </div>
+        <button type="submit" className="rounded bg-blue-700 px-3 py-1.5 font-medium text-white">
+          Save key
+        </button>
+        <button
+          type="button"
+          onClick={clear}
+          className="rounded border border-gray-400 px-3 py-1.5 font-medium"
+        >
+          Clear key
+        </button>
+      </form>
+      <p
+        role="status"
+        aria-live="polite"
+        className={`mt-2 min-h-5 text-sm ${error ? "text-red-700" : "text-green-800"}`}
+      >
+        {error ?? status ?? ""}
+      </p>
+    </section>
   );
 }
 
@@ -86,7 +160,7 @@ function NamespacesSection({ namespaces, onRefresh }: NamespacesSectionProps) {
       await onRefresh();
     } catch (e) {
       setNotice(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     }
   };
 
@@ -169,7 +243,7 @@ function SearchSection({ namespaces, onRefresh }: SearchSectionProps) {
       setMemoryText("");
       await onRefresh();
     } catch (e) {
-      setStatus({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+      setStatus({ kind: "error", text: errorMessage(e) });
     }
   };
 
@@ -181,7 +255,7 @@ function SearchSection({ namespaces, onRefresh }: SearchSectionProps) {
       setStatus({ kind: "info", text: `${results.length} result(s).` });
     } catch (e) {
       setHits(null);
-      setStatus({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+      setStatus({ kind: "error", text: errorMessage(e) });
     }
   };
 
@@ -300,6 +374,11 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
   const [page, setPage] = useState(0);
   const [pageData, setPageData] = useState<MemoryPage | null>(null);
   const [status, setStatus] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [reload, setReload] = useState(0);
+  const skipPageStatus = useRef(false);
+  const [pendingDelete, setPendingDelete] = useState<Memory | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   // Drops stale responses when page/namespace changes race each other.
   const loadSeq = useRef(0);
 
@@ -315,6 +394,12 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
           return;
         }
         setPageData(fresh);
+        if (skipPageStatus.current) {
+          // A pin/delete announcement owns the live region; don't replace it
+          // with the routine page summary on the refresh that follows.
+          skipPageStatus.current = false;
+          return;
+        }
         setStatus({
           kind: "info",
           text:
@@ -327,9 +412,9 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
       })
       .catch((e) => {
         if (seq !== loadSeq.current) return;
-        setStatus({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+        setStatus({ kind: "error", text: errorMessage(e) });
       });
-  }, [namespace, limit, page]);
+  }, [namespace, limit, page, reload]);
 
   const total = pageData?.total ?? 0;
   const nextDisabled = pageData === null || (page + 1) * limit >= total;
@@ -337,6 +422,47 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
   const changePage = (delta: number) => {
     setStatus(null);
     setPage((current) => Math.max(0, current + delta));
+  };
+
+  const togglePinned = async (memory: Memory) => {
+    try {
+      const updated = await api.updatePinned(memory.id, !memory.pinned);
+      setStatus({
+        kind: "info",
+        text: updated.pinned
+          ? `Pinned “${updated.text}”.`
+          : `Unpinned “${updated.text}”.`,
+      });
+      skipPageStatus.current = true;
+      setReload((n) => n + 1);
+    } catch (e) {
+      setStatus({ kind: "error", text: errorMessage(e) });
+    }
+  };
+
+  const requestDelete = (memory: Memory, button: HTMLButtonElement) => {
+    returnFocusRef.current = button;
+    setPendingDelete(memory);
+    dialogRef.current?.showModal();
+  };
+
+  const closeDialog = () => {
+    dialogRef.current?.close();
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    setPendingDelete(null);
+    dialogRef.current?.close();
+    try {
+      await api.deleteMemory(target.id);
+      setStatus({ kind: "info", text: `Deleted “${target.text}”.` });
+      skipPageStatus.current = true;
+      setReload((n) => n + 1);
+    } catch (e) {
+      setStatus({ kind: "error", text: errorMessage(e) });
+    }
   };
 
   return (
@@ -416,6 +542,7 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
               <th scope="col" className="py-1 pr-4">Source</th>
               <th scope="col" className="py-1 pr-4">Pinned</th>
               <th scope="col" className="py-1 pr-4">Created (unix)</th>
+              <th scope="col" className="py-1 pr-4">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -426,16 +553,67 @@ function MemoriesSection({ namespaces }: MemoriesSectionProps) {
                 <td className="py-1 pr-4">{memory.source}</td>
                 <td className="py-1 pr-4">{memory.pinned ? "Yes" : "No"}</td>
                 <td className="py-1 pr-4 tabular-nums">{memory.created_at}</td>
+                <td className="py-1 pr-4">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      aria-pressed={memory.pinned}
+                      onClick={() => void togglePinned(memory)}
+                      className="rounded border border-gray-400 px-2 py-1 font-medium"
+                    >
+                      {memory.pinned ? "Unpin" : "Pin"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => requestDelete(memory, e.currentTarget)}
+                      className="rounded border border-red-700 px-2 py-1 font-medium text-red-800"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
             {pageData.memories.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-1 text-gray-600">No memories in this view.</td>
+                <td colSpan={6} className="py-1 text-gray-600">No memories in this view.</td>
               </tr>
             )}
           </tbody>
         </table>
       )}
+
+      <dialog
+        ref={dialogRef}
+        aria-labelledby="delete-dialog-heading"
+        aria-describedby="delete-dialog-body"
+        onClose={() => {
+          setPendingDelete(null);
+          returnFocusRef.current?.focus();
+        }}
+        className="rounded border border-gray-400 p-4"
+      >
+        <h3 id="delete-dialog-heading" className="text-lg font-semibold">Delete this memory?</h3>
+        <p id="delete-dialog-body" className="mt-2 text-sm">
+          “{pendingDelete?.text}” is permanently removed. This cannot be undone.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void confirmDelete()}
+            className="rounded bg-red-800 px-3 py-1.5 font-medium text-white"
+          >
+            Delete memory
+          </button>
+          <button
+            type="button"
+            onClick={closeDialog}
+            className="rounded border border-gray-400 px-3 py-1.5 font-medium"
+          >
+            Cancel
+          </button>
+        </div>
+      </dialog>
     </section>
   );
 }
@@ -494,7 +672,7 @@ function CaptureSection({ namespaces, onRefresh }: CaptureSectionProps) {
       setTags("");
       await onRefresh();
     } catch (e) {
-      setStatus({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+      setStatus({ kind: "error", text: errorMessage(e) });
     }
   };
 
@@ -639,7 +817,7 @@ function MetricsSection() {
       setSamples(parsed);
       setStatus({ kind: "info", text: `Metrics refreshed · ${parsed.length} samples.` });
     } catch (e) {
-      setStatus({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+      setStatus({ kind: "error", text: errorMessage(e) });
     }
   }, []);
 
@@ -715,7 +893,7 @@ function StatsSection() {
     api
       .stats()
       .then(setStats)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => setError(errorMessage(e)));
   }, []);
 
   return (
@@ -736,6 +914,21 @@ function StatsSection() {
             <div>
               <dt className="font-medium">Pinned</dt>
               <dd className="tabular-nums">{stats.pinned_memories}</dd>
+            </div>
+          </dl>
+          <h3 className="mt-4 text-base font-semibold">Embedder</h3>
+          <dl className="mt-2 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="font-medium">Name</dt>
+              <dd>{stats.embedder.name}</dd>
+            </div>
+            <div>
+              <dt className="font-medium">Dimensions</dt>
+              <dd className="tabular-nums">{stats.embedder.dimensions}</dd>
+            </div>
+            <div>
+              <dt className="font-medium">Fingerprint</dt>
+              <dd className="break-all font-mono text-xs">{stats.embedder.fingerprint}</dd>
             </div>
           </dl>
           <table className="mt-4 w-full border-collapse text-left text-sm">

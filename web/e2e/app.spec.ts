@@ -10,12 +10,16 @@ test.describe("Recall-MCP UI", () => {
     // The store starts empty: create the namespace used by the rest of the flow.
     await page.getByLabel("New namespace name").fill("e2e");
     await page.getByRole("button", { name: "Create namespace" }).click();
-    await expect(page.getByRole("status").first()).toHaveText(/created/i);
+    await expect(
+      page.getByRole("region", { name: "Namespaces" }).getByRole("status"),
+    ).toHaveText(/created/i);
 
     // Create a memory through the UI form.
     await page.getByLabel("New memory text").fill("playwright e2e verifies the ranking explanation");
     await page.getByRole("button", { name: "Remember" }).click();
-    await expect(page.getByRole("status").nth(1)).toHaveText(/stored/i);
+    await expect(
+      page.getByRole("region", { name: "Search memories" }).getByRole("status"),
+    ).toHaveText(/stored/i);
 
     // Recall it and verify the breakdown table renders explainable numbers.
     await page.getByLabel("Query").fill("ranking explanation e2e");
@@ -48,7 +52,7 @@ test.describe("Recall-MCP UI", () => {
 
     // Visible focus: tab to the first link and confirm it has an outline.
     await page.keyboard.press("Tab");
-    const firstLink = page.getByRole("link", { name: "Namespaces" });
+    const firstLink = page.getByRole("link", { name: "Connection" });
     await expect(firstLink).toBeFocused();
 
     const results = await new AxeBuilder({ page })
@@ -182,5 +186,89 @@ test.describe("Recall-MCP UI", () => {
       results.violations.map((v) => `${v.id} (${v.nodes.length} nodes)`),
       JSON.stringify(results.violations, null, 2),
     ).toEqual([]);
+  });
+
+  test("stats shows the embedder identity", async ({ page }) => {
+    await page.goto("/");
+    const section = page.getByRole("region", { name: "Server stats" });
+    await expect(section.getByText("hash-256", { exact: true })).toBeVisible();
+    await expect(section.getByText("Fingerprint")).toBeVisible();
+    await expect(section.getByText("hash-256@256")).toBeVisible();
+  });
+
+  test("pin, unpin, and delete a memory from Browse with a native dialog", async ({
+    page,
+    request,
+  }) => {
+    await request.post("/v1/namespaces", { data: { name: "manage" } });
+    await request.post("/v1/memories", {
+      data: { namespace: "manage", text: "pin and delete this memory" },
+    });
+
+    await page.goto("/");
+    const section = page.getByRole("region", { name: "Browse memories" });
+    await section.getByLabel("Namespace").selectOption("manage");
+    const row = section.getByRole("row").filter({ hasText: "pin and delete this memory" });
+    await expect(row).toHaveCount(1);
+
+    // Pin -> announcement + Pinned cell flips.
+    await row.getByRole("button", { name: "Pin" }).click();
+    await expect(section.getByRole("status")).toHaveText(/Pinned/);
+    await expect(row.getByText("Yes")).toBeVisible();
+    // Unpin through the same toggle (aria-pressed reflects state).
+    const unpin = row.getByRole("button", { name: "Unpin" });
+    await expect(unpin).toHaveAttribute("aria-pressed", "true");
+    await unpin.click();
+    await expect(section.getByRole("status")).toHaveText(/Unpinned/);
+
+    // Delete opens a native dialog; Cancel returns focus to the trigger.
+    const deleteButton = row.getByRole("button", { name: "Delete" });
+    await deleteButton.click();
+    const dialog = page.getByRole("dialog", { name: "Delete this memory?" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(deleteButton).toBeFocused();
+    await expect(row).toHaveCount(1);
+
+    // Confirm: the row disappears and the action is announced.
+    await deleteButton.click();
+    await page
+      .getByRole("dialog", { name: "Delete this memory?" })
+      .getByRole("button", { name: "Delete memory" })
+      .click();
+    await expect(section.getByRole("status")).toHaveText(/Deleted/);
+    await expect(row).toHaveCount(0);
+  });
+
+  test("API key connection unlocks a keyed server and survives reload", async ({ page }) => {
+    await page.goto("http://127.0.0.1:8798/");
+    const stats = page.getByRole("region", { name: "Server stats" });
+    // Without a key the protected request fails with the 401 guidance.
+    await expect(stats.getByRole("alert")).toContainText("API key missing or invalid");
+
+    const connection = page.getByRole("region", { name: "Connection" });
+    await connection.getByLabel("API key").fill("e2e-secret");
+    await connection.getByRole("button", { name: "Save key" }).click();
+    await expect(connection.getByRole("status")).toHaveText(/saved/i);
+
+    // The key lives in sessionStorage: a reload keeps it and stats load.
+    await page.reload();
+    await expect(stats.getByText("hash-256", { exact: true })).toBeVisible();
+    await expect(stats.getByRole("alert")).toHaveCount(0);
+
+    // Saving sends X-API-Key on a mutating request too.
+    await page.getByLabel("New namespace name").fill("keyed");
+    await page.getByRole("button", { name: "Create namespace" }).click();
+    await expect(
+      page.getByRole("region", { name: "Namespaces" }).getByRole("status"),
+    ).toHaveText(/created/i);
+
+    // Clear removes the key; the next request is rejected again.
+    await connection.getByLabel("API key").fill("");
+    await connection.getByRole("button", { name: "Clear key" }).click();
+    await expect(connection.getByRole("status")).toHaveText(/cleared/i);
+    await page.reload();
+    await expect(stats.getByRole("alert")).toContainText("API key missing or invalid");
   });
 });
