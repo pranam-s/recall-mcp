@@ -1,7 +1,7 @@
 # cargo-deny configuration.
 # Review cadence: re-check this file whenever dependencies change and at each
 # release. The allow-lists are intentionally permissive: every dependency in
-# Cargo.lock was audited as MIT-compatible (docs/LICENSE-AUDIT.md).
+# Cargo.lock is MIT-compatible under the licenses allowed below.
 
 [graph]
 targets = [

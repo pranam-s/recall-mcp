@@ -29,19 +29,22 @@ recall serve --stdio --db recall.db
 ```
 
 `capture --file` expects a JSON array of `{"role","content","at"}` messages.
+`role` and `at` are optional.
 
 ## Output
 
-JSON is compact when stdout is a pipe and pretty on a terminal. `--pretty`
-forces pretty output, `--full` restores the complete record shape, and
-`--show-embedding` includes the vector. `recall --format text` prints one block
-per hit with rank, total, id, text, and the full breakdown.
+JSON is compact when stdout is a pipe and pretty on a terminal. `remember`,
+`recall`, `update`, and `list` accept `--pretty` to force pretty output,
+`--full` to restore the full record shape, and `--show-embedding` to include
+the vector. `recall --format text` prints one block per hit with rank,
+total, id, `created_at`, source, tags, text, and the full breakdown.
 
 ## Encryption
 
 Set `RECALL_MCP_KEY` (64 hex characters) or `RECALL_MCP_KEY_FILE`. A plaintext
-store is re-encrypted in place on the first keyed open, with a forensic
-VACUUM + WAL checkpoint. Backups of keyed stores stay encrypted.
+store is re-encrypted in place on the first keyed open, with `secure_delete`,
+VACUUM, and a truncated WAL checkpoint. Database backups made with `backup`
+stay encrypted. Exports are plaintext JSON.
 
 ## Exit codes
 

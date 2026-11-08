@@ -1,14 +1,16 @@
 # Recall-MCP architecture
 
-Describes the shipped 0.5.0 design. Per-decision records and dated amendments
-live in [adr/DECISIONS.md](adr/DECISIONS.md) (D-001 to D-021). Measured numbers
-live in [EVALUATION.md](EVALUATION.md).
+This describes the shipped 0.5.0 design. Decision records and dated amendments
+live in [adr/DECISIONS.md](adr/DECISIONS.md) (D-001 through D-021), and measured
+numbers in [EVALUATION.md](EVALUATION.md).
 
-**Stack:** Rust 2024 (MSVC primary, GNU secondary) · Axum 0.8 + Tokio · SQLite
-via rusqlite 0.41 (bundled, FTS5) · rmcp 3.9 (targets the MCP 2026-07-28 spec;
-the wire `initialize` handshake answers `2025-11-25`, D-004) · React 19 +
-Vite 8 + TypeScript + Tailwind 4 · `cargo test` + `cargo llvm-cov` +
-Playwright/axe.
+The workspace uses Rust 2024, with Windows MSVC as the primary toolchain and
+windows-gnu as the secondary one. The server is built on Axum 0.8 and Tokio,
+stores data in SQLite through rusqlite 0.41 (bundled, with FTS5), and uses rmcp
+3.9 for MCP. The SDK targets the MCP 2026-07-28 spec, and the wire `initialize`
+handshake answers `2025-11-25` (D-004). The web UI uses React 19, Vite 8,
+TypeScript, and Tailwind 4. Tests run with `cargo test`, coverage with
+`cargo llvm-cov`, and browser tests with Playwright and axe.
 
 ## What the system is
 
@@ -17,9 +19,9 @@ server (stdio and streamable-HTTP), an HTTP/JSON API with a hand-written
 OpenAPI document, and a CLI over the same engine. One SQLite file is the whole
 store.
 
-The product thesis is explainable retrieval: every recall result carries
-`{bm25, vector, recency, pinned_boost, total}`, never a black-box top-k. The
-components are computed separately, unit-tested, and rendered by the web UI.
+Retrieval is explainable by design. Every recall result carries
+`{bm25, vector, recency, pinned_boost, total}`, and the web UI renders each
+component. The components are computed and unit tested separately.
 
 ## Layering
 
@@ -37,15 +39,16 @@ crates/
 web/              React + Vite SPA, a pure API client, Playwright + axe e2e
 evals/            100-memory corpus, 100 golden queries, 50 semantic queries
 skills/           agent skill plus CLI and MCP references
-docs/             architecture, decisions, evaluation, status, clients, history
+docs/             architecture, decisions, evaluation, clients, token
+                  efficiency, style guides
 ```
 
-The pure-core rule (D-001) is not aesthetic. The coverage gate is achievable
-because the scorer, store, embedders, chunker, crypto, validation, and views are
-testable without an HTTP runtime. The MCP transport is swappable because core
-does not know it exists. Input is validated in core and again at each edge,
-which is deliberate duplication: a shared validation layer typed for async HTTP
-would drag axum types back into core.
+The pure-core rule (D-001) keeps the coverage gate achievable. The scorer,
+store, embedders, chunker, crypto, validation, and views can be tested without
+an HTTP runtime. The MCP transport can be swapped because core does not know it
+exists. Input is validated in core and again at each edge. The duplication is
+deliberate: a shared validation layer typed for async HTTP would drag axum types
+back into core.
 
 ## Data model
 
@@ -62,38 +65,38 @@ memories(id TEXT PK, namespace_id TEXT FK REFERENCES namespaces ON DELETE CASCAD
 memories_fts(fts_tokens)   -- FTS5 external-content index, trigger-synced
 ```
 
-`PRAGMA user_version` is 2. A newer schema is refused instead of guessed at.
-The connection sets a 5 s busy timeout, WAL, foreign keys, `synchronous=NORMAL`,
-a larger page cache, and memory-mapped reads.
+`PRAGMA user_version` is 2, and a newer schema is refused instead of guessed
+at. The connection sets a 5 s busy timeout, WAL, foreign keys,
+`synchronous=NORMAL`, a larger page cache, and memory-mapped reads.
 
 There is no vector extension. Similarity is an exact cosine scan over embedding
 BLOBs in rowid order (D-002, amended by D-016 and D-019), with a bounded exact
 top-k heap and a packed in-memory cache. `scan_cap` (default 10,000 rows per
-namespace) bounds the vector scan and `candidate_cap` (200) bounds keyword
+namespace) bounds the vector scan, and `candidate_cap` (200) bounds keyword
 candidates. Both are documented approximations.
 
-The packed cache records `PRAGMA data_version`. Another connection's commit
+The packed cache records `PRAGMA data_version`. A commit from another connection
 changes that value, so a stale cache is rebuilt instead of serving old vectors.
 Local writes invalidate the cache directly. Tag-filtered recalls bypass it
 because the cache does not carry tags.
 
 ## Recall path
 
-1. **Keyword candidates.** FTS5 `MATCH` over `memories_fts`, ordered by BM25
-   with a rowid tie-break. BM25 is normalized against the candidate set. In
-   keyed mode both documents and queries are HMAC token digests, so ranking sees
-   the same token multiplicities while plaintext stays off disk.
-2. **Vector candidates.** An exact cosine pass reads `(rowid, embedding,
+1. Keyword candidates. FTS5 `MATCH` over `memories_fts`, ordered by BM25 with a
+   rowid tie-break. BM25 is normalized against the candidate set. In keyed mode
+   both documents and queries are HMAC token digests, so ranking sees the same
+   token multiplicities while plaintext stays off disk.
+2. Vector candidates. An exact cosine pass reads `(rowid, embedding,
    created_at, pinned)` and computes from BLOB bytes with the query norm hoisted
    out of the loop. A bounded max-heap keeps the best vector-only rows. Outside
    the keyword set BM25 is zero, so a vector-only total is the final total and
    the heap provably cannot drop a row that belongs in the top k.
-3. **Scoring.** `total = w_bm25*norm_bm25 + w_vector*cosine +
+3. Scoring. `total = w_bm25*norm_bm25 + w_vector*cosine +
    w_recency*exp(-days/tau) + pinned_boost`; defaults 0.45/0.45/0.10, tau 30
    days, boost 0.2, tunable per request. Weights and tau are validated.
-4. **Ordering.** Total desc, created_at desc, rowid asc. The candidate heap and
+4. Ordering. Total desc, created_at desc, rowid asc. The candidate heap and
    final sort use the same comparator, so ties are deterministic.
-5. **Post-processing.** Full rows are fetched only for survivors. Recall is
+5. Post-processing. Full rows are fetched only for survivors. Recall is
    read-only: `last_accessed_at` is written at insert/update time only (AR-018).
 
 ## Encryption at rest (D-014)
@@ -167,12 +170,12 @@ cannot starve the async runtime and no mutex guard crosses an await.
 
 ## Capture
 
-Transcript messages are split deterministically (paragraph, then sentence,
-then a hard character wrap; default 1000 characters, clamped to 100 to 8000).
-Each chunk is embedded outside the store lock, tagged `role:<role>`, and stored
-with `source="capture"`. Namespace creation and every chunk insert run in one
-`BEGIN IMMEDIATE` transaction; a failure leaves no namespace and no partial
-transcript.
+Transcript messages are split deterministically (paragraph, then sentence, then
+a hard character wrap; default 1000 characters, clamped to 100 to 8000). Each
+chunk is embedded outside the store lock, tagged `role:<role>`, and stored with
+`source="capture"`. Namespace creation and every chunk insert run in one
+`BEGIN IMMEDIATE` transaction; if an insert fails, no namespace and no partial
+transcript remain.
 
 ## Validation and limits
 
@@ -198,12 +201,14 @@ arithmetic saturates.
 - Coverage: lines and regions >= 90 on recall-core (D-010 amendment; no stable
   branch fail-under).
 
+GitHub Actions runs the workspace tests, formatting, clippy, coverage, web
+build with Playwright, and dependency checks on push and pull requests. The 10k
+p95 design target is 25 ms; the p95 harness is an ignored test that runs only
+when invoked manually.
+
 ## Known limitations
 
-- p95 at 10k memories measured 27.3 to 35.3 ms on the 2026-11-08 host, above
-  the 25 ms PRD budget. The ignored manual gate records the failure.
 - Beyond roughly 100k memories per namespace, the D-002 ANN revisit applies.
 - Dense embeddings are invertible, so keyed mode does not protect text with
   ONNX or OpenAI vectors.
-- The OpenAI embedder has never been called live here (no key).
-- CI workflows are committed but Actions is disabled for billing.
+- The OpenAI embedder has never been called live.

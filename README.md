@@ -2,54 +2,70 @@
 
 mcp-name: io.github.pranam-s/recall-mcp
 
-**A local-first memory broker for AI agents.** One SQLite file, one server,
-and every answer shows its work: agents `remember` decisions and `recall` them
-later through MCP (stdio or streamable-HTTP), REST, or a CLI. Each hit carries
-the score breakdown that ranked it: `{bm25, vector, recency, pinned_boost,
-total}`. Keyword search works offline out of the box. An optional local ONNX
-embedder adds semantic matching without sending text anywhere. An optional
-per-database key seals memory text with ChaCha20-Poly1305.
+Recall-MCP is a local-first memory broker for AI agents. One SQLite file and one
+server hold short records that agents write and read back through MCP over stdio
+or streamable HTTP, REST, or the CLI. Every recall hit carries the score breakdown
+behind its rank: `{bm25, vector, recency, pinned_boost, total}`.
 
-Status: **0.5.0, tagged 2026-11-08**. See
-[docs/STATUS.md](docs/STATUS.md) for the current done/partial list and
-[docs/EVALUATION.md](docs/EVALUATION.md) for every measured number.
+Keyword search works offline with no model. An optional local ONNX embedder adds
+semantic matching without sending text anywhere. An optional per-database key
+encrypts memory text with ChaCha20-Poly1305.
 
-## Why
+Status: **0.5.0**, tagged 2026-11-08. The project is pre-1.0;
+[docs/EVALUATION.md](docs/EVALUATION.md) records the measured results.
 
-AI agents start every session from zero. Recall-MCP is a vendor-neutral memory
-layer: store observations, decisions, and preferences as short records, then
-retrieve them with hybrid scoring.
+## Why it exists
+
+AI agents start every session from zero. Recall-MCP gives them one place to keep
+observations, decisions, and preferences, and a way to retrieve them later using
+keyword, vector, and recency signals.
 
 ```text
 total = w_bm25 * norm_bm25 + w_vector * cosine + w_recency * exp(-days/tau) + pinned_boost
 defaults: 0.45 / 0.45 / 0.10, tau = 30 days, pinned_boost = 0.2 (tunable per request)
 ```
 
-Retrieval quality on the 100-query golden set: hash embedder 98/100
-hit-rate@5 (0.980, MRR@10 0.975). The 50-query paraphrase set is gated with
-ONNX: 50/50 (1.000, MRR@10 0.740); the hash diagnostic is 31/50 (0.620).
-Method and exact output are in [docs/EVALUATION.md](docs/EVALUATION.md).
+Every hit reports its score components, so a caller can see why a memory ranked
+where it did. On the 100-query golden set the hash embedder scores 98/100 hit-rate@5
+(0.980, MRR@10 0.975). The 50-query paraphrase set with ONNX scores 50/50
+(1.000, MRR@10 0.740); the hash diagnostic on that set is 31/50 (0.620). Method
+and output are in [docs/EVALUATION.md](docs/EVALUATION.md).
 
-Namespaces organize workspaces, and recall always filters by namespace. They
-are not a security boundary: one API key can read and write every namespace,
-so do not point mutually untrusted agents at one server.
+Namespaces organize workspaces, and recall always filters by namespace. They are
+not a security boundary: one API key can read and write every namespace, so do
+not point mutually untrusted agents at one server.
 
 ## Install
 
-Prerequisites: Rust stable and a C compiler for bundled SQLite (MSVC or gcc).
-Node 24+ is only needed for the web UI.
+The v0.5.0 [GitHub release](https://github.com/pranam-s/recall-mcp/releases/tag/v0.5.0)
+has a Windows x86_64 archive named `recall-mcp-windows-x86_64.zip`. It contains
+`recall.exe`, `recall-cli.exe`, `LICENSE`, and `README.md`. Unzip it and add the
+directory to `PATH`, or call `recall.exe` by its full path.
+
+To build from source on any platform, install Rust stable and a C compiler for
+the bundled SQLite build; MSVC and gcc both work. Node 24+ is only needed for the
+web UI.
 
 ```sh
-cargo install recall-mcp-cli --version 0.5.0 --locked
-# or install the checkout you are reading:
+git clone https://github.com/pranam-s/recall-mcp
+cd recall-mcp
+cargo build --release --locked
+```
+
+The binaries land in `target/release/`: `recall` and the older `recall-cli`
+alias. To install the CLI into Cargo's bin directory instead:
+
+```sh
 cargo install --path crates/recall-cli --locked
 ```
 
-The package installs both `recall` and the older `recall-cli` alias.
+The crates.io packages `recall-mcp-core`, `recall-mcp-server`, and
+`recall-mcp-cli` are not published yet; publication is pending. Release notes for
+this line are in [releases/NOTES-0.5.0.md](releases/NOTES-0.5.0.md).
 
-## Try it
+## Quickstart
 
-Script the short `recall` binary:
+The examples use a new `recall.db` in the current directory.
 
 ```console
 $ recall remember --db recall.db --namespace work --text "We deploy on Thursdays" --tags ops
@@ -64,72 +80,59 @@ $ recall recall --db recall.db --namespace work --query "when do we deploy?" --f
    bm25=1.000 vector=0.500 recency=1.000 pinned_boost=0.000
 ```
 
-JSON is compact when stdout is a pipe and pretty on a terminal. `--pretty`
-forces pretty output, `--full` restores the storage fields (`namespace_id`,
-`pinned`, `last_accessed_at`), and `--show-embedding` includes the vector. The
-defaults are compact because the embedding alone is about 1.2 KB of JSON per
-record.
+JSON is compact when stdout is a pipe and pretty on a terminal. `--pretty` forces
+pretty output, `--full` restores the storage fields (`namespace_id`, `pinned`,
+`last_accessed_at`), and `--show-embedding` includes the vector. Compact is the
+default because one hash embedding is about 1.2 KB of JSON per record.
 
-Serve REST, MCP, and the web UI:
+## Serving and MCP clients
 
 ```sh
-recall serve --bind 127.0.0.1:8787 --db recall.db --web-dir web/dist
-# REST:      http://127.0.0.1:8787/v1/...
-# MCP:       http://127.0.0.1:8787/mcp  (streamable-HTTP)
-# OpenAPI:   http://127.0.0.1:8787/openapi.json
-# Metrics:   http://127.0.0.1:8787/metrics
-# Web UI:    http://127.0.0.1:8787/
+recall serve --bind 127.0.0.1:8787 --db recall.db
 ```
 
-Live probes:
+That starts REST at `/v1/...`, MCP at `/mcp` over streamable HTTP, the OpenAPI
+document at `/openapi.json`, and metrics at `/metrics`. If you built the web UI
+with `cd web && npm ci && npm run build`, add `--web-dir web/dist` to serve it at
+`/`.
 
 ```console
 $ curl -s http://127.0.0.1:8787/healthz
 {"service":"recall-mcp","status":"ok","version":"0.5.0"}
-
-$ curl -si -X POST http://127.0.0.1:8787/v1/namespaces -H 'content-type: application/json' -d '{"name":"work"}' | head -1
-HTTP/1.1 201 Created
 ```
 
-The REST list endpoint returns a compact page:
+MCP over stdio uses `recall serve --stdio --db recall.db`. The six tools are
+`remember`, `recall`, `forget`, `update_memory`, `list_memories`, and `capture`.
+REST and MCP responses use compact records by default. Set
+`include_embedding=true` for full records, and `include_memories=true` on capture
+to return the stored chunks.
 
-```json
-{"items":[{"id":"...","text":"...","source":"cli","created_at":123}],"total":1,"limit":100,"offset":0,"has_more":false}
-```
+The server targets the MCP `2026-07-28` specification: stateless per-request
+metadata, `server/discover`, and the `MCP-Protocol-Version`, `Mcp-Method`, and
+`Mcp-Name` headers. A legacy `initialize` naming `2026-07-28` is answered with
+`2025-11-25`, the newest version that still uses a handshake (D-004).
 
-Pass `include_embedding=true` to restore full records. `POST /v1/capture`
-returns a summary (`{namespace, captured, first_id, last_id}`) unless
-`include_memories=true`.
-
-### MCP clients
-
-- stdio: `recall serve --stdio --db recall.db`
-- streamable-HTTP: `http://127.0.0.1:8787/mcp`
-- Six tools: `remember`, `recall`, `forget`, `update_memory`, `list_memories`,
-  `capture`.
-
-The server targets the MCP `2026-07-28` spec: stateless per-request metadata,
-`server/discover`, and the `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`
-headers. A legacy `initialize` naming `2026-07-28` is answered with
-`2025-11-25`, the newest version with a handshake (D-004).
-
-Client snippets for Claude Code, Codex, Cursor, OpenCode v2, Warp, and
-Antigravity are in [docs/clients.md](docs/clients.md). They are expected
-starting points, not live-verified against every client version.
+Client snippets for Claude Code, Codex, Cursor, OpenCode v2, Warp, and Antigravity
+are in [docs/clients.md](docs/clients.md), along with the portable agent skill in
+`skills/recall-mcp/`. The transports are covered by conformance tests; the
+snippets are starting points and have not been verified against every client
+version.
 
 ## Configuration
 
-Precedence is flag, then environment, then config file, then default, per knob.
-Secrets are env or flag only; they are never file-configurable.
+Flags take precedence over environment variables, then the JSON config file, then
+defaults, per setting. The API key comes from a flag or environment variable; the
+encryption key comes from the environment. Neither is file-configurable.
 
-| What | Flag | Environment | Config file | Default |
+| Setting | Flag | Environment | Config file | Default |
 |---|---|---|---|---|
 | Database file | `--db` | `RECALL_MCP_DB` | none | `recall.db` |
-| Namespace for one-shot commands | `--namespace` | `RECALL_MCP_NAMESPACE` | none | required |
+| Namespace for one-shot commands | `--namespace` | `RECALL_MCP_NAMESPACE` | none | required for `remember`, `recall`, `capture` |
 | Bind address | `--bind` | `RECALL_MCP_BIND` | `bind` | `127.0.0.1:8787` |
+| Serve config file | `--config` | none | n/a | none |
 | MCP over stdio | `--stdio` | none | none | off |
 | Web UI directory | `--web-dir` | none | none | none |
-| Require API key | `--api-key` | `RECALL_MCP_API_KEY` | secret | off |
+| API key | `--api-key` | `RECALL_MCP_API_KEY` | excluded | off |
 | Rate limit per key | `--rate-limit` | `RECALL_MCP_RATE_LIMIT` | `rate_limit` | off |
 | Rate-limit burst | `--rate-burst` | none | `rate_burst` | `max(2 x rate, 10)` |
 | Request body limit | `--body-limit` | `RECALL_MCP_BODY_LIMIT` | `body_limit` | 1 MiB |
@@ -137,32 +140,34 @@ Secrets are env or flag only; they are never file-configurable.
 | Allowed cross-origin | `--allow-origin` / `--allow-origins` | none | `allow_origins` / `allow_origin` | same-origin only |
 | Extra Host values | `--allow-host` / `--allow-hosts` | none | `allow_hosts` / `allow_host` | loopback hosts |
 | Embedder mismatch override | `--allow-embedder-mismatch` | `RECALL_MCP_ALLOW_EMBEDDER_MISMATCH` | none | off |
-| Encryption key | none | `RECALL_MCP_KEY` or `RECALL_MCP_KEY_FILE` | secret | off |
-| OpenAI embedder | none | `RECALL_MCP_OPENAI_ENDPOINT`, `_API_KEY`, `_MODEL`, `_DIMS` | secret | unset |
+| Encryption key | none | `RECALL_MCP_KEY` or `RECALL_MCP_KEY_FILE` | excluded | off |
+| OpenAI embedder | none | `RECALL_MCP_OPENAI_ENDPOINT`, `_API_KEY`, `_MODEL`, `_DIMS` | excluded | unset |
 
 Over-limit requests get `429` with `Retry-After`; oversize bodies get `413`;
-missing or wrong content types get `415`; unknown paths, wrong methods, bad
-query parameters, and malformed JSON all return the same JSON error shape.
-Foreign `Host` and `Origin` values are rejected (`421`/`403`). Ctrl-C or
-SIGTERM drains requests and checkpoints the WAL.
+missing or wrong content types get `415`; unknown paths, wrong methods, bad query
+parameters, and malformed JSON return the same JSON error shape. Foreign `Host`
+and `Origin` values are rejected with `421` and `403`. Ctrl-C or SIGTERM drains
+in-flight requests and checkpoints the WAL.
 
-### Embedders
+## Embedders
 
-The default `hash` embedder is lexical, deterministic, and 256-dimensional.
-For semantic matching fully offline, build with `--features onnx` and run
-`--embedder onnx` (all-MiniLM-L6-v2 quantized, 384 dimensions). The model
-downloads once into `.fastembed_cache/`; ONNX Runtime loads through
-`ORT_DYLIB_PATH`. `--embedder openai` exists for API-backed deployments; its
-request, dimension, and parse logic is tested, but it has never been called
-live here (no key).
+The default `hash` embedder is lexical, deterministic, and 256-dimensional. For
+semantic matching fully offline, build with the `onnx` feature and run with
+`--embedder onnx`. It uses quantized all-MiniLM-L6-v2 at 384 dimensions, downloads
+the model once into `.fastembed_cache/`, and loads ONNX Runtime through
+`ORT_DYLIB_PATH`.
 
-The store records the embedder fingerprint (`name@dimensions`, plus the model
-for OpenAI) in `store_meta`. An empty store is stamped, a legacy store with
-matching dimensions is adopted with a warning, and a fingerprint or dimension
-mismatch fails with both sides named. `--allow-embedder-mismatch` is the
-explicit override and does not rewrite the stored fingerprint.
+`--embedder openai` exists for API-backed deployments. Its request, dimension,
+and response parsing code is covered by tests, but it has never been called
+against the live API (no key was available).
 
-### Capture ingest
+The store records the embedder fingerprint (`name@dimensions`, plus the model for
+OpenAI) in `store_meta`. An empty store is stamped, a legacy store with matching
+dimensions is adopted with a warning, and a fingerprint or dimension mismatch
+fails with both sides named. `--allow-embedder-mismatch` is the explicit override
+and does not rewrite the stored fingerprint.
+
+## Capture
 
 ```bash
 curl -X POST http://127.0.0.1:8787/v1/capture \
@@ -177,133 +182,121 @@ curl -X POST http://127.0.0.1:8787/v1/capture \
   }'
 ```
 
-Messages are chunked deterministically (paragraph, then sentence, then hard
-wrap at `max_chunk_chars`, default 1000), embedded, and stored with
-`source = "capture"`. Role prefixes become `role:*` tags. Namespace creation
-and every chunk insert run in one `BEGIN IMMEDIATE` transaction, so a failure
-stores nothing.
+Messages are chunked deterministically (paragraph, then sentence, then a hard wrap
+at `max_chunk_chars`, default 1000), embedded, and stored with
+`source = "capture"`. Role prefixes become `role:*` tags. Namespace creation and
+every chunk insert run in one `BEGIN IMMEDIATE` transaction, so a failure stores
+nothing.
 
-## Security and threat model
+## Security model
 
-The default posture is "your local user session can talk to it". Everything
-beyond that is opt-in.
+The default posture is that your local user session can talk to the server.
+Anything beyond that is opt-in.
 
-- **Browser isolation.** The guard accepts loopback `Host` values only
-  (`localhost`, `127.0.0.1`, `::1`) and rejects foreign ones with `421`. A
-  foreign `Origin` is rejected with `403`, and no CORS headers are granted by
-  default. Origin comparison includes the scheme and normalizes default ports.
-  Opt in per origin with `--allow-origin https://agent.example`; add LAN or
-  container hostnames with `--allow-host`.
-- **API key.** With a key configured, `/v1/*`, `/metrics`, and `/mcp` require
-  `Authorization: Bearer` or `X-API-Key`. Matching is constant time. The rate
-  limiter runs before auth, and only a key matching the configured one gets its
-  own bucket; invalid and missing keys share the bounded anonymous bucket, so
-  rotating forged keys cannot dodge the limit or grow memory without bound.
-  `/healthz` and `/openapi.json` stay open.
-- **Headers.** Every response carries a strict CSP, `nosniff`, frame denial,
-  `no-referrer`, COOP/CORP, and a permissions policy. API, MCP, and metrics
-  responses are `no-store`.
-- **Encryption at rest.** With `RECALL_MCP_KEY` (64 hex characters) or
-  `RECALL_MCP_KEY_FILE`, memory text is sealed with ChaCha20-Poly1305 and the
-  keyword index stores keyed HMAC digests. Every plaintext-to-keyed transition
-  runs with `secure_delete`, then VACUUM and `wal_checkpoint(TRUNCATE)`, and
-  leaves a retryable clean marker. A forensic test covers a deleted plaintext
-  row and a WAL frame from the plaintext era. An encrypted store refuses an
-  unkeyed open, and backups stay encrypted.
-- **What encryption does not cover.** Namespace names, tags, `source`, and
-  embedding vectors stay plaintext by design. Dense neural embeddings
-  (`onnx`, `openai`) are invertible to text with published attacks, so keyed
-  mode does not protect text there; the server warns at startup and the lexical
-  `hash` embedder is the at-rest confidentiality choice. Exports are plaintext
-  JSON by design and the CLI warns.
-- **Untrusted data.** Recalled text is data from past sessions, never
-  instructions. The MCP tool descriptions say so; the poisoning threat model is
-  D-021.
-- **Error hygiene.** Client errors are short and typed. Internal faults return
-  `500 {"error":"internal server error"}` with details only in logs.
+Requests are checked against a loopback `Host` allowlist (`localhost`,
+`127.0.0.1`, `::1`); anything else gets `421`. A foreign `Origin` gets `403`, and
+the server grants no CORS headers by default. Origin comparison includes the
+scheme and normalizes default ports. Opt in per origin with
+`--allow-origin https://agent.example`, and add LAN or container hostnames with
+`--allow-host`.
+
+With an API key configured, `/v1/*`, `/metrics`, and `/mcp` require
+`Authorization: Bearer` or `X-API-Key`. Comparison is constant time. The rate
+limiter runs before auth, and only the configured key gets its own bucket;
+invalid and missing keys share a bounded anonymous bucket, so forged keys cannot
+dodge the limit or grow memory without bound. `/healthz` and `/openapi.json` stay
+open.
+
+Every response carries a strict CSP, `nosniff`, frame denial, `no-referrer`,
+COOP/CORP, and a permissions policy. API, MCP, and metrics responses are
+`no-store`.
+
+With `RECALL_MCP_KEY` (64 hex characters) or `RECALL_MCP_KEY_FILE`, memory text is
+sealed with ChaCha20-Poly1305 and the keyword index stores keyed HMAC digests.
+Every plaintext-to-keyed transition runs with `secure_delete`, then VACUUM and
+`wal_checkpoint(TRUNCATE)`, and leaves a retryable clean marker. A forensic test
+covers a deleted plaintext row and a WAL frame from the plaintext era. An
+encrypted store refuses an unkeyed open, and backups stay encrypted.
+
+Encryption does not cover namespace names, tags, `source`, or embedding vectors;
+those stay plaintext by design. Dense neural embeddings (`onnx`, `openai`) can be
+inverted to text with published attacks, so keyed mode does not protect text
+there. The server warns at startup, and the lexical `hash` embedder is the
+at-rest confidentiality choice. Exports are plaintext JSON by design, and the CLI
+warns.
+
+Recalled text is data from past sessions. The server does not treat it as
+instructions. The MCP tool descriptions say so, and the poisoning threat model is
+D-021. Client errors are short and typed; internal faults return
+`500 {"error":"internal server error"}` with details only in logs.
 
 ## Architecture
 
 ```text
 crates/
-  recall-core/    pure domain: models, validation, views, Store trait + SQLite
+  recall-core/    domain: models, validation, views, Store trait + SQLite
                   (FTS5, WAL, BLOB vectors, packed cache, data_version guard),
-                  Embedder trait (hash default; ONNX/OpenAI behind features),
-                  explainable HybridScorer, capture chunking, export/import
-  recall-server/  axum REST (/v1/*), OpenAPI, /metrics, API-key middleware,
-                  bounded token-bucket limiter, Host/Origin guard, security
-                  headers, JSON error contract, rmcp tools over streamable-HTTP
-                  and stdio, spawn_blocking bridges for store and embedder work
-  recall-cli/     clap CLI: serve (HTTP+MCP or stdio), remember, recall, update,
-                  forget, list, capture, stats, keygen, export, import, backup,
-                  vacuum; ships as `recall` and `recall-cli`
-web/              React 19 + Vite 8 + TypeScript UI; Playwright + axe e2e
-evals/            corpus (100 memories), golden set (100 queries), semantic set (50)
+                  Embedder trait (hash default; ONNX and OpenAI behind features),
+                  HybridScorer, capture chunking, export/import
+  recall-server/  axum REST (/v1/*), OpenAPI, /metrics, API key, rate limiter,
+                  Host/Origin guard, security headers, JSON errors, rmcp tools
+                  over streamable HTTP and stdio
+  recall-cli/     clap CLI: serve, remember, recall, update, forget, list,
+                  capture, stats, keygen, export, import, backup, vacuum
+web/              React 19 + Vite 8 + TypeScript UI, Playwright + axe tests
+evals/            100-memory corpus, 100 golden queries, 50 semantic queries
 skills/           agent skill and CLI/MCP references
-docs/             architecture, decisions, evaluation, status, clients, history
+docs/             architecture, decisions, evaluation, clients, token efficiency
 ```
 
-Every surface is a thin shell over the same engine. The MCP transport is
-swappable because nothing in core knows it exists. Details:
-[ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Every surface is a thin shell over the same engine, and the MCP transport is
+swappable because core does not know it exists.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full design, and
+[docs/adr/DECISIONS.md](docs/adr/DECISIONS.md) records why each choice was made.
+[docs/TOKEN-EFFICIENCY.md](docs/TOKEN-EFFICIENCY.md) covers the compact response
+formats and their measured byte sizes.
 
-Retrieval pipeline:
-
-1. FTS5 produces up to `candidate_cap` keyword candidates, ordered by BM25
-   with a rowid tie-break.
-2. A brute-force cosine pass covers the first `scan_cap` rows in rowid order,
-   using the packed vector cache when no tag filter applies.
-3. Candidates are merged and scored, then sorted by total desc, created_at
-   desc, rowid asc.
-4. The top `k` return with their breakdown.
-
-Documented approximations: rows beyond `scan_cap` get `vector = 0.0` in the
-breakdown, and the keyword pass sees at most `candidate_cap` candidates. The
-first recall after a fresh process fills the packed cache and is slower than
-steady state. Beyond roughly 100k memories per namespace, the D-002 ANN
-revisit applies.
+Recall runs an FTS5 keyword pass, an exact cosine pass over embedding BLOBs in
+rowid order, and then merges and scores the candidates. The top `k` return with
+their breakdowns. Rows beyond `scan_cap` get `vector = 0.0`, the keyword pass sees
+at most `candidate_cap` candidates, and the first recall after a fresh process
+fills the packed vector cache and is slower than steady state. Beyond roughly
+100k memories per namespace, the D-002 ANN revisit applies.
 
 ## Performance
 
-The ignored 10k-memory harness measured p95 **27.3 to 35.3 ms** on this host on
-2026-11-08, against the PRD budget of 25 ms. The budget is **not met here**;
-the harness remains an ignored manual gate and was not relaxed. Means were
-17.7 to 22.9 ms and p50 16.5 to 22.0 ms. Recorded runs and the older history are
-in [docs/EVALUATION.md](docs/EVALUATION.md).
+The 10k-memory recall harness is an ignored manual test. The 10k design target is
+25 ms p95, where p95 means 95% of timed recalls finish at or below that value.
+The harness and its method are described in
+[docs/EVALUATION.md](docs/EVALUATION.md).
 
-## Repository hygiene
+## Project status
 
-- `cargo fmt --all --check`: clean.
-- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`:
-  0 warnings.
-- `cargo test --workspace`: green (exact counts in EVALUATION).
-- Coverage on recall-core, measured with llvm-cov on windows-msvc:
-  **95.39% lines / 94.19% regions**, gate 90/90.
-- `cargo audit` and `cargo deny check`: pass; one allowed unmaintained
-  transitive `paste` warning with a review note.
-- Web: `npm run build` and 8 Playwright tests pass with axe WCAG 2.1 AA at
-  0 violations.
-- Conventional commits; each slice landed with its tests.
-- Dependencies are permissively licensed (MIT-compatible).
+Version 0.5.0 is the first public release. GitHub Actions runs the CI workflow on
+pushes to `master` and on pull requests. It covers formatting, lint, tests on
+Linux and Windows, coverage, MSRV, rustdoc, feature builds, the web build and
+Playwright run, and the dependency audits.
 
-## CI note
+Limitations:
 
-GitHub Actions is disabled on this repository for account billing reasons
-(recorded 2026-09-16). The workflows in `.github/workflows/` are committed but
-have not run remotely. Every number above was measured locally on
-windows-msvc, not in CI.
+- No Docker image is published. The `Dockerfile` is in the repository, but there
+  is no pullable image.
+- The OpenAI embedder has never been called against the live API.
+- Client snippets are starting points, not verified against every client.
+- Dense embeddings are invertible, so keyed mode does not protect text when
+  `onnx` or `openai` is in use.
+- ANN retrieval beyond roughly 100k memories per namespace is deferred (D-002).
+- Branch coverage is unmeasured; cargo-llvm-cov has no branch fail-under on
+  stable (D-010 amendment).
+- Namespaces are not a security boundary.
 
-## Releases
+## Contributing
 
-Releases are annotated tags; `v0.5.0` is the first. The crates publish as
-[`recall-mcp-core`](https://crates.io/crates/recall-mcp-core),
-[`recall-mcp-server`](https://crates.io/crates/recall-mcp-server), and
-[`recall-mcp-cli`](https://crates.io/crates/recall-mcp-cli). The release notes
-for this line are in [releases/NOTES-0.5.0.md](releases/NOTES-0.5.0.md); the
-checklist is [RELEASING.md](RELEASING.md). Crates.io publication is owner-gated.
+Bug reports, fixes, tests, docs, and dependency updates are welcome. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) for the build, gates, and conventions. Security
+issues go through the private advisory flow in [SECURITY.md](SECURITY.md).
+Deferred ideas and the reasons behind them are in [ideas.md](ideas.md).
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Contributions are welcome; read
-[CONTRIBUTING.md](CONTRIBUTING.md) for the gates and conventions. Deferred
-ideas live in [ideas.md](ideas.md).
+MIT. See [LICENSE](LICENSE).

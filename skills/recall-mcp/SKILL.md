@@ -19,7 +19,8 @@ a document store or a task queue.
 
 - MCP over stdio: `recall serve --stdio --db <file>`
 - MCP over HTTP: point the client at `http://127.0.0.1:8787/mcp`
-- REST and OpenAPI: `http://127.0.0.1:8787/v1/...`, `/openapi.json`
+- REST: `http://127.0.0.1:8787/v1/...`
+- OpenAPI: `http://127.0.0.1:8787/openapi.json`
 - CLI: `recall <command> --db <file>`
 
 Six MCP tools: `remember`, `recall`, `forget`, `update_memory`,
@@ -39,7 +40,8 @@ Six MCP tools: `remember`, `recall`, `forget`, `update_memory`,
 5. Namespaces organize work; they are not a security boundary. One API key can
    read every namespace.
 6. Do not paste secrets into memories. Optional encryption protects memory text
-   at rest, but embeddings, tags, and source labels stay plaintext.
+   at rest, but namespace names, embeddings, tags, and source labels stay
+   plaintext.
 
 ## References
 

@@ -9,7 +9,7 @@ What changed and why.
 - [ ] CLI (`recall-cli`)
 - [ ] Web
 - [ ] Evals
-- [ ] CI/release/docs
+- [ ] CI, release, or docs
 
 ## Breaking changes and migration
 
@@ -18,8 +18,8 @@ List any response-shape, CLI, or config change, with the migration step. Write
 
 ## Verification
 
-Paste exact commands and their results. Do not mark a gate as passed if it did
-not run.
+Paste the exact commands you ran and their results. Do not mark a gate as passed
+if it did not run.
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
@@ -34,8 +34,7 @@ not run.
 
 ## Known gaps
 
-Anything not run, blocked, or deferred. Include CI billing blockers and any
-owner-gated release step.
+Anything not run, blocked, or deferred. Say plainly what is missing.
 
 ## Notes for the reviewer
 

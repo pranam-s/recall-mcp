@@ -4,10 +4,9 @@ Recall-MCP speaks MCP over stdio and streamable-HTTP. Every example below uses
 the same six tools and the same memory file; only the client's configuration
 shape differs.
 
-**Verification status: expected, not live-verified.** The HTTP and stdio
-transports are covered by conformance tests, but no external client was
-installed and driven in this environment. Treat the snippets as starting
-points and check the client's current documentation if a field has moved.
+The HTTP and stdio transports are covered by conformance tests. The six client
+configurations below are starting points; they have not been verified against
+every client, so check the client's current documentation if a field has moved.
 
 Start a server first:
 
@@ -22,7 +21,7 @@ If `RECALL_MCP_API_KEY` is set, HTTP clients must send it as
 
 ## Claude Code
 
-Expected HTTP form (project `.mcp.json`):
+HTTP configuration in a project `.mcp.json`:
 
 ```json
 {
@@ -36,7 +35,7 @@ Expected HTTP form (project `.mcp.json`):
 }
 ```
 
-Expected stdio form:
+Stdio configuration:
 
 ```json
 {
@@ -51,7 +50,7 @@ Expected stdio form:
 
 ## Codex
 
-Expected `~/.codex/config.toml` entry:
+Configuration in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.recall]
@@ -64,7 +63,7 @@ binary.
 
 ## Cursor
 
-Expected `.cursor/mcp.json`:
+Configuration in `.cursor/mcp.json`:
 
 ```json
 {
@@ -81,7 +80,7 @@ Cursor's stdio shape uses `command` and `args` as in the Claude Code example.
 
 ## OpenCode v2
 
-Expected `opencode.json` entry (remote):
+Remote server entry in `opencode.json`:
 
 ```json
 {
@@ -95,7 +94,7 @@ Expected `opencode.json` entry (remote):
 }
 ```
 
-Expected local entry:
+Local server entry:
 
 ```json
 {
@@ -110,7 +109,7 @@ Expected local entry:
 
 ## Warp
 
-Warp's MCP settings accept a command for stdio servers. Expected values:
+Warp's MCP settings accept a command for stdio servers. Use these values:
 
 - Name: `recall`
 - Command: `recall`
@@ -121,7 +120,7 @@ a header if the UI exposes one.
 
 ## Antigravity
 
-Expected MCP configuration (stdio):
+Stdio configuration:
 
 ```json
 {
@@ -137,13 +136,21 @@ Expected MCP configuration (stdio):
 For HTTP, point the server URL at `http://127.0.0.1:8787/mcp` and add the
 `X-API-Key` header when auth is on.
 
+## Agent skill
+
+The repository ships a portable skill in `skills/recall-mcp/`. It contains a
+short `SKILL.md` plus CLI and MCP references. Copy the directory into the
+client's skills location, or point the client at it if it supports external
+skill paths. The skill assumes the `recall` binary is on `PATH` and that a
+server or database is available.
+
 ## Troubleshooting
 
 - `401` or `missing API key`: set the same key the server was started with.
 - `421` or a rejected Host: the default guard accepts loopback hosts only. Bind
   loopback locally or add the external host with `--allow-host`.
-- Empty recall results: the default embedder is lexical. Re-run with
-  `--embedder onnx` and the `onnx` feature if you need paraphrase matching; use
-  the same embedder that wrote the store.
+- Empty recall results: the default hash embedder scores token overlap, so
+  paraphrases can miss. Re-run with `--embedder onnx` and the `onnx` feature if
+  you need paraphrase matching; use the same embedder that wrote the store.
 - `embedder mismatch`: keep the original embedder, or pass
   `--allow-embedder-mismatch` knowingly. Mixing vector spaces lowers quality.

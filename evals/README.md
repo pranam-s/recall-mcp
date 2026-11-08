@@ -1,8 +1,8 @@
 # Retrieval evals
 
 These fixtures measure whether Recall-MCP returns the memory an operator would
-pick. They are project-local: no external benchmark (LoCoMo, LongMemEval, or any
-other) is claimed or reproduced here.
+pick. They are specific to this project: no external benchmark (LoCoMo,
+LongMemEval, or any other) is claimed or reproduced here.
 
 ## Files
 
@@ -15,7 +15,8 @@ other) is claimed or reproduced here.
 `crates/recall-core/tests/golden_eval.rs` seeds the corpus verbatim and runs
 every query through the real hybrid recall path with default weights and
 `k=10`, so MRR@10 sees ten results while the hit-rate gate still reads the
-first five.
+first five. The golden eval and the hash diagnostic run as part of the default
+test suite; the ONNX semantic gate needs the `onnx` feature.
 
 ## Labelling rules
 
@@ -36,7 +37,8 @@ first five.
 
 ## Method and recorded results
 
-Measured on 2026-11-08 in this worktree with `cargo test`. Exact output:
+Measured on 2026-11-08 on the Windows MSVC development machine with
+`cargo test`. Exact output:
 
 ```text
 golden: 98/100 hit-rate@5 = 0.980 (gate >= 0.85), MRR@10 = 0.975
@@ -48,10 +50,10 @@ semantic: 50/50 hit-rate@5 = 1.000 (gate >= 0.85), MRR@10 = 0.740
 ```
 
 The ONNX run used fastembed 7.6.1 with onnxruntime 1.28.0 (`ORT_DYLIB_PATH`),
-one test thread, and a fresh model cache, on windows-msvc.
+one test thread, and a fresh model cache, on the Windows MSVC machine.
 
 The hash diagnostic shows the expected limitation of lexical hashing on
-paraphrases. It is not a failure: ONNX owns the semantic gate.
+paraphrases. It does not gate; the ONNX run is the semantic gate.
 
 See [../docs/EVALUATION.md](../docs/EVALUATION.md) for the rest of the measured
 gates (tests, coverage, p95, accessibility, security).
