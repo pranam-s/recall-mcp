@@ -244,12 +244,10 @@ fn cli_update_and_tag_filtered_recall() {
     assert!(out.status.success(), "recall failed: {}", out.stdout);
     let hits: Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(hits.as_array().unwrap().len(), 1);
-    assert!(
-        hits[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("checkpoint tuning")
-    );
+    assert!(hits[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("checkpoint tuning"));
 
     let out = run(
         db_str,
@@ -724,12 +722,10 @@ fn compact_text_list_stats_forget_keygen_and_capture() {
     assert_eq!(stats["total_memories"], 1);
     assert_eq!(stats["embedder"]["name"], "hash-256");
     assert_eq!(stats["embedder"]["dimensions"], 256);
-    assert!(
-        stats["embedder"]["fingerprint"]
-            .as_str()
-            .unwrap()
-            .contains("hash-256")
-    );
+    assert!(stats["embedder"]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .contains("hash-256"));
 
     // Capture writes a summary and the chunks are recallable.
     let transcript = dir.path().join("transcript.json");
@@ -763,6 +759,26 @@ fn compact_text_list_stats_forget_keygen_and_capture() {
         summary["memories"].is_null(),
         "summary must not echo chunks"
     );
+
+    // The include-memories escape hatch stays compact unless embeddings are
+    // explicitly requested.
+    let expanded = run(
+        db_str,
+        &[
+            "capture",
+            "--namespace",
+            "session-cli-2",
+            "--file",
+            transcript.to_str().unwrap(),
+            "--include-memories",
+        ],
+    );
+    assert!(expanded.status.success(), "{}", expanded.stdout);
+    let expanded: Value = serde_json::from_str(&expanded.stdout).unwrap();
+    let memories = expanded["memories"].as_array().unwrap();
+    assert!(!memories.is_empty());
+    assert!(memories[0].get("embedding").is_none(), "{expanded}");
+    assert!(memories[0]["text"].is_string());
 
     // Forget existing -> success; unknown -> non-zero exit.
     let forgotten = run(db_str, &["forget", "--id", &id]);

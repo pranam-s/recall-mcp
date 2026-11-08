@@ -210,6 +210,9 @@ enum Command {
         /// Include every captured record instead of the summary.
         #[arg(long)]
         include_memories: bool,
+        /// Include embeddings in the captured records.
+        #[arg(long)]
+        show_embedding: bool,
         /// Pretty-print JSON even when stdout is a pipe.
         #[arg(long)]
         pretty: bool,
@@ -883,6 +886,7 @@ pub async fn run() -> Result<()> {
             tags,
             max_chunk_chars,
             include_memories,
+            show_embedding,
             pretty,
         } => {
             let store = open_store(&db)?;
@@ -907,10 +911,21 @@ pub async fn run() -> Result<()> {
                 recall_server::capture::commit(&*guard, &prepared)?
             };
             let value = if *include_memories {
+                let memories = if *show_embedding {
+                    captured
+                        .iter()
+                        .map(serde_json::to_value)
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    captured
+                        .iter()
+                        .map(|m| serde_json::to_value(CompactMemory::from(m)))
+                        .collect::<Result<Vec<_>, _>>()?
+                };
                 serde_json::to_value(serde_json::json!({
                     "namespace": namespace,
                     "captured": captured.len(),
-                    "memories": captured,
+                    "memories": memories,
                 }))?
             } else {
                 serde_json::to_value(CompactCaptureSummary::new(namespace, &captured))?
