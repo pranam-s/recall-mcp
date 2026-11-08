@@ -49,7 +49,7 @@ and docs/adr/DECISIONS.md before planning work.
 - windows-gnu caveat: llvm-cov cannot run on windows-gnu (D-010); measure on
   the windows-msvc dev machine or let linux-gnu CI enforce it.
   Never estimate or fabricate a coverage number.
-- p95: the 10k harness is an ignored manual gate at 25 ms. It measured 29.6 to
+- p95: the 10k harness is an ignored manual gate at 25 ms. It measured 27.3 to
   35.3 ms on 2026-11-08 and is recorded as a failure. Never lower the threshold
   or claim the budget is met.
 - Web: `cd web && npm run build && npx playwright test` (axe AA must stay 0 violations).
