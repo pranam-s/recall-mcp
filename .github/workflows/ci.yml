@@ -1,81 +1,211 @@
-# CI for Recall-MCP (D-010 companion): the linux-gnu runner enforces the
-# llvm-cov coverage gate (lines + regions >= 90); coverage is also measured
-# locally on windows-msvc (windows-gnu lacks the profiler runtime, D-010).
-#
-# Jobs:
-#   1. lint           — cargo fmt --check + clippy -D warnings (ubuntu)
-#   2. test-coverage  — full workspace tests + llvm-cov gate on recall-core
-#   3. windows-gnu    — full workspace tests on the GNU toolchain
-
 name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  lint:
-    name: fmt + clippy
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          toolchain: stable
+          components: rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  test-coverage:
-    name: test + coverage (linux-gnu)
+  clippy:
+    name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          tool: cargo-llvm-cov
-      - name: Workspace tests
-        run: cargo test --workspace
-      # cargo-llvm-cov (0.9.x) has no --fail-under-branches; branch-level
-      # instrumentation needs nightly rustc (--branch, -Z coverage-options).
-      # Regions are the closest stable-measurable proxy and are what the
-      # >= 90 gate enforces alongside lines (D-010 amendment, 2026-09-18).
-      - name: Coverage gate (>= 90% lines AND regions on recall-core)
-        run: >
-          cargo llvm-cov -p recall-core
-          --fail-under-lines 90 --fail-under-regions 90
-          --lcov --output-path lcov.info
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          name: lcov
-          path: lcov.info
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --doc --locked
 
   windows-gnu:
-    name: test (windows-gnu)
+    name: Test (windows-gnu, secondary)
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v7
-      - name: Set up MSYS2 MINGW64 (gcc for bundled SQLite)
-        uses: msys2/setup-msys2@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc
-          path-type: inherit
-      - uses: dtolnay/rust-toolchain@stable
+          toolchain: stable-x86_64-pc-windows-gnu
+          target: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo test --workspace --target x86_64-pc-windows-gnu --locked
+
+  coverage:
+    name: Coverage (recall-core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          targets: x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2
-      - name: Workspace tests (windows-gnu, D-005 toolchain)
-        run: cargo test --workspace --target x86_64-pc-windows-gnu
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90 --summary-only --locked
+
+  msrv:
+    name: MSRV (1.89 default, 1.92 all-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.89.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo +1.89.0 check --workspace --all-targets --locked
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.92.0
+      - run: cargo +1.92.0 check --workspace --all-targets --all-features --locked
+
+  docs:
+    name: Rustdoc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo doc --workspace --no-deps --all-features --locked
+
+  feature-matrix:
+    name: Feature matrix (onnx + openai)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Download ONNX Runtime 1.28.0
+        run: |
+          curl -fsSL -o ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-linux-x64-1.28.0.tgz
+          tar -xzf ort.tgz
+          echo "ORT_DYLIB_PATH=$PWD/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" >> "$GITHUB_ENV"
+      - run: cargo test -p recall-mcp-core --features onnx,openai --lib --locked
+      - run: cargo test -p recall-mcp-core --features onnx --test golden_eval semantic_set_with_onnx_meets_target --locked -- --test-threads=1
+
+  web:
+    name: Web build + Playwright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo build -p recall-mcp-cli --locked
+      - name: Web gates
+        working-directory: web
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run build
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+  audit:
+    name: Audit + deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - run: cargo audit
+      - run: cargo deny check
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: actionlint
+      - run: actionlint
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/dependency-review-action@cc4f6536e38d1126c5e3b0683d469a14f23bfea4 # v3
+        with:
+          fail-on-severity: high
+
+  ci-success:
+    name: ci-success
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - test
+      - windows-gnu
+      - coverage
+      - msrv
+      - docs
+      - feature-matrix
+      - web
+      - audit
+      - actionlint
+      - dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - run: echo "All required jobs succeeded."

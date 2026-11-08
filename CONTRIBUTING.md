@@ -1,94 +1,107 @@
 # Contributing to Recall-MCP
 
-Thanks for looking at this project. It is an MCP memory broker with one
-engine behind three surfaces (MCP, REST, CLI), a pure-domain core crate, and
-a small web UI. This file covers what you need to build it, the gates your
-change must pass, and the conventions the codebase already follows.
+Recall-MCP is an MCP memory broker with one engine behind three surfaces (MCP,
+REST, CLI), a pure-domain core crate, and a small web UI. This file covers the
+build, the gates, and the conventions the codebase follows.
 
 ## Setup
 
-- Rust stable (1.88+; the workspace uses edition 2024). Windows needs a C
-  compiler for bundled SQLite (MSVC via Visual Studio Build Tools, or
-  MinGW-w64 gcc).
-- Node 24+ only if you touch `web/`.
-- Nothing else. The default build is fully offline; the optional `onnx`
-  embedder downloads a model on first use and needs `ORT_DYLIB_PATH` pointing
-  at an ONNX Runtime shared library (see `docs/adr/DECISIONS.md` D-013).
+- Rust: workspace MSRV 1.89; all features need 1.92. Edition 2024.
+- Windows: `scripts/with-msvc.ps1` loads the Visual Studio Build Tools
+  environment (`vcvars64.bat`) without polluting the shell. GNU remains a
+  supported secondary toolchain.
+- Node 24+ only for `web/`.
+- No global installs are required. Optional ONNX work needs
+  `ORT_DYLIB_PATH` pointing at onnxruntime 1.28.0; the model downloads on first
+  use.
+
+Published package names are `recall-mcp-core`, `recall-mcp-server`, and
+`recall-mcp-cli`. The lib targets keep the short imports `recall_core` and
+`recall_server`. The binaries are `recall` and `recall-cli`.
 
 ## Build and test
 
-```sh
-cargo build --workspace
-cargo test --workspace
+```powershell
+.\scripts\with-msvc.ps1 cargo build --workspace
+.\scripts\with-msvc.ps1 cargo test --workspace --locked
+cargo +stable-x86_64-pc-windows-gnu test --workspace --target x86_64-pc-windows-gnu --locked
 ```
 
-The suite includes unit tests, integration tests against the real binary,
-MCP conformance tests on both transports (stdio and streamable-HTTP), a
-golden-set retrieval eval, and property-based tests. Three tests are
-`#[ignore]`d diagnostics (FTS query-plan probe, release-only p95 and cost
-harnesses); two more are behind `--features onnx` and need network on first
-model download.
+The suite has unit, integration, real-binary CLI, MCP conformance on both
+transports, golden and semantic evals, property tests, and web e2e. Three
+tests are ignored manual diagnostics (FTS query-plan probe, p95, and cost
+breakdown). The ONNX semantic gate is behind `--features onnx`.
 
-## Gates (all of them, before you push)
+## Gates before a PR
 
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-regions 90 --summary-only
+Primary MSVC run:
+
+```powershell
+.\scripts\with-msvc.ps1 cargo fmt --all -- --check
+.\scripts\with-msvc.ps1 cargo clippy --workspace --all-targets --all-features --locked '--' -D warnings
+.\scripts\with-msvc.ps1 cargo test --workspace --locked
+.\scripts\with-msvc.ps1 cargo test --workspace --doc --locked
+.\scripts\with-msvc.ps1 cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90 --summary-only --locked
+cargo audit
+cargo deny check
 ```
 
-Coverage: 95% lines / 94% regions at the time of writing. New core code
-lands with tests in the same commit. cargo-llvm-cov has no branch-level
-fail-under on stable Rust (see the D-010 amendment); do not weaken the gate
-further.
+`'--'` is quoted because Windows PowerShell otherwise swallows the separator
+before `-D warnings`. The wrapper forwards arguments verbatim.
 
-If you touch `web/`:
+Reliability and quality:
 
-```sh
-cd web && npm install && npm run build && npx playwright test
-```
-
-axe (wcag2a/aa + wcag21a/aa) must stay at 0 violations. The UI is built for
-keyboard and screen-reader use first: semantic HTML, labelled controls,
-aria-live for async status, visible focus. No mouse-only interactions.
+- recall-core coverage: lines and regions >= 90. Measured 95.25% / 94.09% on
+  2026-11-08. Branch coverage is unmeasured on stable cargo-llvm-cov (D-010
+  amendment).
+- Golden set: hit-rate@5 >= 0.85 on 100 queries; MRR@10 is reported and gated
+  at 0.80. The semantic set is gated on ONNX.
+- p95: the ignored 10k harness is a manual gate at 25 ms. It failed on the
+  2026-11-08 host (32.8 to 33.1 ms). Do not lower the threshold to make it pass.
+- Web: `cd web && npm ci && npm audit --audit-level=high && npm run build &&
+  npx playwright test`. axe WCAG 2.1 AA must stay at 0 violations.
 
 ## Conventions
 
-- Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), one
-  green change per commit, tests in the same commit as the change.
-- `crates/recall-core` is a pure domain crate: no axum, rmcp, tokio, or HTTP
-  types. Server and CLI are thin shells; the same engine serves MCP, REST,
-  and CLI, and behavior must not drift between them.
-- No `unwrap`/`expect` outside tests; every justified clippy opt-out is a
-  local `#[allow]` with a comment naming the invariant that makes it safe.
-  No new blanket suppressions.
-- Ranking behavior changes need a golden-set argument (the eval gate is
-  hit-rate@5 >= 0.85) and, if they touch the scorer or crypto modules, a
-  cargo-mutants run over those modules.
-- Changes to wire behavior (MCP tool shapes, REST paths, config flags) must
-  update: the OpenAPI document, the conformance tests, and the docs in the
-  same PR.
-- Decisions live in `docs/adr/DECISIONS.md` (D-001 onward). If you believe a
-  decision is wrong, propose an amendment in your PR instead of silently
-  deviating.
+- Conventional commits, one green change per commit, tests in the same commit.
+- `recall-core` is a pure domain crate: no axum, rmcp, tokio, or HTTP/JSON DTO
+  types. Server and CLI are thin shells over the same engine.
+- No `unwrap`/`expect` outside tests; a justified opt-out is a local `#[allow]`
+  with the invariant in a comment.
+- Wire changes update the OpenAPI document, conformance tests, and docs in the
+  same PR. Response-shape changes need a migration note.
+- Decisions live in `docs/adr/DECISIONS.md`. Propose a dated amendment instead
+  of silently deviating.
+- Do not paste command output into docs unless you ran the command at that
+  commit. Do not paste usernames, drive letters, email addresses, hostnames, or
+  API keys. Use placeholders.
 
-## What is in scope right now
+## Source-of-truth map
 
-Bug fixes, hardening, docs, test coverage, toolchain and dependency
-maintenance. Larger product ideas (ANN retrieval beyond ~100k
-memories/namespace, cold-open latency work, encrypted embeddings) are
-deliberately deferred; see `ideas.md` before proposing an implementation.
+| Question | File |
+|---|---|
+| How does it work? | `docs/ARCHITECTURE.md` |
+| Why was it decided? | `docs/adr/DECISIONS.md` |
+| What works today? | `docs/STATUS.md` |
+| What was measured? | `docs/EVALUATION.md`, `evals/README.md` |
+| How do clients connect? | `docs/clients.md` |
+| How do I release? | `RELEASING.md` |
+| How do I configure or use it? | `README.md` |
+
+## Scope
+
+Bug fixes, hardening, docs, tests, toolchain and dependency maintenance are in
+scope. Larger product ideas (ANN retrieval beyond roughly 100k memories per
+namespace, encrypted embeddings, multi-user auth) are deferred; see `ideas.md`.
 
 ## Reporting issues
 
-Include: what you ran, the exact command, expected vs actual, and the
-`cargo clippy`/`cargo test` state of your tree. For MCP questions, state the
-client and the negotiated protocol version (the server answers `2025-11-25`
-to a `2026-07-28` initialize; that revision replaced the handshake with
-per-request metadata; see D-004).
+Include the exact command, expected vs actual, and the state of `cargo test`
+and `cargo clippy`. For MCP questions, name the transport and negotiated
+protocol version. Security issues go through the private advisory flow in
+`SECURITY.md`, not a public issue.
 
 ## License
 
-By contributing you agree that your contributions are licensed under the
-MIT License that covers the repository.
+By contributing you agree that your contributions are licensed under the MIT
+License covering the repository.

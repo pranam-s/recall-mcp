@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pranam-s/recall-mcp",
+  "description": "Local-first semantic memory broker for AI agents: one SQLite file, hybrid BM25 + embedding + recency retrieval with per-result score breakdowns, over MCP, REST, CLI, and a web UI.",
+  "version": "0.5.0",
+  "repository": {
+    "url": "https://github.com/pranam-s/recall-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/pranam-s/recall-mcp",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/pranam-s/recall-mcp",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

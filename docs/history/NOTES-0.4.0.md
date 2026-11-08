@@ -1,3 +1,11 @@
+# HISTORICAL: 0.4.0 release notes
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Recall-MCP 0.4.0
 
 Released 2026-09-20. Tag: `v0.4.0` (local; pushing and crates.io
@@ -20,8 +28,8 @@ unrelated projects (pimlabs/recall and OriginalMHV/recall, checked
 
 - `recall-mcp-core` (was `recall-core`, name still free but prefixed for
   family consistency)
-- `recall-mcp-server` (was `recall-server` — taken)
-- `recall-mcp-cli` (was `recall-cli` — taken)
+- `recall-mcp-server` (was `recall-server`, taken)
+- `recall-mcp-cli` (was `recall-cli`, taken)
 
 What did not change: the lib targets keep their short names via explicit
 `[lib]` sections (`recall_core`, `recall_server`), so every `use` line
@@ -33,14 +41,14 @@ stripped), and each manifest declares `keywords` and the root README.
 ## Also in 0.4.0
 
 - Release readiness (2026-09-18): the coverage gate was corrected to
-  lines+regions and measured for real — recall-core 95.00% lines /
+  lines+regions and measured for real: recall-core 95.00% lines /
   94.03% regions, recall-server 96.83% / 96.13%; rmcp updated to 3.4.0
   with the negotiated-version conformance re-verified; fastembed 6 → 7
   verified live against onnxruntime-win-x64-1.28.0; a license audit of
   all 395 locked packages found everything permissive and
   MIT-compatible (docs/LICENSE-AUDIT.md).
 - CLI output: `remember`, `recall`, and `update` no longer print the
-  stored embedding vector unless `--show-embedding` is passed — a screen
+  stored embedding vector unless `--show-embedding` is passed; a screen
   reader used to announce hundreds of zeros per record. Score
   breakdowns and every other field are unchanged.
 - Dependency audit (2026-09-20): `cargo audit` over the full
@@ -62,7 +70,7 @@ this repository):
   -D warnings` clean.
 - `cargo publish --dry-run` green for `recall-mcp-core`; server and cli
   dry-runs verify everything except the sibling resolution that can
-  only exist after core's real publish — publish order: core, server,
+  only exist after core's real publish. Publish order: core, server,
   cli.
 - `cargo audit`: zero vulnerabilities (one recorded unmaintained
   warning above).

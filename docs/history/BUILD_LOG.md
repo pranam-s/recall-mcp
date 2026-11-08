@@ -1,3 +1,11 @@
+# HISTORICAL: Build log
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Build log
 
 A dated engineering journal, not a report: the problems hit during

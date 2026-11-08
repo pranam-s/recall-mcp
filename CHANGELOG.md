@@ -5,10 +5,85 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+First tagged public release. 0.4.0 was never tagged or published.
+
+### Added
+
+- Compact response views shared by MCP, REST, and CLI, with
+  `include_embedding=true` restoring full records. Compact list pages and
+  capture summaries. MCP `list_memories` defaults to 20 and caps at 100;
+  `recall` supports `format=json|text`.
+- Short `recall` binary beside `recall-cli`, plus `forget`, `list`, `capture`,
+  `stats`, and `keygen` commands, `RECALL_MCP_DB` / `RECALL_MCP_NAMESPACE`
+  fallbacks, and `--pretty` / `--full` / `--show-embedding`.
+- Embedder fingerprint guard in `store_meta` with an explicit
+  `--allow-embedder-mismatch` override.
+- Security headers (CSP, nosniff, frame denial, referrer policy, COOP/CORP,
+  permissions policy) and `no-store` on API, MCP, and metrics responses.
+- JSON error contract for malformed JSON, content type, body limit, unknown
+  paths, wrong methods, and bad query/path parameters.
+- Stateless MCP 2026-07-28 conformance (`server/discover`, `_meta`, required
+  headers) over HTTP and stdio.
+- API-key Connection UI, 401/429 guidance with `Retry-After`, embedder identity
+  in Stats, and pin/unpin plus delete with a native dialog.
+- 100-query golden eval with MRR@10, a 50-query ONNX-gated semantic set,
+  `evals/README.md`, client docs, a skill, token-budget tests, Dockerfile,
+  release and security workflows, and a 0.5.0 release-notes file.
+
+### Changed
+
+- Rust workspace MSRV 1.89, with 1.92 for all features; `rust-toolchain.toml`,
+  `deny.toml`, `audit.toml`, and `scripts/with-msvc.ps1`.
+- Dependencies refreshed (rmcp 3.9, fastembed 7.6, rusqlite 0.41, tokio 1.54,
+  uuid 1.29, rustls 0.23.46, webpki roots 1.0.11, yoke 0.8.4).
+- Capture is atomic: namespace creation and every chunk insert share one
+  `BEGIN IMMEDIATE` transaction.
+- The rate limiter buckets only a validated configured key; invalid and missing
+  keys share a bounded anonymous bucket with idle sweep and LRU eviction.
+- Recall tie-breaks use rowid in both the candidate heap and the final sort.
+- The packed vector cache records `PRAGMA data_version` and rebuilds on another
+  connection's commit. Schema `user_version` is 2; newer schemas are refused.
+- Store and embedder work runs on the blocking pool; slow model calls no longer
+  occupy async workers.
+
+### Fixed
+
+- Every plaintext-to-keyed transition now runs the forensic VACUUM and WAL
+  truncate, with a retryable marker, for every plaintext-to-keyed transition
+  including legacy-schema upgrades.
+- The crypto tamper test no longer depends on a random base64 character.
+- ONNX model initialization is serialized, removing the test-time download
+  race.
+- Legacy schema detection runs before trigger creation.
+- `EXPORT_SCAN_LIMIT`, recency arithmetic, and list binds are safe on 32-bit
+  and at numeric extremes.
+- The OpenAI key is redacted in Debug, text-embedding-3 requests send
+  `dimensions`, and dimensions are capped.
+
+### Breaking (pre-1.0)
+
+- MCP and REST responses default to compact records; `include_embedding=true`
+  restores the old full shape.
+- REST `GET /v1/memories` returns a page object instead of a bare array. The
+  `X-Total-Count` header remains.
+- MCP `recall` defaults to compact JSON hits; `format=text` is new.
+- MCP `list_memories` caps at 100 instead of 10,000.
+
+### Known gaps
+
+- 10k p95 measured 32.8 to 33.1 ms on the development host, above the 25 ms
+  PRD budget. The ignored gate was not relaxed.
+- GitHub Actions is disabled for billing; no workflow has run remotely.
+- The OpenAI embedder has still not been called live (no key).
+
 ## [0.4.0] - 2026-09-20
 
+Never tagged or published. Kept for history.
+
 - **Publishable crate names** (2026-09-20): the published package names are
-  now `recall-mcp-core`, `recall-mcp-server`, and `recall-mcp-cli` — the old
+  now `recall-mcp-core`, `recall-mcp-server`, and `recall-mcp-cli`. The old
   `recall-server` and `recall-cli` names are owned by unrelated projects on
   crates.io (pimlabs/recall, OriginalMHV/recall), so they could never have
   been published. Lib targets keep their short names (`recall_core`,
@@ -39,7 +114,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Dependency audit** (2026-09-20): `cargo audit` over the full 396-package
   lock reports zero vulnerabilities; the only finding is an allowed warning
   for the unmaintained transitive `paste` 1.0.15 (RUSTSEC-2024-0436, via
-  rmcp's macro stack — no fix exists upstream and it is not a vulnerability).
+  rmcp's macro stack. No fix exists upstream and it is not a vulnerability).
 
 ## [0.3.1] - 2026-09-18
 

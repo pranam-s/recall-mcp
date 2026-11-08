@@ -3,6 +3,42 @@
 One entry per notable decision, appended as decisions land. ADR-001…006 below
 expand the summaries embedded in `docs/ARCHITECTURE.md`; later numbers are new.
 
+## 0.5.0 amendments (2026-11-08)
+
+These amend earlier entries without rewriting their text or their history.
+
+- **D-002 (as amended by D-016/D-019):** the 10k p95 budget is not met on the
+  2026-11-08 development host. The ignored harness measured p95 32.768 and
+  33.058 ms against 25 ms. The threshold stays at 25 ms and the failure is
+  recorded in EVALUATION. No ANN or storage-engine change was made in 0.5.0.
+- **D-004:** rmcp is 3.9.0. The 2026-07-28 stateless lifecycle is now exercised
+  directly with `server/discover`, `_meta`, and the `MCP-Protocol-Version`,
+  `Mcp-Method`, and `Mcp-Name` headers over HTTP and stdio. The legacy
+  `initialize` answer remains pinned at `2025-11-25`.
+- **D-007:** the connection sets a 5 s `busy_timeout`; multi-step writes use
+  `BEGIN IMMEDIATE`. A second process waits for the write lock instead of
+  failing at COMMIT.
+- **D-010:** coverage was re-measured on 2026-11-08: recall-core 95.25% lines
+  and 94.09% regions, gate 90/90. Branch coverage remains unmeasured on stable
+  cargo-llvm-cov.
+- **D-014:** every plaintext-to-keyed transition, including a legacy-schema
+  upgrade, runs with `secure_delete`, VACUUM, and a truncated WAL checkpoint.
+  A retryable `forensic_clean` marker records the pending pass; mode, key
+  check, and pending marker are one transaction.
+- **D-016/D-019:** the packed cache stores `PRAGMA data_version` and rebuilds
+  when another connection commits. The candidate heap and final sort both
+  tie-break on rowid asc; FTS candidates and tag-filtered scans order by rowid.
+  Schema `user_version` is 2 and newer schemas are refused.
+- **D-017:** the rate limiter buckets only a key that matches the configured
+  API key; invalid and missing keys share the anonymous bucket, and the bucket
+  map is hard bounded with idle sweep plus LRU eviction. Security headers and a
+  `no-store` policy cover API, MCP, and metrics responses. Origin comparison
+  includes scheme and normalizes default ports. Store and embedder work runs on
+  the blocking pool.
+- **New in 0.5.0, no separate ADR:** `recall-core::views` is the single compact
+  serialization layer for MCP, REST, and CLI. It is a response-shape choice,
+  not a storage decision; `include_embedding` restores full records.
+
 ## D-019 (2026-09-07, evening): Packed in-process vector cache for the recall scan
 
 D-016 removed the full-row materialization but left a measured residual:
@@ -175,7 +211,7 @@ Tailwind 4.3.3 (CSS-first, `@tailwindcss/vite`), Playwright 1.63.0,
 ## D-013 : Local ONNX embeddings adopted behind the `onnx` feature (spike passed)
 
 The spike (spikes/onnx-spike, this repo) answered the open windows-gnu question
-from ALTERNATIVES.md §3. Attempt 1: `fastembed` default features
+from docs/history/ALTERNATIVES.md §3. Attempt 1: `fastembed` default features
 (`ort/download-binaries`) → build failure: `no prebuilt binaries available for
 target x86_64-pc-windows-gnu` (ort 2.0.0-rc.13 ships only windows-MSVC
 prebuilts). Attempt 2: `fastembed` with `default-features = false, features =
@@ -209,7 +245,7 @@ MCP and capture all embed identically.
 
 ## D-014 : Encryption at rest: AEAD over `memories.text` + keyed FTS token digests
 
-Competitor research (COMPETITORS.md rec #1) made plaintext single-file storage
+Competitor research (docs/history/docs/history/COMPETITORS.md rec #1) made plaintext single-file storage
 a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
 
 - Key: 256-bit, from `RECALL_MCP_KEY` (64 hex chars) or `RECALL_MCP_KEY_FILE`;
@@ -269,7 +305,7 @@ MemoryUpdate)` changes only the fields present on the update; `id`,
 `created_at`, and `last_accessed_at` are preserved. Rationale: agents quote a
 memory id they just stored, so a supersede-by-id flow is one round trip; an
 append-style log needs consolidation reads (v2 candidate alongside
-COMPETITORS.md rec #4) and currently has no consumer. Policy details:
+docs/history/COMPETITORS.md rec #4) and currently has no consumer. Policy details:
 
 - Text change without an explicit embedding **clears** the stored vector, a
   stale vector that no longer matches the text is worse than no vector; the
@@ -369,7 +405,7 @@ scraping /metrics unauthenticated (would leak store sizes when a key is set).
 
 ## D-018 : Auto-capture ingestion: deterministic chunking, REST-first
 
-COMPETITORS.md rec #2 ("manual remember() starves the store") landed as a
+docs/history/COMPETITORS.md rec #2 ("manual remember() starves the store") landed as a
 scaffold: `POST /v1/capture` takes `{namespace, transcript: [{role?, content,
 at?}], tags?, max_chunk_chars?}` and stores memories with `source = "capture"`.
 

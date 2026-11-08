@@ -7,11 +7,13 @@ type: software
 authors:
   - given-names: Pranam
     family-names: Srivastava
-identifier: recall-mcp
-version: 0.4.0
-date-released: "2026-09-20"
+version: 0.5.0
+date-released: "2026-11-08"
 license: MIT
 repository-code: "https://github.com/pranam-s/recall-mcp"
+identifiers:
+  - type: url
+    value: "https://github.com/pranam-s/recall-mcp"
 abstract: >-
   A local-first semantic memory broker for AI agents. An MCP server
   (stdio + streamable-HTTP) exposing remember/recall/forget/update/

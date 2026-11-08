@@ -1,3 +1,11 @@
+# HISTORICAL: Alternatives considered
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Alternatives memo, implemented-stack review (2026-09-06)
 
 For each locked choice: current-state evidence (checked today), tradeoffs,

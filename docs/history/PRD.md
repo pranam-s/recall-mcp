@@ -1,3 +1,11 @@
+# HISTORICAL: Product requirements
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Recall-MCP PRD
 
 **Status:** Draft v1 (2026-09-06) · **Stack:** Rust (Axum, Tokio, SQLite) + MCP + React 19/Vite UI

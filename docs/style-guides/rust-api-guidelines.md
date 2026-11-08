@@ -43,15 +43,18 @@ flexibility, type safety, dependability, and future-proofing.
   errors (`RecallParams`: `k > 0`, non-negative weights).
 - **C-DEBUG / C-DEBUG-NONEMPTY**: every public type `Debug`-derives with
   non-empty output.
-- **C-SEALED**: the `Embedder` trait is sealed so new required methods don't
-  break downstream impls.
+- **C-SEALED**: not adopted for `Embedder` in 0.5.0. The trait is public and
+  open; new required methods would be a breaking change. New behavior is added
+  as a defaulted method (`fingerprint`, `embedding_invertible`) to keep
+  downstream impls working. Sealing remains an option for a future major bump.
 - **C-STRUCT-PRIVATE**: public structs expose getters; fields stay private
   unless the type is a plain DTO.
-- **C-STABLE**: release crates depend only on stable (we do: GNU stable
-  toolchain, D-005).
+- **C-STABLE**: release crates depend only on stable Rust. MSVC is the primary
+  Windows toolchain and GNU is secondary; both use stable (D-005 as amended).
 - **C-METADATA / C-RELNOTES / C-CRATE-DOC / C-EXAMPLE / C-QUESTION-MARK**:
-  full `Cargo.toml` metadata, crate-level docs with `?`-style examples, no
-  `unwrap()`/`try!` in public docs.
+  full `Cargo.toml` metadata, crate-level docs, and `?`-style examples where
+  they exist. Doc tests are not yet one-per-item; that is a recorded gap, not a
+  claim.
 
 ## Where it does / doesn't apply
 
