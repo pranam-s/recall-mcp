@@ -633,17 +633,6 @@ function CaptureSection({ namespaces, onRefresh }: CaptureSectionProps) {
   const [tags, setTags] = useState("");
   const [messages, setMessages] = useState<CaptureDraft[]>([{ role: "", content: "" }]);
   const [status, setStatus] = useState<{ kind: "info" | "error"; text: string } | null>(null);
-  // Pre-fill once from the shared list, then never again: the field is free
-  // text (the endpoint auto-creates unknown namespaces, D-009), so a refresh
-  // must not clobber what the user typed.
-  const namespaceTouched = useRef(false);
-
-  useEffect(() => {
-    const first = namespaces?.[0];
-    if (first && !namespaceTouched.current) {
-      setNamespace(first.name);
-    }
-  }, [namespaces]);
 
   const editMessage = (index: number, patch: Partial<CaptureDraft>) => {
     setMessages((current) =>
@@ -690,15 +679,7 @@ function CaptureSection({ namespaces, onRefresh }: CaptureSectionProps) {
             <input
               id="capture-namespace"
               value={namespace}
-              onFocus={() => {
-                // The prefill is a convenience, never a race with typing.
-                // Mark the field as user-owned as soon as it takes focus.
-                namespaceTouched.current = true;
-              }}
-              onChange={(e) => {
-                namespaceTouched.current = true;
-                setNamespace(e.target.value);
-              }}
+              onChange={(e) => setNamespace(e.target.value)}
               list="capture-namespace-options"
               required
               className="mt-1 rounded border border-gray-400 px-2 py-1"
