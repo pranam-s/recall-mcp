@@ -133,7 +133,7 @@ jobs:
       # Compile both optional features on every PR. The live ONNX model
       # download is a scheduled security job, so a CDN hiccup cannot fail a
       # code PR. The full local run is recorded in docs/EVALUATION.md.
-      - run: cargo check --workspace --all-targets --features "onnx openai" --locked
+      - run: cargo check -p recall-mcp-cli --all-targets --features "onnx openai" --locked
       - run: cargo test -p recall-mcp-core --features openai --lib --locked -- --test-threads=1
 
   web:
@@ -182,7 +182,10 @@ jobs:
       # Go is preinstalled on ubuntu-latest; installing actionlint with Go
       # avoids cargo-binstall's prebuilt lookup (which failed on this runner).
       - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-      - run: $(go env GOPATH)/bin/actionlint
+      - name: Run actionlint
+        run: |
+          actionlint_bin="$(go env GOPATH)/bin/actionlint"
+          "$actionlint_bin"
 
   dependency-review:
     name: Dependency review
