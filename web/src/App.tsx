@@ -690,6 +690,11 @@ function CaptureSection({ namespaces, onRefresh }: CaptureSectionProps) {
             <input
               id="capture-namespace"
               value={namespace}
+              onFocus={() => {
+                // The prefill is a convenience, never a race with typing.
+                // Mark the field as user-owned as soon as it takes focus.
+                namespaceTouched.current = true;
+              }}
               onChange={(e) => {
                 namespaceTouched.current = true;
                 setNamespace(e.target.value);
