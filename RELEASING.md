@@ -12,8 +12,9 @@ has not produced a release yet.
 
 ## Publishing setup
 
-The crates.io packages have not been published. The release workflow's publish
-job needs:
+The crates.io packages have not been published. Do not submit `server.json` to
+the MCP registry until they are: its cargo package entry points at crates.io and
+will not resolve before then. The release workflow's publish job needs:
 
 - a crates.io API token with publish rights for `recall-mcp-core`,
   `recall-mcp-server`, and `recall-mcp-cli`, stored as the

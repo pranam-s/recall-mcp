@@ -14,6 +14,27 @@ fn read(relative: &str) -> String {
 }
 
 #[test]
+fn readme_has_contents_and_no_internal_ci_notes() {
+    let readme = read("README.md");
+    assert!(
+        readme.contains("## Contents"),
+        "README must have a Contents section"
+    );
+    for banned in [
+        "GitHub Actions",
+        "billing",
+        "owner-gated",
+        "development machine",
+        "dev machine",
+    ] {
+        assert!(
+            !readme.contains(banned),
+            "README must not carry internal CI or host notes: {banned:?}"
+        );
+    }
+}
+
+#[test]
 fn version_is_consistent_across_release_metadata() {
     let version = env!("CARGO_PKG_VERSION");
     assert_eq!(version, "0.5.0", "update this guard with the release");

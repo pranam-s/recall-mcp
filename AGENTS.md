@@ -5,8 +5,8 @@
 Recall-MCP is a local-first semantic memory broker for AI agents. It ships a
 Rust MCP server (stdio and streamable HTTP, built on the SDK for the 2026-07-28
 spec; the wire `initialize` handshake answers `2025-11-25`, see D-004) with six
-tools: `remember`, `recall`, `forget`, `update_memory`, `capture`, and
-`list_memories`. The same engine runs behind REST, an OpenAPI document, a web
+tools: `remember`, `recall`, `forget`, `update_memory`, `list_memories`, and
+`capture`. The same engine runs behind REST, an OpenAPI document, a web
 UI, and a CLI. One SQLite file holds the store.
 
 Retrieval combines BM25, cosine similarity, and recency decay. Every recall

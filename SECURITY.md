@@ -27,7 +27,7 @@ GitHub.
 Out of scope: vulnerabilities that require the attacker to already control the
 user's machine or database file, and the documented limitations of the design.
 Namespaces are not a security boundary, dense embeddings are invertible, and
-plaintext exports are plaintext.
+exports are plaintext by design.
 
 ## Hardening in place
 

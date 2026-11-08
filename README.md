@@ -4,11 +4,11 @@ mcp-name: io.github.pranam-s/recall-mcp
 
 Recall-MCP is a local-first semantic memory broker for AI agents. One SQLite file
 and one server hold short records that agents write and read back through MCP
-over stdio or streamable HTTP, REST, the CLI, or a web UI. Every recall hit
-carries the score breakdown behind its rank: `{bm25, vector, recency,
-pinned_boost, total}`. Keyword search works offline with no model. An optional
-local ONNX embedder adds semantic matching, and an optional key encrypts memory
-text with ChaCha20-Poly1305.
+(stdio or streamable HTTP), REST, the CLI, or a web UI. Every recall hit carries
+the score breakdown behind its rank: `{bm25, vector, recency, pinned_boost,
+total}`. Keyword search works offline with no model. An optional local ONNX
+embedder adds semantic matching, and an optional key encrypts memory text with
+ChaCha20-Poly1305.
 
 Status: **0.5.0**, tagged 2026-11-08. This is the latest release; `master`
 carries fixes that are not in the tag yet.
@@ -31,10 +31,10 @@ carries fixes that are not in the tag yet.
 ## Why Recall-MCP
 
 Agents start each session from zero. Recall-MCP keeps observations, decisions,
-and preferences in one place and retrieves them with keyword, vector, and
-recency signals. Every hit reports the components behind its rank. The hash
-embedder scores 98/100 hit-rate@5 on the golden set, and ONNX scores 50/50 on
-the paraphrase set. Evaluation records the method and caveats.
+and preferences in one place and ranks them with keyword, vector, and recency
+signals, so each hit can be explained. The hash embedder scores 98/100
+hit-rate@5 on the golden set, and ONNX scores 50/50 on the paraphrase set; the
+Evaluation document has the method and caveats.
 
 ## Install
 
@@ -111,7 +111,7 @@ breakdowns. A packed in-memory vector cache serves repeat recalls: it fills on
 the first recall after a fresh process, rebuilds after a write or a commit from
 another connection, and tag-filtered recalls bypass it.
 
-Beyond roughly 100k memories per namespace, the D-002 ANN revisit applies.
+Beyond roughly 100k memories per namespace, the D-002 revisit applies.
 
 ## Configuration
 
@@ -123,7 +123,7 @@ file-configurable.
 | Setting | Flag | Environment | Default |
 |---|---|---|---|
 | Database file | `--db` | `RECALL_MCP_DB` | `recall.db` |
-| Namespace for one-shot commands | `--namespace` | `RECALL_MCP_NAMESPACE` | required for `remember`, `recall`, `capture` |
+| Namespace for one-shot commands | `--namespace` | `RECALL_MCP_NAMESPACE` | required for `remember`, `recall`, `capture`; optional for `list` |
 | Bind address | `--bind` | `RECALL_MCP_BIND` | `127.0.0.1:8787` |
 | API key | `--api-key` | `RECALL_MCP_API_KEY` | off |
 | Rate limit per key | `--rate-limit` | `RECALL_MCP_RATE_LIMIT` | off |
@@ -162,8 +162,7 @@ instructions.
 
 - The project is pre-1.0. The crates.io packages `recall-mcp-core`,
   `recall-mcp-server`, and `recall-mcp-cli` are not published yet.
-- No Docker image is published. The `Dockerfile` is in the repository, but there
-  is no pullable image.
+- No Docker image is published; the `Dockerfile` is in the repository.
 - The OpenAI embedder has never been called against the live API.
 - Client snippets are starting points and have not been verified against every
   client version.
@@ -177,7 +176,7 @@ instructions.
 | Document | Contents |
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | Layering, data model, recall path, encryption, embedders, surfaces, and testing |
-| [Evaluation](docs/EVALUATION.md) | Measured test, coverage, retrieval, latency, token, web, and dependency results |
+| [Evaluation](docs/EVALUATION.md) | Test, coverage, retrieval, token, web, and dependency results, plus the latency design target |
 | [Decisions](docs/adr/DECISIONS.md) | Decision records D-001 to D-021 and dated amendments |
 | [Clients](docs/clients.md) | MCP client configuration and troubleshooting |
 | [Token efficiency](docs/TOKEN-EFFICIENCY.md) | Compact response formats and measured byte sizes |

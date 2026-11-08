@@ -25,16 +25,16 @@ decay), `pinned_boost` (default 0.2), `format` (`json` default, `text`), and
 Returns hits with a `breakdown` (`bm25`, `vector`, `recency`, `pinned_boost`,
 `total`). `format: "text"` cannot be combined with embeddings.
 
+## `forget`
+
+Argument: `id`. Permanently deletes one memory. Unknown ids are invalid-params
+errors.
+
 ## `update_memory`
 
 Arguments: `id`, any of `text`, `tags`, `pinned`, plus `include_embedding`.
 Only the fields you pass change. Changing text re-embeds it. Unknown ids are
 invalid-params errors, matching REST's 404.
-
-## `forget`
-
-Argument: `id`. Permanently deletes one memory. Unknown ids are invalid-params
-errors.
 
 ## `list_memories`
 

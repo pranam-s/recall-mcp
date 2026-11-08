@@ -142,8 +142,8 @@ live HTTP call is not, because no key was available.
 
 The official Rust MCP SDK (`rmcp` 3.2.0, released 2026-08-31) implements the
 `2026-07-28` spec, so no fallback is needed. Tools are defined with
-`#[tool_router]`, `#[tool]`, and `#[tool_handler]`. Streamable-HTTP uses
-`StreamableHttpService` in stateless JSON-response mode; stdio uses
+`#[tool_router]`, `#[tool]`, and `#[tool_handler]`. The streamable HTTP transport
+uses `StreamableHttpService` in stateless JSON-response mode; stdio uses
 `rmcp::transport::io::stdio()`. Over streamable HTTP the client's `2026-07-28`
 request is honored; over stdio rmcp negotiates its default `2025-11-25` (SDK
 behavior, observed in tests).
@@ -209,7 +209,7 @@ because the compiler-rt sources are not shipped. Alternatives: cargo-tarpaulin
 the same missing runtime), and the MSVC toolchain, which D-005 excluded at the
 time.
 
-Resolution: a linux-gnu CI runner enforces the 90/90 gate with
+Resolution: a Linux GNU run enforced the 90/90 gate with
 `cargo llvm-cov -p recall-core --fail-under-lines 90 --fail-under-branches 90`.
 On windows-gnu the result is reported as not measurable, with no estimate. See
 docs/EVALUATION.md.

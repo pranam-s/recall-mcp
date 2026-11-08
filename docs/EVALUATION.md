@@ -6,10 +6,10 @@ benchmark is claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: 209 passed, 0 failed, 3 ignored.
+`cargo test --workspace --locked`: 210 passed, 0 failed, 3 ignored.
 
 These numbers are from master after the v0.5.0 tag. The tag measured 207 passed
-and 3 ignored, and 214 passed and 4 ignored with all features; two regression
+and 3 ignored, and 214 passed and 4 ignored with all features; three regression
 tests were added afterward.
 
 | Suite | Passed | Covers |
@@ -21,7 +21,7 @@ tests were added afterward.
 | recall-server unit | 40 | error/status mapping, JSON error contract, auth, rate limiting and bucket bound, Host/Origin scheme, security headers, slow-embedder responsiveness, MCP info, list cap/offset, capture, OpenAPI drift, metrics |
 | recall-server API | 12 | REST CRUD, auth matrix, pagination, compact/full views, 400/404/405/413/415/429 JSON errors, security headers, origin scheme, capture rollback |
 | recall-server MCP HTTP | 6 | initialize/tools/list/tools/call, stateless 2026-07-28 discover/list/call, API key, tools/list byte budget, compact vs full vs text sizes |
-| recall-server metadata | 2 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes |
+| recall-server metadata | 3 | version pins across server.json/CITATION/README/release notes; six MCP tools in source and OpenAPI; auth schemes; README contents and internal-note guard |
 | recall-server proptest | 1 | token-bucket partition and burst bound |
 | recall-cli unit | 9 | config precedence, embedder selection, origin validation, BOM tolerance |
 | recall-cli e2e | 12 | remember/recall/export/import, update, encryption, backup/vacuum, compact defaults, text format, list page, stats, capture, keygen, forget, `recall` alias, env fallbacks |
@@ -32,7 +32,7 @@ Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
 with onnxruntime 1.28.0 and a model cache: 127 passed, 2 ignored (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured 216 passed, 0 failed,
+`cargo test --workspace --all-features` run measured 217 passed, 0 failed,
 4 ignored.
 
 Formatting and lints:
