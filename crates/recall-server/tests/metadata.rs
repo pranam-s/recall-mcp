@@ -22,6 +22,30 @@ fn version_is_consistent_across_release_metadata() {
         serde_json::from_str(&read("server.json")).expect("server.json parses");
     assert_eq!(server["version"], version);
     assert_eq!(server["name"], "io.github.pranam-s/recall-mcp");
+    // The registry schema caps `description` at 100 characters and requires
+    // an OCI identifier of the form registry/namespace/repository:tag.
+    assert!(
+        server["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty() && d.chars().count() <= 100),
+        "server.json description must be 1..=100 characters: {}",
+        server["description"]
+    );
+    let package = &server["packages"][0];
+    assert_eq!(package["registryType"], "oci");
+    let expected_identifier = format!("ghcr.io/pranam-s/recall-mcp:{version}");
+    assert_eq!(
+        package["identifier"].as_str(),
+        Some(expected_identifier.as_str()),
+        "the OCI identifier must carry the release tag the image is pushed under"
+    );
+    assert_eq!(package["transport"]["type"], "stdio");
+    assert_eq!(package["runtimeHint"], "docker");
+    let args = package["packageArguments"].as_array().expect("args array");
+    assert!(
+        args.iter().any(|a| a["value"] == "serve") && args.iter().any(|a| a["name"] == "--stdio"),
+        "the advertised OCI stdio package must run `serve --stdio`: {args:?}"
+    );
 
     let citation = read("CITATION.cff");
     assert!(

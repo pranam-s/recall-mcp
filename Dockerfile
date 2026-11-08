@@ -7,10 +7,13 @@ COPY README.md LICENSE ./
 RUN cargo build --release --locked -p recall-mcp-cli --bin recall --bin recall-cli
 
 FROM debian:bookworm-slim AS runtime
+LABEL io.modelcontextprotocol.server.name="io.github.pranam-s/recall-mcp"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --uid 10001 recall
+    && useradd --system --create-home --uid 10001 recall \
+    && mkdir -p /data \
+    && chown recall:recall /data
 COPY --from=build /src/target/release/recall /usr/local/bin/recall
 COPY --from=build /src/target/release/recall-cli /usr/local/bin/recall-cli
 COPY --from=build /src/LICENSE /usr/local/share/recall/LICENSE

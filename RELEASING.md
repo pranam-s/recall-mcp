@@ -51,7 +51,12 @@ claim CI passed until a run actually exists.
    `CARGO_REGISTRY_TOKEN`.
 7. Confirm the GitHub release, binary archives, provenance attestations, and
    SBOM are attached.
-8. Smoke-test the published crates in a clean directory:
+8. Build and push the Docker image to the tag named in `server.json`
+   (`ghcr.io/pranam-s/recall-mcp:X.Y.Z`) with the
+   `io.modelcontextprotocol.server.name` label from the Dockerfile. The release
+   workflow does not push images; this is an explicit owner step until a
+   registry login is added.
+9. Smoke-test the published crates in a clean directory:
 
    ```sh
    cargo install recall-mcp-cli --version X.Y.Z
