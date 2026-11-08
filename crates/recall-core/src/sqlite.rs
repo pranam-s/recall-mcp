@@ -221,6 +221,13 @@ impl PackedNamespace {
     /// vectors of the query's dimensionality. Reads happen once per
     /// (re)build; the per-recall scan afterwards never touches SQLite.
     fn load(conn: &Connection, namespace_id: &str, dim: usize, scan_cap: usize) -> Result<Self> {
+        // Stamp the version BEFORE the scan. If another connection commits
+        // while rows are being read (or just after), the stamped value is
+        // already stale, so the next recall rebuilds instead of treating a
+        // possibly mixed snapshot as current. Reading the version after the
+        // scan had the opposite failure mode: a concurrent commit could stamp
+        // old rows as fresh indefinitely.
+        let cache_version = data_version(conn)?;
         let sql = format!(
             "SELECT rowid, embedding, created_at, pinned FROM memories
              WHERE namespace_id = ?1 ORDER BY rowid LIMIT {scan_cap}"
@@ -253,7 +260,7 @@ impl PackedNamespace {
         }
         Ok(Self {
             namespace_id: namespace_id.to_string(),
-            data_version: data_version(conn)?,
+            data_version: cache_version,
             dim,
             data,
             has_vector,
@@ -368,6 +375,13 @@ struct MemoryRow {
 
 const MEMORY_COLUMNS: &str =
     "id, namespace_id, text, tags, embedding, source, pinned, created_at, last_accessed_at";
+
+/// Store tags in their trimmed form. `validate_tags` already rejects blank
+/// tags; trimming here keeps `--tags " ops "` and `"ops"` the same filter
+/// value instead of silently persisting a tag no exact filter can match.
+fn normalized_tags(tags: &[String]) -> Vec<String> {
+    tags.iter().map(|tag| tag.trim().to_string()).collect()
+}
 
 fn memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
     Ok(MemoryRow {
@@ -765,20 +779,27 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Dimensions of the first stored embedding, if any vector exists.
-    fn first_embedding_dimensions(&self) -> Result<Option<usize>> {
-        let len: Option<i64> = self
-            .conn
-            .query_row(
-                "SELECT length(embedding) FROM memories
-                 WHERE embedding IS NOT NULL LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(len
-            .and_then(|bytes| usize::try_from(bytes / 4).ok())
-            .filter(|d| *d > 0))
+    /// Every distinct stored embedding dimensionality. Legacy adoption must
+    /// see one dimension that matches the current embedder; an already-mixed
+    /// store cannot be adopted just because its first vector happens to match.
+    fn stored_embedding_dimensions(&self) -> Result<Vec<usize>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT length(embedding) FROM memories
+             WHERE embedding IS NOT NULL ORDER BY 1",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        let mut dims = Vec::new();
+        for bytes in rows {
+            let bytes = bytes?;
+            if bytes > 0
+                && bytes % 4 == 0
+                && let Ok(dim) = usize::try_from(bytes / 4)
+                && !dims.contains(&dim)
+            {
+                dims.push(dim);
+            }
+        }
+        Ok(dims)
     }
 
     /// Persist the embedder identity atomically.
@@ -800,6 +821,29 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Reject an embedding whose length disagrees with the store's stamped
+    /// embedder identity. Edge layers validate against the configured
+    /// embedder; this store-level check also covers importers and library
+    /// callers that bypass those edges.
+    fn ensure_embedding_dimensions(&self, embedding: Option<&[f32]>) -> Result<()> {
+        let Some(embedding) = embedding else {
+            return Ok(());
+        };
+        let expected = self
+            .meta_get(META_EMBEDDER_DIMS)?
+            .and_then(|value| value.parse::<usize>().ok());
+        if let Some(expected) = expected
+            && embedding.len() != expected
+        {
+            return Err(RecallError::InvalidInput(format!(
+                "embedding has {} dims but this store was written with a {expected}-dim embedder; \
+                 keep the original embedder or re-embed the records",
+                embedding.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Storage form of memory text: ciphertext in keyed mode, plaintext
     /// otherwise; plus the FTS document (keyed digests or the text itself).
     fn stored_text(&self, id: &str, text: &str) -> (String, String) {
@@ -810,6 +854,7 @@ impl SqliteStore {
     }
 
     fn namespace_id(&self, name: &str) -> Result<Option<String>> {
+        let name = name.trim();
         let mut stmt = self
             .conn
             .prepare_cached("SELECT id FROM namespaces WHERE name = ?1")?;
@@ -914,6 +959,7 @@ impl Store for SqliteStore {
     }
 
     fn find_namespace(&self, name: &str) -> Result<Option<Namespace>> {
+        let name = name.trim();
         let mut stmt = self
             .conn
             .prepare("SELECT id, name, created_at FROM namespaces WHERE name = ?1")?;
@@ -934,13 +980,15 @@ impl Store for SqliteStore {
         validate_tags(&memory.tags)?;
         validate_source(memory.source.as_deref())?;
         validate_embedding(memory.embedding.as_deref())?;
+        self.ensure_embedding_dimensions(memory.embedding.as_deref())?;
         if let Some(id) = &memory.id {
             validate_id(id)?;
         }
+        let namespace = memory.namespace.trim();
         let text = memory.text.trim();
         let ns = self
-            .namespace_id(&memory.namespace)?
-            .ok_or_else(|| RecallError::NamespaceNotFound(memory.namespace.clone()))?;
+            .namespace_id(namespace)?
+            .ok_or_else(|| RecallError::NamespaceNotFound(namespace.to_string()))?;
 
         let id = match &memory.id {
             Some(id) if id.trim().is_empty() => {
@@ -953,9 +1001,15 @@ impl Store for SqliteStore {
         };
         let now = crate::unix_now();
         let created_at = memory.created_at.unwrap_or(now);
-        let tags = serde_json::to_string(&memory.tags)?;
+        let tags = serde_json::to_string(&normalized_tags(&memory.tags))?;
         let embedding_blob = memory.embedding.as_deref().map(f32_to_blob);
-        let source = memory.source.clone().unwrap_or_else(|| "agent".to_string());
+        let source = memory
+            .source
+            .as_deref()
+            .map(str::trim)
+            .filter(|source| !source.is_empty())
+            .unwrap_or("agent")
+            .to_string();
         let (stored_text, fts_tokens) = self.stored_text(&id, text);
 
         // Distinguish "duplicate id" from other constraint failures for a precise error.
@@ -1018,6 +1072,7 @@ impl Store for SqliteStore {
         }
         validate_source(update.source.as_deref())?;
         validate_embedding(update.embedding.as_deref())?;
+        self.ensure_embedding_dimensions(update.embedding.as_deref())?;
         let existing = self
             .get_memory(id)?
             .ok_or_else(|| RecallError::MemoryNotFound(id.to_string()))?;
@@ -1026,11 +1081,15 @@ impl Store for SqliteStore {
             Some(t) => t.trim().to_string(),
             None => existing.text.clone(),
         };
-        let new_tags = update.tags.clone().unwrap_or_else(|| existing.tags.clone());
-        let new_source = update
-            .source
-            .clone()
-            .unwrap_or_else(|| existing.source.clone());
+        let new_tags = match &update.tags {
+            Some(tags) => normalized_tags(tags),
+            None => existing.tags.clone(),
+        };
+        let new_source = match &update.source {
+            Some(source) if source.trim().is_empty() => "agent".to_string(),
+            Some(source) => source.trim().to_string(),
+            None => existing.source.clone(),
+        };
         let new_pinned = update.pinned.unwrap_or(existing.pinned);
         // A changed text invalidates the stored vector unless a fresh one is
         // supplied (callers with an embedder re-embed before updating).
@@ -1497,41 +1556,43 @@ impl Store for SqliteStore {
         }
 
         // No identity yet: a fresh store is stamped; a legacy store is
-        // adopted only when its stored vector dimensions agree (or it has no
-        // vectors at all).
+        // adopted only when every stored vector already has the current
+        // dimensionality (or it has no vectors at all).
         if self.count_memories(None)? == 0 {
             self.stamp_embedder(&current)?;
             return Ok(EmbedderStatus::Stamped);
         }
-        let stored_dimensions = self.first_embedding_dimensions()?;
-        if let Some(stored_dims) = stored_dimensions
-            && stored_dims != current.dimensions
-        {
+        let stored_dimensions = self.stored_embedding_dimensions()?;
+        let compatible = stored_dimensions.is_empty()
+            || (stored_dimensions.len() == 1 && stored_dimensions[0] == current.dimensions);
+        if !compatible {
             if allow_mismatch {
                 warn!(
-                    stored_dimensions = stored_dims,
+                    stored_dimensions = ?stored_dimensions,
                     current_dimensions = current.dimensions,
                     "legacy store dimension mismatch allowed by operator"
                 );
                 return Ok(EmbedderStatus::MismatchAllowed {
                     stored: EmbedderMeta {
-                        fingerprint: format!("legacy@{stored_dims}"),
+                        fingerprint: format!("legacy@{stored_dimensions:?}"),
                         name: "legacy".into(),
-                        dimensions: stored_dims,
+                        dimensions: stored_dimensions.first().copied().unwrap_or(0),
                     },
                     current,
                 });
             }
             return Err(RecallError::InvalidInput(format!(
-                "embedder dimension mismatch: this legacy store holds {stored_dims}-dimensional \
-                 vectors but the current embedder {:?} produces {} dims; use the original \
-                 embedder, or pass --allow-embedder-mismatch / set \
+                "embedder dimension mismatch: this legacy store holds vectors with dimensions \
+                 {stored_dimensions:?} but the current embedder {:?} produces {} dims; use the \
+                 original embedder, or pass --allow-embedder-mismatch / set \
                  RECALL_MCP_ALLOW_EMBEDDER_MISMATCH=1 to override",
                 current.name, current.dimensions
             )));
         }
         self.stamp_embedder(&current)?;
-        Ok(EmbedderStatus::AdoptedLegacy { stored_dimensions })
+        Ok(EmbedderStatus::AdoptedLegacy {
+            stored_dimensions: stored_dimensions.first().copied(),
+        })
     }
 
     fn stats(&self) -> Result<Stats> {
@@ -1706,6 +1767,55 @@ mod tests {
         assert!(s.delete_memory(&m.id).unwrap());
         assert!(!s.delete_memory(&m.id).unwrap());
         assert!(s.get_memory(&m.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn store_normalizes_padded_namespaces_tags_and_blank_sources() {
+        let s = store();
+        let created = s.create_namespace(" work ").unwrap();
+        assert_eq!(created.name, "work", "create_namespace trims the name");
+        assert!(s.find_namespace(" work ").unwrap().is_some());
+
+        let memory = s
+            .insert_memory(&NewMemory {
+                namespace: " work ".into(),
+                text: "padded inputs still land in the right namespace".into(),
+                tags: vec![" ops ".into(), "db".into()],
+                source: Some("   ".into()),
+                pinned: false,
+                created_at: Some(10),
+                id: None,
+                embedding: None,
+            })
+            .unwrap();
+        assert_eq!(memory.tags, vec!["ops", "db"]);
+        assert_eq!(memory.source, "agent", "blank source means the default");
+
+        // The padded recall namespace resolves to the same trimmed namespace.
+        let hits = s
+            .recall(
+                " work ",
+                "padded inputs",
+                None,
+                &RecallParams::default(),
+                20,
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memory.id, memory.id);
+
+        let updated = s
+            .update_memory(
+                &memory.id,
+                &MemoryUpdate {
+                    tags: Some(vec![" rust ".into()]),
+                    source: Some("   ".into()),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.tags, vec!["rust"]);
+        assert_eq!(updated.source, "agent");
     }
 
     #[test]
@@ -3219,6 +3329,42 @@ mod tests {
     }
 
     #[test]
+    fn legacy_store_with_mixed_vector_dimensions_is_not_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed-dims.db");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&NewMemory {
+                embedding: Some(HashEmbedder::new(256).unwrap().embed("a")),
+                ..mem("w", "a")
+            })
+            .unwrap();
+            s.insert_memory(&NewMemory {
+                embedding: Some(HashEmbedder::new(384).unwrap().embed("b")),
+                ..mem("w", "b")
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let err = s
+            .check_embedder(&HashEmbedder::new_256(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("256") && err.contains("384"),
+            "the guard must name every stored dimensionality: {err}"
+        );
+        assert!(
+            matches!(
+                s.check_embedder(&HashEmbedder::new_256(), true).unwrap(),
+                EmbedderStatus::MismatchAllowed { .. }
+            ),
+            "the explicit operator override still applies"
+        );
+    }
+
+    #[test]
     fn legacy_store_dimension_mismatch_fails_with_both_sides_named() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy-dims.db");
@@ -3242,6 +3388,43 @@ mod tests {
                 .unwrap(),
             EmbedderStatus::MismatchAllowed { .. }
         ));
+    }
+
+    #[test]
+    fn store_rejects_embedding_dims_that_disagree_with_the_stamped_identity() {
+        let s = store();
+        let hash = HashEmbedder::new_256();
+        assert_eq!(
+            s.check_embedder(&hash, false).unwrap(),
+            EmbedderStatus::Stamped
+        );
+        let ok = NewMemory {
+            embedding: Some(hash.embed("right shape")),
+            ..mem("w", "right shape")
+        };
+        ns(&s, "w");
+        s.insert_memory(&ok).unwrap();
+        let wrong = NewMemory {
+            embedding: Some(vec![0.1f32; 384]),
+            ..mem("w", "wrong shape")
+        };
+        let err = s.insert_memory(&wrong).unwrap_err().to_string();
+        assert!(
+            err.contains("384") && err.contains("256"),
+            "the store-level guard must name both dimensions: {err}"
+        );
+        // A text-only update (no new vector) is still allowed; it clears the
+        // stale embedding rather than mixing spaces.
+        let updated = s
+            .update_memory(
+                &s.list_memories(Some("w"), 1, 0).unwrap()[0].id,
+                &MemoryUpdate {
+                    text: Some("right shape rewritten".into()),
+                    ..MemoryUpdate::default()
+                },
+            )
+            .unwrap();
+        assert!(updated.embedding.is_none());
     }
 
     // ---- Recall determinism and validation ----
