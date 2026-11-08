@@ -1215,6 +1215,12 @@ impl Store for SqliteStore {
         p.validate()?;
         validate_namespace(namespace)?;
         validate_query(query)?;
+        // Query vectors come from embedders or callers, not the store; NaN or
+        // infinity would poison every cosine and the final total. An empty
+        // vector keeps its existing meaning: no vector term for this query.
+        if let Some(query_embedding) = query_embedding.filter(|v| !v.is_empty()) {
+            validate_embedding(Some(query_embedding))?;
+        }
         let ns = self
             .namespace_id(namespace)?
             .ok_or_else(|| RecallError::NamespaceNotFound(namespace.to_string()))?;
@@ -2033,6 +2039,25 @@ mod tests {
             ..Default::default()
         };
         assert!(s.recall("w", "q", None, &bad_k, 0).is_err());
+
+        // Non-finite or oversized query vectors must not reach the cosine.
+        assert!(
+            s.recall("w", "q", Some(&[f32::NAN]), &p, 0).is_err(),
+            "NaN query vectors must be rejected"
+        );
+        assert!(
+            s.recall(
+                "w",
+                "q",
+                Some(&vec![0.0; crate::validation::MAX_EMBEDDING_DIMS + 1]),
+                &p,
+                0
+            )
+            .is_err(),
+            "oversized query vectors must be rejected"
+        );
+        // An empty vector still means "no vector term", not an error.
+        assert!(s.recall("w", "q", Some(&[]), &p, 0).is_ok());
     }
 
     #[test]
@@ -3547,6 +3572,13 @@ mod tests {
             !wal_before.is_empty(),
             "test setup needs a non-empty WAL sidecar"
         );
+        let wal_text = String::from_utf8_lossy(&wal_before);
+        for marker in [deleted_marker, wal_marker, keep_marker] {
+            assert!(
+                wal_text.contains(marker),
+                "test setup must put {marker} in the pre-upgrade WAL"
+            );
+        }
 
         let key = StoreKey::from_hex(&"5a".repeat(32)).unwrap();
         let keyed = SqliteStore::open_with_key(&path, &key).unwrap();
