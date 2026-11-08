@@ -312,7 +312,7 @@ async fn conformance_initialize_tools_list_call_over_http() {
     assert_eq!(status, axum::http::StatusCode::OK);
     let result = unwrap_result(&body);
     assert_eq!(result["serverInfo"]["name"], "recall-mcp");
-    // Wire pin: rmcp 3.3 answers an `initialize` naming `2026-07-28` with
+    // Wire pin: rmcp 3.9 answers an `initialize` naming `2026-07-28` with
     // `2025-11-25` — the newest version that still HAS an initialize
     // handshake, because the 2026-07-28 revision replaced the handshake with
     // per-request metadata (rmcp `negotiate_protocol_version`). Pinned so an

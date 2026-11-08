@@ -14,7 +14,7 @@ targets = [
 version = 2
 # The only non-vulnerability warning kept: `paste` is unmaintained but has no
 # fix and no known vulnerability; it is a transitive build-time dependency of
-# rmcp's macro stack. Reviewed 2026-11-08.
+# fastembed's tokenizers stack. Reviewed 2026-11-08.
 ignore = ["RUSTSEC-2024-0436"]
 yanked = "deny"
 

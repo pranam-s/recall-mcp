@@ -98,7 +98,7 @@ GitHub Actions has not run (billing), so no CI result is claimed.
 
 ## Partial
 
-1. **p95 at 10k memories.** The ignored release harness measured p95 32.8 to
+1. **p95 at 10k memories.** The ignored release harness measured p95 32.7 to
    33.1 ms on this host on 2026-11-08, against the 25 ms PRD budget. It is a
    measured failure, recorded in EVALUATION, and the threshold was not lowered.
    Steady-state variance and the cold-cache fill are part of the record. This
@@ -118,7 +118,8 @@ GitHub Actions has not run (billing), so no CI result is claimed.
    sends a key when one is saved but cannot protect an unkeyed server.
 7. **Dockerfile.** Committed with a multi-stage build and healthcheck, but not
    built here because the Docker daemon was unavailable. Treat it as unverified
-   until CI or the owner builds it.
+   until CI or the owner builds it. No `ghcr.io` image has been pushed, so the
+   OCI package in `server.json` is an owner-gated publish step.
 
 ## Not done
 

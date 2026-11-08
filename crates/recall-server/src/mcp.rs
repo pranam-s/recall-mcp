@@ -2,7 +2,7 @@
 //! `list_memories`, and `capture`.
 //!
 //! Transport-neutral tool layer (rmcp 3.x, built against the MCP 2026-07-28
-//! spec) mounted over stdio and streamable-HTTP. Wire negotiation: rmcp 3.3
+//! spec) mounted over stdio and streamable-HTTP. Wire negotiation: rmcp 3.9
 //! answers an `initialize` naming `2026-07-28` with `2025-11-25`, the newest
 //! version that still has an initialize handshake (the 2026-07-28 revision
 //! replaced the handshake with per-request metadata); both conformance tests

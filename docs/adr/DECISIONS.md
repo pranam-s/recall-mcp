@@ -8,9 +8,10 @@ expand the summaries embedded in `docs/ARCHITECTURE.md`; later numbers are new.
 These amend earlier entries without rewriting their text or their history.
 
 - **D-002 (as amended by D-016/D-019):** the 10k p95 budget is not met on the
-  2026-11-08 development host. The ignored harness measured p95 32.768 and
-  33.058 ms against 25 ms. The threshold stays at 25 ms and the failure is
-  recorded in EVALUATION. No ANN or storage-engine change was made in 0.5.0.
+  2026-11-08 development host. The ignored harness measured p95 29.583, 32.745,
+  32.768, and 33.058 ms across serial runs against 25 ms. The threshold stays at
+  25 ms and the failure is recorded in EVALUATION. No ANN or storage-engine
+  change was made in 0.5.0.
 - **D-004:** rmcp is 3.9.0. The 2026-07-28 stateless lifecycle is now exercised
   directly with `server/discover`, `_meta`, and the `MCP-Protocol-Version`,
   `Mcp-Method`, and `Mcp-Name` headers over HTTP and stdio. The legacy
@@ -18,8 +19,8 @@ These amend earlier entries without rewriting their text or their history.
 - **D-007:** the connection sets a 5 s `busy_timeout`; multi-step writes use
   `BEGIN IMMEDIATE`. A second process waits for the write lock instead of
   failing at COMMIT.
-- **D-010:** coverage was re-measured on 2026-11-08: recall-core 95.25% lines
-  and 94.09% regions, gate 90/90. Branch coverage remains unmeasured on stable
+- **D-010:** coverage was re-measured on 2026-11-08: recall-core 95.34% lines
+  and 94.15% regions, gate 90/90. Branch coverage remains unmeasured on stable
   cargo-llvm-cov.
 - **D-014:** every plaintext-to-keyed transition, including a legacy-schema
   upgrade, runs with `secure_delete`, VACUUM, and a truncated WAL checkpoint.
@@ -35,6 +36,12 @@ These amend earlier entries without rewriting their text or their history.
   `no-store` policy cover API, MCP, and metrics responses. Origin comparison
   includes scheme and normalizes default ports. Store and embedder work runs on
   the blocking pool.
+- **D-012:** web dependencies were refreshed for 0.5.0: React 19.3.1, Vite
+  8.3.6, TypeScript 7.0.2, Tailwind 4.3.5, Playwright 1.65.0, and
+  `@axe-core/playwright` 4.14.0 on Node 24. The committed lockfile is the
+  source of truth for what actually resolved.
+- **D-013:** the ONNX path now uses fastembed 7.6.1 against onnxruntime 1.28.0
+  (`ort` 2.0.0-rc.15); model construction remains serialized.
 - **New in 0.5.0, no separate ADR:** `recall-core::views` is the single compact
   serialization layer for MCP, REST, and CLI. It is a response-shape choice,
   not a storage decision; `include_embedding` restores full records.

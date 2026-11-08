@@ -51,13 +51,13 @@ before `-D warnings`. The wrapper forwards arguments verbatim.
 
 Reliability and quality:
 
-- recall-core coverage: lines and regions >= 90. Measured 95.25% / 94.09% on
+- recall-core coverage: lines and regions >= 90. Measured 95.34% / 94.15% on
   2026-11-08. Branch coverage is unmeasured on stable cargo-llvm-cov (D-010
   amendment).
 - Golden set: hit-rate@5 >= 0.85 on 100 queries; MRR@10 is reported and gated
   at 0.80. The semantic set is gated on ONNX.
 - p95: the ignored 10k harness is a manual gate at 25 ms. It failed on the
-  2026-11-08 host (32.8 to 33.1 ms). Do not lower the threshold to make it pass.
+  2026-11-08 host (29.6 to 33.1 ms). Do not lower the threshold to make it pass.
 - Web: `cd web && npm ci && npm audit --audit-level=high && npm run build &&
   npx playwright test`. axe WCAG 2.1 AA must stay at 0 violations.
 

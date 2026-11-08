@@ -1,5 +1,5 @@
 //! Local semantic embeddings via ONNX, behind the non-default `onnx` feature
-//! (D-013). Uses `fastembed` 7.x on `ort` 2.0.0-rc.13 with ONNX Runtime loaded
+//! (D-013). Uses `fastembed` 7.x on `ort` 2.0.0-rc.15 with ONNX Runtime loaded
 //! at runtime (`ort-load-dynamic`): no ort prebuilt binaries ship for every
 //! toolchain, but the official `onnxruntime.dll`/`.so` is C ABI and loads fine
 //! via `ORT_DYLIB_PATH`.

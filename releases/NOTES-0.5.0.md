@@ -47,14 +47,14 @@ otherwise the guard names both sides and requires
 Local, windows-msvc, rustc 1.99.1, 2026-11-08. Exact output is in
 `docs/EVALUATION.md`.
 
-- `cargo test --workspace --locked`: 201 passed, 0 failed, 3 ignored.
+- `cargo test --workspace --locked`: 206 passed, 0 failed, 3 ignored.
 - `cargo test --workspace --all-features --locked` with onnxruntime 1.28.0:
-  208 passed, 0 failed, 4 ignored.
+  213 passed, 0 failed, 4 ignored.
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D
   warnings`: 0 warnings.
 - `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90
-  --fail-under-regions 90`: 95.25% lines, 94.09% regions.
+  --fail-under-regions 90`: 95.34% lines, 94.15% regions.
 - Golden eval: 98/100 hit-rate@5 (0.980), MRR@10 0.975.
 - Semantic eval with ONNX: 50/50 hit-rate@5 (1.000), MRR@10 0.740. Hash
   diagnostic: 31/50 (0.620).
@@ -65,9 +65,9 @@ Local, windows-msvc, rustc 1.99.1, 2026-11-08. Exact output is in
 
 ## Known gaps
 
-- **p95 at 10k is not met on this host.** Two runs measured 32.768 and 33.058
-  ms against the 25 ms PRD budget. The ignored manual gate remains at 25 ms and
-  fails honestly.
+- **p95 at 10k is not met on this host.** Four serial runs measured 29.583,
+  32.745, 32.768, and 33.058 ms against the 25 ms PRD budget. The ignored manual
+  gate remains at 25 ms and fails honestly.
 - **CI has not run.** GitHub Actions is disabled for billing. Workflows are
   committed and were not executed remotely. Do not treat them as passing.
 - The OpenAI embedder has never been called live (no key).

@@ -51,8 +51,7 @@ First tagged public release. 0.4.0 was never tagged or published.
 ### Fixed
 
 - Every plaintext-to-keyed transition now runs the forensic VACUUM and WAL
-  truncate, with a retryable marker, for every plaintext-to-keyed transition
-  including legacy-schema upgrades.
+  truncate, with a retryable marker, including legacy-schema upgrades.
 - The crypto tamper test no longer depends on a random base64 character.
 - ONNX model initialization is serialized, removing the test-time download
   race.
@@ -73,7 +72,7 @@ First tagged public release. 0.4.0 was never tagged or published.
 
 ### Known gaps
 
-- 10k p95 measured 32.8 to 33.1 ms on the development host, above the 25 ms
+- 10k p95 measured 29.6 to 33.1 ms on the development host, above the 25 ms
   PRD budget. The ignored gate was not relaxed.
 - GitHub Actions is disabled for billing; no workflow has run remotely.
 - The OpenAI embedder has still not been called live (no key).

@@ -1,8 +1,9 @@
-# License audit: Cargo.lock
+# License audit: Cargo.lock (2026-09-18 snapshot)
 
 This is the 2026-09-18 manual snapshot of every package in `Cargo.lock` at its
 then-locked version, checked against the crates.io registry API (395 published
-packages plus this workspace).
+packages plus this workspace). It is history; the 0.5.0 lock has 403 packages.
+`cargo deny check` is the current gate and runs locally and in CI.
 
 `cargo deny check` is now part of the local and CI gates, with `deny.toml`
 allow-listing the permissive licenses below. It passes on the 0.5.0 lock. The

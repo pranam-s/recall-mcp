@@ -62,9 +62,10 @@ $ recall recall --db recall.db --namespace work --query "when do we deploy?" --f
 ```
 
 JSON is compact when stdout is a pipe and pretty on a terminal. `--pretty`
-forces pretty output, `--full` restores the complete record shape, and
-`--show-embedding` includes the vector. The defaults are compact because the
-embedding alone is about 1.2 KB of JSON per record.
+forces pretty output, `--full` restores the storage fields (`namespace_id`,
+`pinned`, `last_accessed_at`), and `--show-embedding` includes the vector. The
+defaults are compact because the embedding alone is about 1.2 KB of JSON per
+record.
 
 Serve REST, MCP, and the web UI:
 
@@ -261,7 +262,7 @@ revisit applies.
 
 ## Performance
 
-The ignored 10k-memory harness measured p95 **32.8 to 33.1 ms** on this host on
+The ignored 10k-memory harness measured p95 **29.6 to 33.1 ms** on this host on
 2026-11-08, against the PRD budget of 25 ms. The budget is **not met here**;
 the harness remains an ignored manual gate and was not relaxed. Means were
 21.7 to 22.7 ms and p50 20.7 to 22.0 ms. Recorded runs and the older history are
@@ -274,7 +275,7 @@ in [docs/EVALUATION.md](docs/EVALUATION.md).
   0 warnings.
 - `cargo test --workspace`: green (exact counts in EVALUATION).
 - Coverage on recall-core, measured with llvm-cov on windows-msvc:
-  **95.25% lines / 94.09% regions**, gate 90/90.
+  **95.34% lines / 94.15% regions**, gate 90/90.
 - `cargo audit` and `cargo deny check`: pass; one allowed unmaintained
   transitive `paste` warning with a review note.
 - Web: `npm run build` and 8 Playwright tests pass with axe WCAG 2.1 AA at

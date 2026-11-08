@@ -43,13 +43,13 @@ and docs/adr/DECISIONS.md before planning work.
   All green before any commit is "done".
 - Coverage: 90% lines AND regions on recall-core via
   `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90`.
-  (Measured 2026-11-08 on windows-msvc: 95.25% lines / 94.09% regions.
+  (Measured 2026-11-08 on windows-msvc: 95.34% lines / 94.15% regions.
   cargo-llvm-cov 0.9.1 has no branch fail-under; `--branch` needs nightly,
   so true branch coverage is a recorded tooling gap, D-010 amendment.)
 - windows-gnu caveat: llvm-cov cannot run on windows-gnu (D-010); measure on
   the windows-msvc dev machine or let linux-gnu CI enforce it.
   Never estimate or fabricate a coverage number.
-- p95: the 10k harness is an ignored manual gate at 25 ms. It measured 32.8 to
+- p95: the 10k harness is an ignored manual gate at 25 ms. It measured 32.7 to
   33.1 ms on 2026-11-08 and is recorded as a failure. Never lower the threshold
   or claim the budget is met.
 - Web: `cd web && npm run build && npx playwright test` (axe AA must stay 0 violations).
