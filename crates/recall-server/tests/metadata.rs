@@ -31,21 +31,32 @@ fn version_is_consistent_across_release_metadata() {
         "server.json description must be 1..=100 characters: {}",
         server["description"]
     );
-    let package = &server["packages"][0];
-    assert_eq!(package["registryType"], "oci");
+    let packages = server["packages"].as_array().expect("packages array");
+    let oci = packages
+        .iter()
+        .find(|package| package["registryType"] == "oci")
+        .expect("an OCI package");
     let expected_identifier = format!("ghcr.io/pranam-s/recall-mcp:{version}");
     assert_eq!(
-        package["identifier"].as_str(),
+        oci["identifier"].as_str(),
         Some(expected_identifier.as_str()),
         "the OCI identifier must carry the release tag the image is pushed under"
     );
-    assert_eq!(package["transport"]["type"], "stdio");
-    assert_eq!(package["runtimeHint"], "docker");
-    let args = package["packageArguments"].as_array().expect("args array");
+    assert_eq!(oci["transport"]["type"], "stdio");
+    assert_eq!(oci["runtimeHint"], "docker");
+    let oci_args = oci["packageArguments"].as_array().expect("OCI args array");
     assert!(
-        args.iter().any(|a| a["value"] == "serve") && args.iter().any(|a| a["name"] == "--stdio"),
-        "the advertised OCI stdio package must run `serve --stdio`: {args:?}"
+        oci_args.iter().any(|a| a["value"] == "serve")
+            && oci_args.iter().any(|a| a["name"] == "--stdio"),
+        "the advertised OCI stdio package must run `serve --stdio`: {oci_args:?}"
     );
+    let cargo = packages
+        .iter()
+        .find(|package| package["registryType"] == "cargo")
+        .expect("a cargo package");
+    assert_eq!(cargo["identifier"], "recall-mcp-cli");
+    assert_eq!(cargo["version"], version);
+    assert_eq!(cargo["transport"]["type"], "stdio");
 
     let citation = read("CITATION.cff");
     assert!(

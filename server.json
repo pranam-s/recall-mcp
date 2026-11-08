@@ -11,6 +11,19 @@
   "websiteUrl": "https://github.com/pranam-s/recall-mcp",
   "packages": [
     {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "recall-mcp-cli",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        { "type": "positional", "value": "serve" },
+        { "type": "named", "name": "--stdio" }
+      ]
+    },
+    {
       "registryType": "oci",
       "identifier": "ghcr.io/pranam-s/recall-mcp:0.5.0",
       "runtimeHint": "docker",
