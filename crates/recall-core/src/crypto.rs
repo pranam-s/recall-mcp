@@ -280,9 +280,13 @@ mod tests {
         assert!(other.decrypt(&text_context("mem-1"), &ct).is_err());
         // Wrong AAD (ciphertext bound to another row).
         assert!(k.decrypt(&text_context("mem-2"), &ct).is_err());
-        // Tampered ciphertext.
-        let mut tampered = ct.clone();
-        tampered.replace_range(ENC_PREFIX.len() + 30..ENC_PREFIX.len() + 31, "A");
+        // Tampered ciphertext: flip one payload byte and re-encode, so the
+        // value is guaranteed to differ (replacing a random base64 character
+        // with "A" occasionally hit an existing "A" and made this flaky).
+        let mut blob = BASE64.decode(ct.strip_prefix(ENC_PREFIX).unwrap()).unwrap();
+        let last = blob.len() - 1;
+        blob[last] ^= 0x01;
+        let tampered = format!("{ENC_PREFIX}{}", BASE64.encode(blob));
         assert!(k.decrypt(&text_context("mem-1"), &tampered).is_err());
         // Garbage inputs.
         assert!(k.decrypt(&text_context("mem-1"), "not-a-prefix").is_err());

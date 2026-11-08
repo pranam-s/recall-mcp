@@ -1,6 +1,8 @@
-//! Mapping of core errors onto HTTP responses.
+//! Mapping of core errors onto HTTP responses plus the API-wide JSON error
+//! contract (framework rejections included).
 
 use axum::Json;
+use axum::extract::FromRequest;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use recall_core::RecallError;
@@ -12,6 +14,12 @@ pub struct HttpError(pub RecallError);
 impl From<RecallError> for HttpError {
     fn from(e: RecallError) -> Self {
         HttpError(e)
+    }
+}
+
+impl From<serde_json::Error> for HttpError {
+    fn from(e: serde_json::Error) -> Self {
+        HttpError(RecallError::Serialization(e))
     }
 }
 
@@ -31,8 +39,13 @@ impl IntoResponse for HttpError {
                 )
             }
         };
-        (status, Json(serde_json::json!({ "error": message }))).into_response()
+        json_error(status, &message)
     }
+}
+
+/// One JSON error shape for every non-2xx API response.
+pub fn json_error(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
 /// Rejection used by the auth middleware (structured like HttpError bodies).
@@ -54,6 +67,39 @@ pub fn too_many_requests(retry_after_secs: u64) -> Response {
         Json(serde_json::json!({ "error": "rate limit exceeded" })),
     )
         .into_response()
+}
+
+/// Axum `Json` extractor whose rejections are JSON too. Malformed JSON,
+/// missing/wrong content type, and body-limit failures all come back as
+/// `{"error": ...}` with 400/415/413 instead of axum's plain-text defaults.
+pub struct ApiJson<T>(pub T);
+
+impl<S, T> FromRequest<S> for ApiJson<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = Response;
+
+    async fn from_request(
+        req: axum::http::Request<axum::body::Body>,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        match axum::Json::<T>::from_request(req, state).await {
+            Ok(axum::Json(value)) => Ok(ApiJson(value)),
+            Err(rejection) => {
+                let status = rejection.status();
+                let message = match status {
+                    StatusCode::PAYLOAD_TOO_LARGE => "payload too large".to_string(),
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE => {
+                        "unsupported media type: send application/json".to_string()
+                    }
+                    _ => format!("invalid JSON request body: {}", rejection.body_text()),
+                };
+                Err(json_error(status, &message))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

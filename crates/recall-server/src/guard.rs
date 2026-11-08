@@ -54,29 +54,87 @@ pub fn hostname(authority: &str) -> &str {
 
 /// Authority of an `Origin` header value (`scheme://authority`), lowercased.
 /// Opaque origins (`null`) return `None` and are always rejected.
+#[cfg(test)]
 fn origin_authority(origin: &str) -> Option<&str> {
     let (_, authority) = origin.trim().split_once("://")?;
     Some(authority)
 }
 
-/// Same-origin or explicitly allowed: an `Origin` passes when its authority
-/// equals the request authority (browser same-origin policy) or one of the
-/// configured opt-in origins (case-insensitive).
+/// Explicit port of an authority, if it carries one.
+fn authority_port(authority: &str) -> Option<u16> {
+    let a = authority.trim();
+    if let Some(rest) = a.strip_prefix('[') {
+        // `[::1]:8787` → 8787; `[::1]` → no port.
+        let after = rest.split_once(']')?.1;
+        return after.strip_prefix(':')?.parse().ok();
+    }
+    if a.matches(':').count() > 1 {
+        // Bare IPv6 has no port component.
+        return None;
+    }
+    a.rsplit_once(':')?.1.parse().ok()
+}
+
+fn default_port(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
+        _ => None,
+    }
+}
+
+/// Scheme of the request as seen by the client. The server itself speaks
+/// plain HTTP; a reverse proxy can declare the external scheme with
+/// `X-Forwarded-Proto`.
+fn request_scheme(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("http")
+        .to_ascii_lowercase()
+}
+
+/// Effective port of an authority under `scheme` (explicit port, else the
+/// scheme default).
+fn effective_port(authority: &str, scheme: &str) -> Option<u16> {
+    authority_port(authority).or_else(|| default_port(scheme))
+}
+
+/// Same-origin or explicitly allowed. Comparison includes the scheme and
+/// normalizes default ports, so `https://host:443` matches `https://host`
+/// while `https://host` never matches an `http://host` request.
 fn origin_allowed(origin: &str, headers: &HeaderMap, allowed: &[String]) -> bool {
-    let Some(authority) = origin_authority(origin) else {
+    let Some((scheme, authority)) = origin.trim().split_once("://") else {
         return false;
     };
+    let scheme = scheme.to_ascii_lowercase();
     let authority = authority.to_ascii_lowercase();
-    if let Some(host) = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        && authority == host.trim().to_ascii_lowercase()
+    let origin_host = hostname(&authority);
+    let origin_port = effective_port(&authority, &scheme);
+
+    let request_scheme = request_scheme(headers);
+    if scheme == request_scheme
+        && let Some(host) = headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+        && origin_host.eq_ignore_ascii_case(hostname(host))
+        && origin_port == effective_port(host, &request_scheme)
     {
         return true;
     }
-    allowed
-        .iter()
-        .any(|o| origin_authority(o).is_some_and(|a| a.to_ascii_lowercase() == authority))
+
+    allowed.iter().any(|entry| {
+        let Some((allowed_scheme, allowed_authority)) = entry.trim().split_once("://") else {
+            return false;
+        };
+        let allowed_scheme = allowed_scheme.to_ascii_lowercase();
+        allowed_scheme == scheme
+            && hostname(allowed_authority).eq_ignore_ascii_case(origin_host)
+            && effective_port(allowed_authority, &allowed_scheme) == origin_port
+    })
 }
 
 /// Axum middleware: reject requests from foreign hosts (421) and cross-origin

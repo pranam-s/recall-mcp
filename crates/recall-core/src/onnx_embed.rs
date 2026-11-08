@@ -51,6 +51,12 @@ impl OnnxModel {
     }
 }
 
+/// Serializes model construction: fastembed's first-run download writes into
+/// a shared cache directory, and two simultaneous initializations can race on
+/// the same files (observed in the parallel test suite). Production pays at
+/// most one serialized model load at startup.
+static INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// [`Embedder`] backed by a local ONNX sentence-transformer (offline after the
 /// first model download). Inference is serialized through a mutex; failures
 /// are logged and yield a zero vector (the same "no signal" value the rest of
@@ -72,8 +78,7 @@ pub fn default_intra_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2)
-        .min(4)
-        .max(1)
+        .clamp(1, 4)
 }
 
 impl OnnxEmbedder {
@@ -85,6 +90,7 @@ impl OnnxEmbedder {
     /// Build with an explicit model; downloads it if not cached yet. Uses
     /// [`default_intra_threads`].
     pub fn with_model(model: OnnxModel) -> Result<Self> {
+        let _guard = INIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let inner = fastembed::TextEmbedding::try_new(
             fastembed::TextInitOptions::new(model.fastembed())
                 .with_intra_threads(default_intra_threads()),
@@ -118,6 +124,7 @@ impl OnnxEmbedder {
         if let Some(threads) = intra_threads {
             options = options.with_intra_threads(threads);
         }
+        let _guard = INIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let inner = fastembed::TextEmbedding::try_new(options)
             .map_err(|e| RecallError::Embedder(format!("ONNX model init failed: {e}")))?;
         Ok(Self {

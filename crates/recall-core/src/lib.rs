@@ -26,8 +26,13 @@ pub mod scorer;
 pub mod sqlite;
 pub mod store;
 pub mod util;
+pub mod validation;
+pub mod views;
 
-pub use embed::{Embedder, EmbedderKind, HashEmbedder, parse_embedder_name, select_embedder};
+pub use embed::{
+    Embedder, EmbedderKind, EmbedderMeta, EmbedderStatus, HashEmbedder, parse_embedder_name,
+    select_embedder,
+};
 pub use error::{RecallError, Result};
 pub use models::{
     Memory, MemoryUpdate, Namespace, NewMemory, RecallHit, RecallParams, ScoreBreakdown, Stats,

@@ -42,7 +42,7 @@ impl HybridScorer {
         let vector = raw.cosine;
         let recency = match self.tau_days {
             Some(tau) if tau > 0.0 => {
-                let delta_days = ((now - raw.created_at).max(0)) as f64 / 86_400.0;
+                let delta_days = (now.saturating_sub(raw.created_at).max(0)) as f64 / 86_400.0;
                 (-delta_days / tau).exp()
             }
             _ => 0.0,

@@ -2,19 +2,27 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Recall-MCP HTTP API",
-    "version": "0.1.0",
-    "description": "Local-first semantic memory broker. Hybrid retrieval (BM25 + cosine + recency decay) with explainable score breakdowns. All /v1/* endpoints require the API key when RECALL_MCP_API_KEY is set (Authorization: Bearer or X-API-Key)."
+    "version": "0.5.0",
+    "description": "Local-first semantic memory broker. Hybrid retrieval (BM25 + cosine + recency decay) with explainable score breakdowns. All /v1/* endpoints, /metrics, and /mcp require the API key when RECALL_MCP_API_KEY is set (Authorization: Bearer or X-API-Key). Responses default to the compact views; pass include_embedding=true to restore full records."
   },
+  "security": [{ "bearerAuth": [] }, { "apiKeyAuth": [] }],
   "paths": {
     "/healthz": {
       "get": {
         "summary": "Liveness probe (never requires auth)",
-        "responses": { "200": { "description": "Server is up", "content": { "application/json": { "schema": { "type": "object" } } } } }
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server is up",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["status", "service", "version"], "properties": { "status": { "type": "string" }, "service": { "type": "string" }, "version": { "type": "string" } } } } }
+          }
+        }
       }
     },
     "/openapi.json": {
       "get": {
         "summary": "This document",
+        "security": [],
         "responses": { "200": { "description": "OpenAPI 3.1 document" } }
       }
     },
@@ -25,83 +33,105 @@
           "200": {
             "description": "Namespaces, oldest first",
             "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Namespace" } } } }
-          }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
       "post": {
-        "summary": "Create a namespace",
+        "summary": "Create a namespace (strict: unknown namespace references on memories are 404)",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1 } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 } } } } }
         },
         "responses": {
           "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Namespace" } } } },
-          "400": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/v1/memories": {
       "get": {
-        "summary": "List memories, newest first (paginated)",
+        "summary": "List memories, newest first (compact page by default)",
         "parameters": [
           { "name": "namespace", "in": "query", "schema": { "type": "string" }, "description": "Filter by namespace name" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "minimum": 1 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 }, "description": "Rows to skip" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100, "minimum": 1, "maximum": 10000 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 }, "description": "Rows to skip" },
+          { "name": "include_embedding", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Return full records (including embeddings) in the page items" }
         ],
         "responses": {
           "200": {
-            "description": "Memories page; the X-Total-Count header carries the unpaginated total",
+            "description": "Compact page; the X-Total-Count header carries the unpaginated total",
             "headers": { "X-Total-Count": { "schema": { "type": "integer" }, "description": "Total memories matching the filter" } },
-            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Memory" } } } }
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryListPage" } } }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
       "post": {
         "summary": "Remember: store a memory (embedded automatically)",
+        "parameters": [
+          { "name": "include_embedding", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Return the full record instead of the compact view" }
+        ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewMemory" } } } },
         "responses": {
-          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Memory" } } } },
-          "400": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "201": { "description": "Created memory (compact unless include_embedding)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryOrCompact" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/v1/memories/{id}": {
       "delete": {
         "summary": "Forget a memory",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "maxLength": 256 } }],
         "responses": {
           "204": { "description": "Deleted" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       },
       "patch": {
         "summary": "Update a memory in place (text is re-embedded automatically)",
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "maxLength": 256 } },
+          { "name": "include_embedding", "in": "query", "schema": { "type": "boolean", "default": false } }
+        ],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryUpdate" } } }
         },
         "responses": {
-          "200": { "description": "Updated memory", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Memory" } } } },
-          "400": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "200": { "description": "Updated memory (compact unless include_embedding)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemoryOrCompact" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/v1/recall": {
       "post": {
-        "summary": "Hybrid recall with score breakdowns",
+        "summary": "Hybrid recall with score breakdowns (compact hits by default)",
         "description": "total = w_k*norm_bm25 + w_v*cosine + w_r*exp(-days/tau) + pinned_boost",
+        "parameters": [
+          { "name": "include_embedding", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Return full Memory records in each hit" }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -110,8 +140,8 @@
                 "type": "object",
                 "required": ["namespace", "query"],
                 "properties": {
-                  "namespace": { "type": "string" },
-                  "query": { "type": "string", "minLength": 1 },
+                  "namespace": { "type": "string", "maxLength": 200 },
+                  "query": { "type": "string", "minLength": 1, "maxLength": 10000 },
                   "k": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
                   "tau_days": { "type": ["number", "null"], "exclusiveMinimum": 0, "default": 30, "description": "null disables the recency term" },
                   "weights": {
@@ -125,7 +155,8 @@
                   "pinned_boost": { "type": "number", "default": 0.2 },
                   "tags": {
                     "type": "array",
-                    "items": { "type": "string" },
+                    "items": { "type": "string", "maxLength": 100 },
+                    "maxItems": 100,
                     "default": [],
                     "description": "Only return memories carrying ALL of these tags (exact match)"
                   }
@@ -137,27 +168,36 @@
         "responses": {
           "200": {
             "description": "Ranked hits, each with its score breakdown",
-            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecallHit" } } } }
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecallHitOrFull" } } } }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/v1/stats": {
       "get": {
-        "summary": "Store statistics",
+        "summary": "Store statistics plus embedder identity",
         "responses": {
-          "200": { "description": "Counts", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Stats" } } } },
-          "401": { "$ref": "#/components/responses/Error" }
+          "200": { "description": "Counts and embedder fingerprint", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Stats" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/v1/capture": {
       "post": {
-        "summary": "Capture an agent transcript as memories (auto-chunked)",
-        "description": "Auto-capture hook scaffold (D-018): each transcript message is split into deterministic chunks (paragraph, then sentence, then hard-wrap boundaries) and stored as memories with source=capture. The namespace is created if missing. Roles become role:<role> tags.",
+        "summary": "Capture an agent transcript as memories (auto-chunked; compact summary by default)",
+        "description": "Auto-capture hook scaffold (D-018): each transcript message is split into deterministic chunks (paragraph, then sentence, then hard-wrap boundaries) and stored as memories with source=capture. The namespace is created if missing. Roles become role:<role> tags. Capture is atomic: a failure stores nothing.",
+        "parameters": [
+          { "name": "include_memories", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "Include every captured record instead of the summary" },
+          { "name": "include_embedding", "in": "query", "schema": { "type": "boolean", "default": false }, "description": "With include_memories, return full records" }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -166,9 +206,11 @@
                 "type": "object",
                 "required": ["namespace", "transcript"],
                 "properties": {
-                  "namespace": { "type": "string", "minLength": 1 },
+                  "namespace": { "type": "string", "minLength": 1, "maxLength": 200 },
                   "transcript": {
                     "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1000,
                     "items": {
                       "type": "object",
                       "required": ["content"],
@@ -179,7 +221,7 @@
                       }
                     }
                   },
-                  "tags": { "type": "array", "items": { "type": "string" }, "default": [], "description": "applied to every captured chunk" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 100, "default": [], "description": "applied to every captured chunk" },
                   "max_chunk_chars": { "type": "integer", "minimum": 100, "maximum": 8000, "default": 1000 }
                 }
               }
@@ -188,15 +230,13 @@
         },
         "responses": {
           "201": {
-            "description": "Captured memories",
-            "content": { "application/json": { "schema": { "type": "object", "required": ["namespace", "captured", "memories"], "properties": {
-              "namespace": { "type": "string" },
-              "captured": { "type": "integer" },
-              "memories": { "type": "array", "items": { "$ref": "#/components/schemas/Memory" } }
-            } } } }
+            "description": "Compact capture summary (or the full records with the query flags)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CaptureSummary" } } }
           },
-          "400": { "$ref": "#/components/responses/Error" },
-          "401": { "$ref": "#/components/responses/Error" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
@@ -207,30 +247,76 @@
         "description": "Request counters and latencies, embedding timings, store gauges. Requires the API key when one is configured.",
         "responses": {
           "200": { "description": "Metrics in text/plain; version=0.0.4" },
-          "401": { "$ref": "#/components/responses/Error" }
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
     "/mcp": {
       "post": {
         "summary": "MCP streamable-HTTP transport",
-        "description": "JSON-RPC endpoint exposing tools remember, recall, update_memory, forget, list_memories (MCP spec 2026-07-28, stateless mode). Same API-key requirement as /v1/*.",
-        "responses": { "200": { "description": "JSON-RPC response" } }
+        "description": "JSON-RPC endpoint built for the MCP 2026-07-28 spec (stateless per-request metadata, `server/discover`, `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` headers). Answers a legacy `initialize` with 2025-11-25 (D-004). Six tools: remember, recall, forget, update_memory, list_memories, capture. Same API-key requirement as /v1/*.",
+        "responses": {
+          "200": { "description": "JSON-RPC response" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
       }
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Authorization: Bearer <RECALL_MCP_API_KEY>" },
+      "apiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key", "description": "Alternative to the bearer header" }
+    },
     "responses": {
       "Error": {
         "description": "Error",
-        "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" } } } } }
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "BadRequest": {
+        "description": "Malformed JSON, invalid parameters, or a validation failure",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "headers": { "WWW-Authenticate": { "schema": { "type": "string" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "NotFound": {
+        "description": "Unknown namespace or memory",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "Conflict": {
+        "description": "Duplicate namespace",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "PayloadTooLarge": {
+        "description": "Request body exceeds the configured body limit",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "UnsupportedMediaType": {
+        "description": "Missing or non-JSON Content-Type",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
       },
       "RateLimited": {
         "description": "Rate limit exceeded; includes a Retry-After header in seconds",
-        "content": { "application/json": { "schema": { "type": "object", "properties": { "error": { "type": "string" } } } } }
+        "headers": { "Retry-After": { "schema": { "type": "integer" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
+      },
+      "MethodNotAllowed": {
+        "description": "HTTP method not supported for this path",
+        "headers": { "Allow": { "schema": { "type": "string" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } }
       }
     },
     "schemas": {
+      "ErrorBody": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      },
       "Namespace": {
         "type": "object",
         "required": ["id", "name", "created_at"],
@@ -238,6 +324,17 @@
           "id": { "type": "string" },
           "name": { "type": "string" },
           "created_at": { "type": "integer", "description": "unix seconds" }
+        }
+      },
+      "CompactMemory": {
+        "type": "object",
+        "required": ["id", "text", "source", "created_at"],
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Omitted when empty" },
+          "source": { "type": "string" },
+          "created_at": { "type": "integer" }
         }
       },
       "Memory": {
@@ -255,27 +352,33 @@
           "last_accessed_at": { "type": "integer" }
         }
       },
+      "MemoryOrCompact": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/CompactMemory" },
+          { "$ref": "#/components/schemas/Memory" }
+        ]
+      },
       "NewMemory": {
         "type": "object",
         "required": ["namespace", "text"],
         "properties": {
-          "namespace": { "type": "string" },
-          "text": { "type": "string", "minLength": 1 },
-          "tags": { "type": "array", "items": { "type": "string" }, "default": [] },
-          "source": { "type": ["string", "null"], "default": "agent" },
+          "namespace": { "type": "string", "maxLength": 200 },
+          "text": { "type": "string", "minLength": 1, "maxLength": 100000 },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 100 }, "maxItems": 100, "default": [] },
+          "source": { "type": ["string", "null"], "maxLength": 100, "default": "agent" },
           "pinned": { "type": "boolean", "default": false },
           "created_at": { "type": ["integer", "null"] },
-          "id": { "type": ["string", "null"] },
-          "embedding": { "type": ["array", "null"], "items": { "type": "number" } }
+          "id": { "type": ["string", "null"], "maxLength": 256 },
+          "embedding": { "type": ["array", "null"], "items": { "type": "number" }, "maxItems": 8192 }
         }
       },
       "MemoryUpdate": {
         "type": "object",
         "description": "Partial update: omitted fields stay unchanged. A changed text is re-embedded by the server.",
         "properties": {
-          "text": { "type": "string", "minLength": 1 },
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "source": { "type": "string" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 100000 },
+          "tags": { "type": "array", "items": { "type": "string", "maxLength": 100 }, "maxItems": 100 },
+          "source": { "type": "string", "maxLength": 100 },
           "pinned": { "type": "boolean" }
         }
       },
@@ -290,6 +393,16 @@
           "total": { "type": "number" }
         }
       },
+      "CompactRecallHit": {
+        "allOf": [
+          { "$ref": "#/components/schemas/CompactMemory" },
+          {
+            "type": "object",
+            "required": ["breakdown"],
+            "properties": { "breakdown": { "$ref": "#/components/schemas/ScoreBreakdown" } }
+          }
+        ]
+      },
       "RecallHit": {
         "allOf": [
           { "$ref": "#/components/schemas/Memory" },
@@ -300,9 +413,46 @@
           }
         ]
       },
+      "RecallHitOrFull": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/CompactRecallHit" },
+          { "$ref": "#/components/schemas/RecallHit" }
+        ]
+      },
+      "MemoryListPage": {
+        "type": "object",
+        "required": ["items", "total", "limit", "offset", "has_more"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryOrCompact" } },
+          "total": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "has_more": { "type": "boolean" }
+        }
+      },
+      "CaptureSummary": {
+        "type": "object",
+        "required": ["namespace", "captured"],
+        "properties": {
+          "namespace": { "type": "string" },
+          "captured": { "type": "integer" },
+          "first_id": { "type": "string" },
+          "last_id": { "type": "string" },
+          "memories": { "type": "array", "items": { "$ref": "#/components/schemas/MemoryOrCompact" }, "description": "Present only with include_memories=true" }
+        }
+      },
+      "EmbedderInfo": {
+        "type": "object",
+        "required": ["name", "dimensions", "fingerprint"],
+        "properties": {
+          "name": { "type": "string" },
+          "dimensions": { "type": "integer" },
+          "fingerprint": { "type": "string" }
+        }
+      },
       "Stats": {
         "type": "object",
-        "required": ["total_namespaces", "total_memories", "pinned_memories", "per_namespace"],
+        "required": ["total_namespaces", "total_memories", "pinned_memories", "per_namespace", "embedder"],
         "properties": {
           "total_namespaces": { "type": "integer" },
           "total_memories": { "type": "integer" },
@@ -314,7 +464,8 @@
               "required": ["namespace", "count"],
               "properties": { "namespace": { "type": "string" }, "count": { "type": "integer" } }
             }
-          }
+          },
+          "embedder": { "$ref": "#/components/schemas/EmbedderInfo" }
         }
       }
     }

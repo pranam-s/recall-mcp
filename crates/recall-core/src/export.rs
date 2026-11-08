@@ -17,11 +17,11 @@ pub struct ExportData {
 
 pub const EXPORT_VERSION: u32 = 1;
 
-/// Page size for the internal full scan. Comfortably above any v1-scale store
-/// while staying a positive `i64` through the store's `LIMIT` bind — passing
-/// `usize::MAX` would wrap to a negative value, silently relying on SQLite's
-/// "negative LIMIT = unlimited" rule.
-const EXPORT_SCAN_LIMIT: usize = 1 << 40;
+/// Page size for the internal full scan. `usize::MAX` is safe here because
+/// the store saturates the `LIMIT` bind to `i64::MAX` and SQLite never sees a
+/// wrapped negative value (which would silently mean "unlimited"); it also
+/// compiles on 32-bit targets, unlike a literal above `usize::MAX`.
+const EXPORT_SCAN_LIMIT: usize = usize::MAX;
 
 /// Snapshot every namespace and memory. Listing caps are internal-only here
 /// (see `EXPORT_SCAN_LIMIT`; larger stores are documented out of v1 scope).

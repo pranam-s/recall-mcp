@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::embed::Embedder;
 use crate::error::{RecallError, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OpenAIEmbedder {
     endpoint: String,
     api_key: String,
@@ -22,10 +22,27 @@ pub struct OpenAIEmbedder {
     client: reqwest::blocking::Client,
 }
 
+impl std::fmt::Debug for OpenAIEmbedder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the API key: a Debug of a config or embedder is exactly
+        // what ends up in a log line.
+        f.debug_struct("OpenAIEmbedder")
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &"[redacted]")
+            .field("model", &self.model)
+            .field("dims", &self.dims)
+            .finish()
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct EmbeddingRequest<'a> {
     model: &'a str,
     input: &'a str,
+    /// OpenAI text-embedding-3 models accept a reduced output dimension.
+    /// Older models reject the field, so it is emitted only when supported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +75,12 @@ impl OpenAIEmbedder {
                 "embedding dimension must be > 0".into(),
             ));
         }
+        if dims > crate::validation::MAX_EMBEDDING_DIMS {
+            return Err(RecallError::InvalidInput(format!(
+                "embedding dimension must be at most {}",
+                crate::validation::MAX_EMBEDDING_DIMS
+            )));
+        }
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -82,9 +105,16 @@ impl OpenAIEmbedder {
 
     /// Build the JSON request body sent to the API.
     pub(crate) fn request_body(&self, text: &str) -> String {
+        // text-embedding-3 is the only family that accepts `dimensions`;
+        // sending it elsewhere is a 400, so gate on the model name.
+        let dimensions = self
+            .model
+            .starts_with("text-embedding-3")
+            .then_some(self.dims);
         serde_json::to_string(&EmbeddingRequest {
             model: &self.model,
             input: text,
+            dimensions,
         })
         .unwrap_or_else(|_| "{}".to_string())
     }
@@ -123,6 +153,12 @@ impl OpenAIEmbedder {
 impl Embedder for OpenAIEmbedder {
     fn dimensions(&self) -> usize {
         self.dims
+    }
+
+    fn fingerprint(&self) -> String {
+        // API vectors depend on the endpoint model as well as the configured
+        // dimensionality, so both are part of the identity.
+        format!("openai:{}@{}", self.model, self.dims)
     }
 
     fn embedding_invertible(&self) -> bool {
@@ -183,6 +219,16 @@ mod tests {
         assert!(OpenAIEmbedder::openai("", "text-embedding-3-small", 1536).is_err());
         assert!(OpenAIEmbedder::openai("  ", "m", 1536).is_err());
         assert!(OpenAIEmbedder::new("https://x/v1/embeddings", "key", "m", 0).is_err());
+        assert!(
+            OpenAIEmbedder::new(
+                "https://x/v1/embeddings",
+                "key",
+                "m",
+                crate::validation::MAX_EMBEDDING_DIMS + 1
+            )
+            .is_err(),
+            "dimensions above the core cap must be rejected"
+        );
         let e = OpenAIEmbedder::openai("sk-test", "text-embedding-3-small", 1536).unwrap();
         assert_eq!(e.dimensions(), 1536);
         assert_eq!(e.name(), "openai");
@@ -193,8 +239,29 @@ mod tests {
         let e = OpenAIEmbedder::new("https://x", "k", "text-embedding-3-small", 1536).unwrap();
         assert_eq!(
             e.request_body("hello world"),
-            r#"{"model":"text-embedding-3-small","input":"hello world"}"#
+            r#"{"model":"text-embedding-3-small","input":"hello world","dimensions":1536}"#
         );
+        // Older models reject `dimensions`; omit it there.
+        let legacy = OpenAIEmbedder::new("https://x", "k", "text-embedding-ada-002", 1536).unwrap();
+        assert_eq!(
+            legacy.request_body("hello"),
+            r#"{"model":"text-embedding-ada-002","input":"hello"}"#
+        );
+    }
+
+    #[test]
+    fn debug_redacts_the_api_key_and_fingerprint_names_model() {
+        let e = OpenAIEmbedder::new(
+            "https://x",
+            "sk-super-secret",
+            "text-embedding-3-small",
+            512,
+        )
+        .unwrap();
+        let rendered = format!("{e:?}");
+        assert!(rendered.contains("[redacted]"), "{rendered}");
+        assert!(!rendered.contains("sk-super-secret"), "{rendered}");
+        assert_eq!(e.fingerprint(), "openai:text-embedding-3-small@512");
     }
 
     #[test]

@@ -614,3 +614,225 @@ fn cli_serve_applies_a_config_file_over_real_http() {
     let (status, _, _) = http_request(port, "GET", "/healthz", None);
     assert_eq!(status, 200, "healthz must never be rate limited");
 }
+
+/// Run any binary from this crate (`recall-cli` or the short `recall`).
+fn run_bin(bin: &str, args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(bin);
+    command.args(args);
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    let out = command.output().expect("run binary");
+    Output {
+        stdout: String::from_utf8(out.stdout).expect("utf8 stdout"),
+        status: out.status,
+    }
+}
+
+#[test]
+fn short_recall_alias_and_environment_fallbacks_work() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("alias.db");
+    // The short binary exists and shares the same implementation.
+    let version = run_bin(env!("CARGO_BIN_EXE_recall"), &["--version"], &[]);
+    assert!(version.status.success());
+    assert!(version.stdout.contains("recall"));
+
+    // RECALL_MCP_DB selects the database; RECALL_MCP_NAMESPACE fills the
+    // namespace when the flag is absent.
+    let stored = run_bin(
+        env!("CARGO_BIN_EXE_recall"),
+        &["remember", "--text", "env fallbacks work"],
+        &[
+            ("RECALL_MCP_DB", db.to_str().unwrap()),
+            ("RECALL_MCP_NAMESPACE", "env-ns"),
+        ],
+    );
+    assert!(stored.status.success(), "{}", stored.stdout);
+    let memory: Value = serde_json::from_str(&stored.stdout).unwrap();
+    assert_eq!(memory["source"], "cli");
+    // Compact default: storage-only fields are gone.
+    assert!(memory.get("namespace_id").is_none(), "{memory}");
+    assert!(memory.get("embedding").is_none(), "{memory}");
+    assert!(memory.get("pinned").is_none(), "{memory}");
+    assert!(memory["id"].is_string());
+
+    let recalled = run_bin(
+        env!("CARGO_BIN_EXE_recall"),
+        &["recall", "--query", "env fallbacks"],
+        &[
+            ("RECALL_MCP_DB", db.to_str().unwrap()),
+            ("RECALL_MCP_NAMESPACE", "env-ns"),
+        ],
+    );
+    assert!(recalled.status.success(), "{}", recalled.stdout);
+    let hits: Value = serde_json::from_str(&recalled.stdout).unwrap();
+    assert_eq!(hits[0]["text"], "env fallbacks work");
+    assert!(hits[0]["breakdown"]["bm25"].is_number());
+}
+
+#[test]
+fn compact_text_list_stats_forget_keygen_and_capture() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("surfaces.db");
+    let db_str = db.to_str().unwrap();
+    let stored = run(
+        db_str,
+        &[
+            "remember",
+            "--namespace",
+            "surfaces",
+            "--text",
+            "deploy the payments service on friday",
+        ],
+    );
+    assert!(stored.status.success(), "{}", stored.stdout);
+    let memory: Value = serde_json::from_str(&stored.stdout).unwrap();
+    let id = memory["id"].as_str().unwrap().to_string();
+
+    // Text output preserves ranking and the breakdown.
+    let text = run(
+        db_str,
+        &[
+            "recall",
+            "--namespace",
+            "surfaces",
+            "--query",
+            "payments friday",
+            "--format",
+            "text",
+        ],
+    );
+    assert!(text.status.success(), "{}", text.stdout);
+    assert!(text.stdout.contains("1. ["));
+    assert!(text.stdout.contains("bm25="));
+    assert!(text.stdout.contains("deploy the payments service"));
+
+    // List returns a compact page.
+    let listed = run(db_str, &["list", "--namespace", "surfaces", "--limit", "5"]);
+    assert!(listed.status.success(), "{}", listed.stdout);
+    let page: Value = serde_json::from_str(&listed.stdout).unwrap();
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["limit"], 5);
+    assert_eq!(page["has_more"], false);
+    assert_eq!(page["items"][0]["id"], id.as_str());
+
+    // Stats includes embedder identity.
+    let stats = run(db_str, &["stats"]);
+    assert!(stats.status.success(), "{}", stats.stdout);
+    let stats: Value = serde_json::from_str(&stats.stdout).unwrap();
+    assert_eq!(stats["total_memories"], 1);
+    assert_eq!(stats["embedder"]["name"], "hash-256");
+    assert_eq!(stats["embedder"]["dimensions"], 256);
+    assert!(
+        stats["embedder"]["fingerprint"]
+            .as_str()
+            .unwrap()
+            .contains("hash-256")
+    );
+
+    // Capture writes a summary and the chunks are recallable.
+    let transcript = dir.path().join("transcript.json");
+    std::fs::write(
+        &transcript,
+        serde_json::to_string(&serde_json::json!([
+            {"role": "user", "content": "we chose one SQLite file over a vector database"},
+            {"role": "assistant", "content": "rationale: local-first and boring on purpose"}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+    let captured = run(
+        db_str,
+        &[
+            "capture",
+            "--namespace",
+            "session-cli",
+            "--file",
+            transcript.to_str().unwrap(),
+            "--tags",
+            "session:cli",
+        ],
+    );
+    assert!(captured.status.success(), "{}", captured.stdout);
+    let summary: Value = serde_json::from_str(&captured.stdout).unwrap();
+    assert_eq!(summary["namespace"], "session-cli");
+    assert!(summary["captured"].as_u64().unwrap() >= 2);
+    assert!(summary["first_id"].is_string());
+    assert!(
+        summary["memories"].is_null(),
+        "summary must not echo chunks"
+    );
+
+    // Forget existing -> success; unknown -> non-zero exit.
+    let forgotten = run(db_str, &["forget", "--id", &id]);
+    assert!(forgotten.status.success(), "{}", forgotten.stdout);
+    let again = run(db_str, &["forget", "--id", &id]);
+    assert!(!again.status.success(), "unknown id must fail the command");
+}
+
+#[test]
+fn keygen_writes_owner_only_key_and_refuses_overwrite() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let key_path = dir.path().join("recall.key");
+    let out = run(
+        dir.path().join("unused.db").to_str().unwrap(),
+        &["keygen", "--out", key_path.to_str().unwrap()],
+    );
+    assert!(out.status.success(), "{}", out.stdout);
+    let key = std::fs::read_to_string(&key_path).unwrap();
+    assert_eq!(key.trim().len(), 64, "64 hex characters");
+    assert!(key.trim().chars().all(|c| c.is_ascii_hexdigit()));
+    // The key file actually opens a keyed store.
+    let db = dir.path().join("keyed.db");
+    let stored = Command::new(env!("CARGO_BIN_EXE_recall-cli"))
+        .env("RECALL_MCP_KEY_FILE", &key_path)
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "remember",
+            "--namespace",
+            "k",
+            "--text",
+            "sealed",
+        ])
+        .output()
+        .expect("run with key");
+    assert!(
+        stored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    let bytes = std::fs::read(&db).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("sealed"));
+    // Refuses to overwrite an existing key file.
+    let again = run(
+        dir.path().join("unused.db").to_str().unwrap(),
+        &["keygen", "--out", key_path.to_str().unwrap()],
+    );
+    assert!(!again.status.success(), "must not overwrite a key");
+}
+
+#[test]
+fn full_and_show_embedding_restore_the_old_record_shape() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("full.db");
+    let db_str = db.to_str().unwrap();
+    let out = run(
+        db_str,
+        &[
+            "remember",
+            "--namespace",
+            "full",
+            "--text",
+            "full record please",
+            "--full",
+            "--show-embedding",
+        ],
+    );
+    assert!(out.status.success(), "{}", out.stdout);
+    let memory: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert!(memory["namespace_id"].is_string());
+    assert_eq!(memory["pinned"], false);
+    assert_eq!(memory["embedding"].as_array().unwrap().len(), 256);
+}

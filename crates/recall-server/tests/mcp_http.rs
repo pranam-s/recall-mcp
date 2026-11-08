@@ -79,6 +79,193 @@ fn tool_text(result: &Value) -> Value {
     serde_json::from_str(text).expect("tool output must be valid JSON")
 }
 
+/// 2026-07-28 per-request metadata (SEP-2575): every non-initialize request
+/// carries the protocol version and client capabilities in `_meta`.
+fn draft_meta() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+    })
+}
+
+async fn rpc_stateless(app: &axum::Router, payload: Value) -> (axum::http::StatusCode, Value) {
+    let method = payload["method"].as_str().expect("method").to_string();
+    let mut builder = Request::post("/mcp")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("host", "localhost")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", method.clone());
+    if method == "tools/call" {
+        builder = builder.header(
+            "mcp-name",
+            payload["params"]["name"].as_str().expect("tool name"),
+        );
+    }
+    let res = app
+        .clone()
+        .oneshot(builder.body(Body::from(payload.to_string())).unwrap())
+        .await
+        .expect("response");
+    let status = res.status();
+    let bytes = res.into_body().collect().await.expect("body").to_bytes();
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes)
+            .unwrap_or(Value::String(String::from_utf8_lossy(&bytes).to_string()))
+    };
+    (status, value)
+}
+
+#[tokio::test]
+async fn compact_and_text_responses_stay_smaller_than_full_records() {
+    let app = app_with(None);
+    let remember = |id: u64, extra: Value| {
+        let mut args = json!({
+            "namespace": "budget",
+            "text": "deploy the payments service on friday",
+        });
+        if let Some(object) = extra.as_object() {
+            for (k, v) in object {
+                args[k] = v.clone();
+            }
+        }
+        tool_call(id, "remember", args)
+    };
+    let (_, body) = rpc(&app, remember(1, json!({}))).await;
+    let compact = unwrap_result(&body).to_string();
+    let (_, body) = rpc(&app, remember(2, json!({"include_embedding": true}))).await;
+    let full = unwrap_result(&body).to_string();
+    eprintln!("remember compact={} full={}", compact.len(), full.len());
+    assert!(
+        full.len() > compact.len() * 3,
+        "full record should be much larger (embedding vector)"
+    );
+
+    let recall = |id: u64, extra: Value| {
+        let mut args = json!({"namespace": "budget", "query": "payments friday"});
+        if let Some(object) = extra.as_object() {
+            for (k, v) in object {
+                args[k] = v.clone();
+            }
+        }
+        tool_call(id, "recall", args)
+    };
+    let (_, body) = rpc(&app, recall(3, json!({}))).await;
+    let compact_hits = unwrap_result(&body).to_string();
+    let (_, body) = rpc(&app, recall(4, json!({"include_embedding": true}))).await;
+    let full_hits = unwrap_result(&body).to_string();
+    let (_, body) = rpc(&app, recall(5, json!({"format": "text"}))).await;
+    let text = unwrap_result(&body)["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    eprintln!(
+        "recall compact={} full={} text={}",
+        compact_hits.len(),
+        full_hits.len(),
+        text.len()
+    );
+    assert!(full_hits.len() > compact_hits.len() * 3);
+    assert!(text.len() < compact_hits.len());
+    assert!(
+        text.len() < 700,
+        "text hit must stay compact: {}",
+        text.len()
+    );
+    assert!(
+        compact_hits.len() < 900,
+        "one compact hit must stay under 900 bytes: {}",
+        compact_hits.len()
+    );
+}
+
+#[tokio::test]
+async fn tools_list_stays_within_the_token_budget() {
+    let app = app_with(None);
+    let list = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": { "_meta": draft_meta() }
+    });
+    let (status, body) = rpc_stateless(&app, list).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    let bytes = body.to_string().len();
+    eprintln!("tools/list bytes: {bytes}");
+    assert!(
+        bytes <= 4600,
+        "tools/list must stay <= 4600 bytes for context efficiency, got {bytes}:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn stateless_2026_07_28_discover_list_and_call_over_http() {
+    // No initialize handshake: the 2026-07-28 revision replaced it with
+    // per-request metadata, so discover -> list -> call each stand alone.
+    let app = app_with(None);
+
+    let discover = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "server/discover",
+        "params": { "_meta": draft_meta() }
+    });
+    let (status, body) = rpc_stateless(&app, discover).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    let result = unwrap_result(&body);
+    assert!(
+        result["supportedVersions"]
+            .as_array()
+            .is_some_and(|versions| versions.iter().any(|v| v == "2026-07-28")),
+        "discover must advertise 2026-07-28: {result}"
+    );
+
+    let list = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": { "_meta": draft_meta() }
+    });
+    let (status, body) = rpc_stateless(&app, list).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    let names: Vec<&str> = unwrap_result(&body)["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "remember",
+        "recall",
+        "forget",
+        "update_memory",
+        "list_memories",
+        "capture",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "missing tool {expected}: {names:?}"
+        );
+    }
+
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "remember",
+            "arguments": {"namespace": "stateless", "text": "per-request metadata works"},
+            "_meta": draft_meta()
+        }
+    });
+    let (status, body) = rpc_stateless(&app, call).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+    let remembered = tool_text(unwrap_result(&body));
+    assert_eq!(remembered["text"], "per-request metadata works");
+}
+
 #[tokio::test]
 async fn conformance_initialize_tools_list_call_over_http() {
     let app = app_with(None);
@@ -206,7 +393,8 @@ async fn conformance_initialize_tools_list_call_over_http() {
     )
     .await;
     let memories = tool_text(unwrap_result(&body));
-    assert_eq!(memories.as_array().unwrap().len(), 1);
+    assert_eq!(memories["items"].as_array().unwrap().len(), 1);
+    assert_eq!(memories["total"], 1);
 
     // 6) tools/call forget -> deleted: true, then list is empty.
     let (_, body) = rpc(&app, tool_call(6, "forget", json!({"id": memory_id}))).await;
@@ -218,7 +406,13 @@ async fn conformance_initialize_tools_list_call_over_http() {
         tool_call(7, "list_memories", json!({"namespace": "conformance"})),
     )
     .await;
-    assert_eq!(tool_text(unwrap_result(&body)).as_array().unwrap().len(), 0);
+    assert_eq!(
+        tool_text(unwrap_result(&body))["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
 
     // 6b) tools/call capture -> transcript auto-chunked into capture memories
     // (runs after the forget steps so their exact-count assertions stay intact).
@@ -234,7 +428,8 @@ async fn conformance_initialize_tools_list_call_over_http() {
                     {"role": "user", "content": "please summarize the storage decision", "at": 1_786_000_500},
                     {"role": "assistant", "content": long}
                 ],
-                "tags": ["session:storage"]
+                "tags": ["session:storage"],
+                "include_memories": true
             }),
         ),
     )

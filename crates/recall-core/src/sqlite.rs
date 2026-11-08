@@ -8,11 +8,13 @@
 //! Legacy plaintext databases are upgraded in place on the first keyed open.
 
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::crypto::{StoreKey, key_check_context, text_context};
+use crate::embed::{Embedder, EmbedderMeta, EmbedderStatus};
 use crate::error::{RecallError, Result};
 use crate::models::{
     Memory, MemoryUpdate, Namespace, NamespaceCount, NewMemory, RecallHit, RecallParams, Stats,
@@ -20,6 +22,10 @@ use crate::models::{
 use crate::scorer::{HybridScorer, RawScore};
 use crate::store::Store;
 use crate::util::{blob_to_f32, f32_to_blob, tokenize};
+use crate::validation::{
+    validate_embedding, validate_id, validate_namespace, validate_query, validate_source,
+    validate_tags, validate_text,
+};
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -149,16 +155,18 @@ impl PartialEq for VectorCandidate {
 }
 impl Eq for VectorCandidate {}
 
+/// Comparator note: the final ranking is total desc, created_at desc,
+/// rowid asc (D-016's deterministic tie-break). This `Ord` is the inversion
+/// for a max-heap: the WORST candidate compares greatest, so a capped heap
+/// evicts the weakest survivor in O(log k).
 impl Ord for VectorCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // The final ranking comparator (total desc, created_at desc),
-        // inverted: the WORST candidate compares greatest, so a capped
-        // max-heap evicts the weakest survivor in O(log k).
         other
             .vector_only_total
             .partial_cmp(&self.vector_only_total)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| other.created_at.cmp(&self.created_at))
+            .then_with(|| self.rowid.cmp(&other.rowid))
     }
 }
 
@@ -183,6 +191,11 @@ impl PartialOrd for VectorCandidate {
 /// dimension, so a mismatched stored vector is "no signal", as before).
 struct PackedNamespace {
     namespace_id: String,
+    /// `PRAGMA data_version` observed when the cache was filled. SQLite bumps
+    /// this when another connection commits, so cross-process writes cannot
+    /// leave a stale cache serving old vectors (D-007: the store is
+    /// `Send`-only but a database file can be opened by several processes).
+    data_version: i64,
     /// Query-dimension the cache was packed for; rows whose stored BLOB does
     /// not have exactly this shape are treated as vector-less.
     dim: usize,
@@ -240,6 +253,7 @@ impl PackedNamespace {
         }
         Ok(Self {
             namespace_id: namespace_id.to_string(),
+            data_version: data_version(conn)?,
             dim,
             data,
             has_vector,
@@ -274,6 +288,7 @@ fn packed_vectors_for<'a>(
         Some(cached) => {
             cached.namespace_id == namespace_id
                 && cached.dim == dim
+                && cached.data_version == data_version(conn)?
                 && (cached.complete || cached.len() >= scan_cap)
         }
         None => false,
@@ -282,6 +297,34 @@ fn packed_vectors_for<'a>(
         *slot = Some(PackedNamespace::load(conn, namespace_id, dim, scan_cap)?);
     }
     Ok(slot.as_ref().expect("cache was just filled or reused"))
+}
+
+/// Current `PRAGMA data_version` for cross-connection cache validation.
+/// SQLite documents the value as connection-local and bumped when another
+/// connection commits, which is exactly the staleness signal the packed
+/// vector cache needs.
+fn data_version(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("PRAGMA data_version", [], |r| r.get(0))?)
+}
+
+/// Current on-disk schema version. Version 2 is the encryption-capable layout
+/// (`fts_tokens` column); version 1 is the legacy plaintext layout.
+const SCHEMA_VERSION: i64 = 2;
+
+fn check_schema_version(conn: &Connection) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version > SCHEMA_VERSION {
+        return Err(RecallError::InvalidInput(format!(
+            "database schema version {version} is newer than this build supports \
+             ({SCHEMA_VERSION}); upgrade Recall-MCP instead of downgrading"
+        )));
+    }
+    Ok(())
+}
+
+fn stamp_schema_version(conn: &Connection) -> Result<()> {
+    conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
+    Ok(())
 }
 
 pub struct SqliteStore {
@@ -298,8 +341,15 @@ pub struct SqliteStore {
 /// Metadata keys in `store_meta`.
 const META_AT_REST: &str = "at_rest";
 const META_KEY_CHECK: &str = "key_check";
+const META_FORENSIC_CLEAN: &str = "forensic_clean";
 const AT_REST_PLAIN: &str = "plain";
 const AT_REST_ENC: &str = "enc_v1";
+const FORENSIC_PENDING: &str = "pending";
+const FORENSIC_DONE: &str = "done";
+/// Embedder identity keys (`store_meta`).
+const META_EMBEDDER_FINGERPRINT: &str = "embedder_fingerprint";
+const META_EMBEDDER_NAME: &str = "embedder_name";
+const META_EMBEDDER_DIMS: &str = "embedder_dims";
 /// Known plaintext encrypted as the key check: a wrong key fails at open.
 const KEY_CHECK_PLAINTEXT: &str = "recall-mcp key check v1";
 
@@ -380,7 +430,9 @@ impl SqliteStore {
     /// In-memory database, mainly for tests and ephemeral tools (plaintext).
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(Duration::from_millis(5_000))?;
         conn.execute_batch(SCHEMA)?;
+        stamp_schema_version(&conn)?;
         Ok(Self {
             conn,
             key: None,
@@ -391,23 +443,34 @@ impl SqliteStore {
     /// In-memory encrypted database (tests).
     pub fn open_in_memory_with_key(key: &StoreKey) -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(Duration::from_millis(5_000))?;
         conn.execute_batch(SCHEMA)?;
+        stamp_schema_version(&conn)?;
         let store = Self {
             conn,
             key: Some(key.clone()),
             vector_cache: std::cell::RefCell::new(None),
         };
         store.init_mode()?;
+        store.finish_forensic_clean()?;
         Ok(store)
     }
 
     fn open_inner<P: AsRef<Path>>(path: P, key: Option<StoreKey>) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
+        // Concurrent readers/writers (a second CLI invocation, a backup tool)
+        // wait for the write lock instead of failing instantly with
+        // SQLITE_BUSY. Combined with BEGIN IMMEDIATE in `write_tx`.
+        conn.busy_timeout(Duration::from_millis(5_000))?;
+        check_schema_version(&conn)?;
+        // Detect the legacy layout BEFORE running SCHEMA: creating the current
+        // triggers over a legacy FTS table would index the wrong column.
         let needs_upgrade = legacy_schema(&conn)?;
         if needs_upgrade {
             upgrade_legacy_schema(&conn)?;
         }
+        conn.execute_batch(SCHEMA)?;
+        stamp_schema_version(&conn)?;
         let store = Self {
             conn,
             key,
@@ -427,18 +490,12 @@ impl SqliteStore {
             store.copy_plaintext_fts_tokens()?;
         }
         store.init_mode()?;
-        if store.key.is_some() && needs_upgrade {
-            // The plaintext era wrote legacy rows and (pre-upgrade) FTS
-            // content into pages that may linger after deletion. VACUUM alone
-            // is not enough: freed-page content persists without
-            // secure_delete (set above), and WAL frames from the plaintext
-            // era survive in the sidecar unless checkpointed with TRUNCATE —
-            // so the upgrade finishes with both (D-014 keeps the caveat that
-            // filesystem copies made before the upgrade remain).
-            store.conn.execute_batch("VACUUM")?;
-            store.checkpoint_wal()?;
-        }
         if keyed_conn {
+            // Any plaintext→keyed transition (legacy layout, plaintext rows,
+            // or a partly finished earlier attempt) needs the full forensic
+            // pass. `init_mode` marks it pending so an interrupted run is
+            // retried on the next keyed open.
+            store.finish_forensic_clean()?;
             store.conn.execute_batch("PRAGMA secure_delete = OFF")?;
         }
         Ok(store)
@@ -477,15 +534,28 @@ impl SqliteStore {
             // First keyed open (fresh or legacy/marked-plain): encrypt everything.
             (Some(_), _) => {
                 self.encrypt_remaining_plaintext()?;
-                self.meta_set(META_AT_REST, AT_REST_ENC)?;
-                self.meta_set(
-                    META_KEY_CHECK,
-                    &self
-                        .key
-                        .as_ref()
-                        .expect("checked above")
-                        .encrypt(&key_check_context(), KEY_CHECK_PLAINTEXT),
-                )?;
+                let key = self.key.as_ref().expect("checked above");
+                // Mode marker, key check, and the retryable forensic marker
+                // are one transaction: a crash cannot leave an encrypted store
+                // claiming to be plaintext, and an interrupted VACUUM leaves
+                // `pending` so the next open retries it.
+                self.conn.execute_batch("BEGIN IMMEDIATE")?;
+                let result = (|| -> Result<()> {
+                    self.meta_set(META_AT_REST, AT_REST_ENC)?;
+                    self.meta_set(
+                        META_KEY_CHECK,
+                        &key.encrypt(&key_check_context(), KEY_CHECK_PLAINTEXT),
+                    )?;
+                    self.meta_set(META_FORENSIC_CLEAN, FORENSIC_PENDING)?;
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => self.conn.execute_batch("COMMIT")?,
+                    Err(e) => {
+                        let _ = self.conn.execute_batch("ROLLBACK");
+                        return Err(e);
+                    }
+                }
             }
             (None, _) => {
                 if marker.is_none() {
@@ -547,6 +617,7 @@ impl SqliteStore {
                 META_KEY_CHECK,
                 &key.encrypt(&key_check_context(), KEY_CHECK_PLAINTEXT),
             )?;
+            self.meta_set(META_FORENSIC_CLEAN, FORENSIC_PENDING)?;
             Ok(())
         })();
         match result {
@@ -556,12 +627,42 @@ impl SqliteStore {
                 return Err(e);
             }
         }
-        self.conn.execute_batch("VACUUM")?;
-        self.checkpoint_wal()?;
+        self.finish_forensic_clean()?;
         debug!(
             count = rows.len(),
             "migrated store to separated key derivation"
         );
+        Ok(())
+    }
+
+    /// Complete (or retry) the forensic pass that follows every plaintext to
+    /// keyed transition. `VACUUM` rewrites the file without free pages and
+    /// `wal_checkpoint(TRUNCATE)` drops plaintext-era WAL frames; the marker
+    /// stays `pending` until both succeed, so a crash mid-clean is retried on
+    /// the next keyed open. With `secure_delete` enabled by the caller, the
+    /// rewrite cannot leave recoverable plaintext in freed pages.
+    fn finish_forensic_clean(&self) -> Result<()> {
+        if self.meta_get(META_FORENSIC_CLEAN)?.as_deref() != Some(FORENSIC_PENDING) {
+            return Ok(());
+        }
+        self.conn.execute_batch("VACUUM")?;
+        // Verify the checkpoint actually drained the WAL before declaring
+        // success; a busy reader can leave frames behind.
+        let (busy, log, checkpointed): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+        if busy != 0 || checkpointed < log {
+            warn!(
+                busy,
+                log_frames = log,
+                checkpointed,
+                "forensic WAL checkpoint incomplete; marker stays pending and will retry"
+            );
+            return Ok(());
+        }
+        self.meta_set(META_FORENSIC_CLEAN, FORENSIC_DONE)?;
         Ok(())
     }
 
@@ -664,6 +765,41 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Dimensions of the first stored embedding, if any vector exists.
+    fn first_embedding_dimensions(&self) -> Result<Option<usize>> {
+        let len: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT length(embedding) FROM memories
+                 WHERE embedding IS NOT NULL LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(len
+            .and_then(|bytes| usize::try_from(bytes / 4).ok())
+            .filter(|d| *d > 0))
+    }
+
+    /// Persist the embedder identity atomically.
+    fn stamp_embedder(&self, meta: &EmbedderMeta) -> Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<()> {
+            self.meta_set(META_EMBEDDER_FINGERPRINT, &meta.fingerprint)?;
+            self.meta_set(META_EMBEDDER_NAME, &meta.name)?;
+            self.meta_set(META_EMBEDDER_DIMS, &meta.dimensions.to_string())?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
     /// Storage form of memory text: ciphertext in keyed mode, plaintext
     /// otherwise; plus the FTS document (keyed digests or the text itself).
     fn stored_text(&self, id: &str, text: &str) -> (String, String) {
@@ -737,12 +873,8 @@ fn upgrade_legacy_schema(conn: &Connection) -> Result<()> {
 
 impl Store for SqliteStore {
     fn create_namespace(&self, name: &str) -> Result<Namespace> {
+        validate_namespace(name)?;
         let name = name.trim();
-        if name.is_empty() {
-            return Err(RecallError::InvalidInput(
-                "namespace name must not be empty".into(),
-            ));
-        }
         if let Some(existing) = self.find_namespace(name)? {
             return Err(RecallError::DuplicateNamespace(existing.name));
         }
@@ -797,12 +929,15 @@ impl Store for SqliteStore {
     }
 
     fn insert_memory(&self, memory: &NewMemory) -> Result<Memory> {
-        let text = memory.text.trim();
-        if text.is_empty() {
-            return Err(RecallError::InvalidInput(
-                "memory text must not be empty".into(),
-            ));
+        validate_namespace(&memory.namespace)?;
+        validate_text(&memory.text)?;
+        validate_tags(&memory.tags)?;
+        validate_source(memory.source.as_deref())?;
+        validate_embedding(memory.embedding.as_deref())?;
+        if let Some(id) = &memory.id {
+            validate_id(id)?;
         }
+        let text = memory.text.trim();
         let ns = self
             .namespace_id(&memory.namespace)?
             .ok_or_else(|| RecallError::NamespaceNotFound(memory.namespace.clone()))?;
@@ -857,6 +992,7 @@ impl Store for SqliteStore {
     }
 
     fn get_memory(&self, id: &str) -> Result<Option<Memory>> {
+        validate_id(id)?;
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {MEMORY_COLUMNS} FROM memories WHERE id = ?1"
         ))?;
@@ -868,16 +1004,20 @@ impl Store for SqliteStore {
     }
 
     fn update_memory(&self, id: &str, update: &MemoryUpdate) -> Result<Memory> {
+        validate_id(id)?;
         if update.is_empty() {
             return Err(RecallError::InvalidInput(
                 "update must set at least one field".into(),
             ));
         }
-        if update.text.as_deref().is_some_and(|t| t.trim().is_empty()) {
-            return Err(RecallError::InvalidInput(
-                "memory text must not be empty".into(),
-            ));
+        if let Some(text) = &update.text {
+            validate_text(text)?;
         }
+        if let Some(tags) = &update.tags {
+            validate_tags(tags)?;
+        }
+        validate_source(update.source.as_deref())?;
+        validate_embedding(update.embedding.as_deref())?;
         let existing = self
             .get_memory(id)?
             .ok_or_else(|| RecallError::MemoryNotFound(id.to_string()))?;
@@ -925,6 +1065,7 @@ impl Store for SqliteStore {
     }
 
     fn delete_memory(&self, id: &str) -> Result<bool> {
+        validate_id(id)?;
         let n = self
             .conn
             .execute("DELETE FROM memories WHERE id = ?1", params![id])?;
@@ -942,6 +1083,9 @@ impl Store for SqliteStore {
     ) -> Result<Vec<Memory>> {
         if limit == 0 {
             return Err(RecallError::InvalidInput("limit must be > 0".into()));
+        }
+        if let Some(name) = namespace {
+            validate_namespace(name)?;
         }
         let sql = match namespace {
             Some(_) => format!(
@@ -979,6 +1123,9 @@ impl Store for SqliteStore {
     }
 
     fn count_memories(&self, namespace: Option<&str>) -> Result<u64> {
+        if let Some(name) = namespace {
+            validate_namespace(name)?;
+        }
         let count = match namespace {
             Some(name) => {
                 let ns = self
@@ -1007,9 +1154,8 @@ impl Store for SqliteStore {
         now: i64,
     ) -> Result<Vec<RecallHit>> {
         p.validate()?;
-        if query.trim().is_empty() {
-            return Err(RecallError::InvalidInput("query must not be empty".into()));
-        }
+        validate_namespace(namespace)?;
+        validate_query(query)?;
         let ns = self
             .namespace_id(namespace)?
             .ok_or_else(|| RecallError::NamespaceNotFound(namespace.to_string()))?;
@@ -1031,7 +1177,7 @@ impl Store for SqliteStore {
                  FROM memories_fts
                  JOIN memories m ON m.rowid = memories_fts.rowid
                  WHERE memories_fts MATCH ?1 AND m.namespace_id = ?2{tag_sql}
-                 ORDER BY rank_score
+                 ORDER BY rank_score, m.rowid
                  LIMIT {}",
                 p.candidate_cap
             );
@@ -1150,6 +1296,7 @@ impl Store for SqliteStore {
                 let sql = format!(
                     "SELECT rowid, embedding, created_at, pinned FROM memories
                      WHERE namespace_id = ?1{tag_sql}
+                     ORDER BY rowid
                      LIMIT {}",
                     p.scan_cap
                 );
@@ -1179,7 +1326,7 @@ impl Store for SqliteStore {
 
         // Full rows (text, tags, source, …) for the surviving candidates only,
         // resolved back from rowids to domain ids.
-        let mut rows_by_id: std::collections::HashMap<String, Memory> =
+        let mut rows_by_id: std::collections::HashMap<String, (i64, Memory)> =
             std::collections::HashMap::new();
         let mut candidate_rowids: std::collections::HashSet<&i64> = keyword.keys().collect();
         candidate_rowids.extend(vector.keys());
@@ -1202,7 +1349,7 @@ impl Store for SqliteStore {
                 let rowid: i64 = row.get(0)?;
                 let memory = memory_row(row)?.into_memory(self.key.as_ref())?;
                 rowid_to_id.insert(rowid, memory.id.clone());
-                rows_by_id.insert(memory.id.clone(), memory);
+                rows_by_id.insert(memory.id.clone(), (rowid, memory));
             }
         }
 
@@ -1218,8 +1365,11 @@ impl Store for SqliteStore {
             .collect();
 
         // Merge candidate sets and score. Every fetched row is a candidate.
-        let mut hits: Vec<RecallHit> = Vec::new();
-        for (id, memory) in &rows_by_id {
+        // The rowid travels with the hit so the final tie-break matches the
+        // candidate heap exactly (D-016: total desc, created_at desc,
+        // rowid asc).
+        let mut hits: Vec<(i64, RecallHit)> = Vec::new();
+        for (id, (rowid, memory)) in &rows_by_id {
             let raw_bm25 = keyword_by_id.get(id.as_str()).copied().unwrap_or(0.0);
             let bm25_normalized = if max_bm25 > 0.0 {
                 raw_bm25 / max_bm25
@@ -1236,21 +1386,25 @@ impl Store for SqliteStore {
                 },
                 now,
             );
-            hits.push(RecallHit {
-                memory: memory.clone(),
-                breakdown,
-            });
+            hits.push((
+                *rowid,
+                RecallHit {
+                    memory: memory.clone(),
+                    breakdown,
+                },
+            ));
         }
 
-        hits.sort_by(|a, b| {
+        hits.sort_by(|(rowid_a, a), (rowid_b, b)| {
             b.breakdown
                 .total
                 .partial_cmp(&a.breakdown.total)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(b.memory.created_at.cmp(&a.memory.created_at))
-                .then(a.memory.id.cmp(&b.memory.id))
+                .then_with(|| b.memory.created_at.cmp(&a.memory.created_at))
+                .then_with(|| rowid_a.cmp(rowid_b))
         });
         hits.truncate(p.k);
+        let hits: Vec<RecallHit> = hits.into_iter().map(|(_, hit)| hit).collect();
 
         // `last_accessed_at` is maintained at write time only (AR-018): every
         // consumer of the column was removed with v0.2's eviction plans, so
@@ -1281,7 +1435,10 @@ impl Store for SqliteStore {
     }
 
     fn write_tx(&self, f: &mut dyn FnMut(&dyn Store) -> Result<()>) -> Result<()> {
-        self.conn.execute_batch("BEGIN")?;
+        // IMMEDIATE takes the write lock at BEGIN: two processes cannot both
+        // believe they are inside a read-then-write transaction and fail at
+        // COMMIT time. `busy_timeout` (set at open) makes the loser wait.
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
         match f(self) {
             Ok(()) => self.conn.execute_batch("COMMIT")?,
             Err(e) => {
@@ -1290,6 +1447,91 @@ impl Store for SqliteStore {
             }
         }
         Ok(())
+    }
+
+    fn check_embedder(
+        &self,
+        embedder: &dyn Embedder,
+        allow_mismatch: bool,
+    ) -> Result<EmbedderStatus> {
+        let current = EmbedderMeta {
+            fingerprint: embedder.fingerprint(),
+            name: embedder.name().to_string(),
+            dimensions: embedder.dimensions(),
+        };
+        let stored_fingerprint = self.meta_get(META_EMBEDDER_FINGERPRINT)?;
+        if let Some(stored_fingerprint) = stored_fingerprint {
+            let stored = EmbedderMeta {
+                name: self
+                    .meta_get(META_EMBEDDER_NAME)?
+                    .unwrap_or_else(|| "unknown".into()),
+                dimensions: self
+                    .meta_get(META_EMBEDDER_DIMS)?
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+                fingerprint: stored_fingerprint,
+            };
+            if stored.fingerprint == current.fingerprint {
+                return Ok(EmbedderStatus::Matched);
+            }
+            if allow_mismatch {
+                warn!(
+                    stored = %stored.fingerprint,
+                    current = %current.fingerprint,
+                    "embedder mismatch allowed: vectors from different embedders will be mixed"
+                );
+                return Ok(EmbedderStatus::MismatchAllowed { stored, current });
+            }
+            return Err(RecallError::InvalidInput(format!(
+                "embedder mismatch: this store was written with {:?} (fingerprint {:?}, {} dims) \
+                 but the current embedder is {:?} (fingerprint {:?}, {} dims); use the original \
+                 embedder, or pass --allow-embedder-mismatch / set \
+                 RECALL_MCP_ALLOW_EMBEDDER_MISMATCH=1 to mix vector spaces knowingly",
+                stored.name,
+                stored.fingerprint,
+                stored.dimensions,
+                current.name,
+                current.fingerprint,
+                current.dimensions
+            )));
+        }
+
+        // No identity yet: a fresh store is stamped; a legacy store is
+        // adopted only when its stored vector dimensions agree (or it has no
+        // vectors at all).
+        if self.count_memories(None)? == 0 {
+            self.stamp_embedder(&current)?;
+            return Ok(EmbedderStatus::Stamped);
+        }
+        let stored_dimensions = self.first_embedding_dimensions()?;
+        if let Some(stored_dims) = stored_dimensions
+            && stored_dims != current.dimensions
+        {
+            if allow_mismatch {
+                warn!(
+                    stored_dimensions = stored_dims,
+                    current_dimensions = current.dimensions,
+                    "legacy store dimension mismatch allowed by operator"
+                );
+                return Ok(EmbedderStatus::MismatchAllowed {
+                    stored: EmbedderMeta {
+                        fingerprint: format!("legacy@{stored_dims}"),
+                        name: "legacy".into(),
+                        dimensions: stored_dims,
+                    },
+                    current,
+                });
+            }
+            return Err(RecallError::InvalidInput(format!(
+                "embedder dimension mismatch: this legacy store holds {stored_dims}-dimensional \
+                 vectors but the current embedder {:?} produces {} dims; use the original \
+                 embedder, or pass --allow-embedder-mismatch / set \
+                 RECALL_MCP_ALLOW_EMBEDDER_MISMATCH=1 to override",
+                current.name, current.dimensions
+            )));
+        }
+        self.stamp_embedder(&current)?;
+        Ok(EmbedderStatus::AdoptedLegacy { stored_dimensions })
     }
 
     fn stats(&self) -> Result<Stats> {
@@ -1337,7 +1579,6 @@ fn new_id() -> String {
 mod tests {
     use super::*;
     use crate::crypto::ENC_PREFIX;
-    use crate::embed::Embedder as _;
     use crate::embed::HashEmbedder;
     use crate::models::Weights;
 
@@ -2830,6 +3071,348 @@ mod tests {
         let redim = packed_vectors_for(&mut slot, &s.conn, &ns_id, 384, 10).unwrap();
         assert_eq!(redim.dim, 384);
         assert!(redim.has_vector.iter().all(|v| !*v));
+    }
+
+    // ---- Cross-connection cache safety ----
+
+    #[test]
+    fn packed_cache_rebuilds_after_another_connection_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shared.db");
+        let e = HashEmbedder::new_256();
+        {
+            let a = SqliteStore::open(&path).unwrap();
+            a.create_namespace("w").unwrap();
+            a.insert_memory(&NewMemory {
+                created_at: Some(1),
+                embedding: Some(e.embed("alpha rooster")),
+                ..mem("w", "alpha rooster")
+            })
+            .unwrap();
+            let q = e.embed("alpha rooster");
+            let p = RecallParams::default();
+            let first = a.recall("w", "alpha rooster", Some(&q), &p, 10).unwrap();
+            assert_eq!(first.len(), 1, "cache is warm after the first recall");
+            // A second connection writes while A holds a warm cache.
+            let b = SqliteStore::open(&path).unwrap();
+            b.insert_memory(&NewMemory {
+                created_at: Some(2),
+                embedding: Some(e.embed("alpha rooster")),
+                ..mem("w", "alpha rooster")
+            })
+            .unwrap();
+            // A must notice data_version changed and rebuild: the newer row
+            // now wins the created_at tie-break.
+            let after = a.recall("w", "alpha rooster", Some(&q), &p, 10).unwrap();
+            assert_eq!(after.len(), 2, "stale cache would still show one row");
+            assert_eq!(after[0].memory.created_at, 2);
+        }
+    }
+
+    // ---- Embedder guard ----
+
+    struct NamedEmbedder {
+        name: &'static str,
+        dim: usize,
+    }
+    impl crate::embed::Embedder for NamedEmbedder {
+        fn dimensions(&self) -> usize {
+            self.dim
+        }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn embed(&self, _text: &str) -> Vec<f32> {
+            vec![0.0; self.dim]
+        }
+    }
+
+    #[test]
+    fn embedder_guard_stamps_fresh_stores_and_matches_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("guard.db");
+        let hash = HashEmbedder::new_256();
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            assert_eq!(
+                s.check_embedder(&hash, false).unwrap(),
+                EmbedderStatus::Stamped
+            );
+            assert_eq!(
+                s.meta_get(META_EMBEDDER_FINGERPRINT).unwrap().as_deref(),
+                Some("hash-256@256")
+            );
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            s.check_embedder(&hash, false).unwrap(),
+            EmbedderStatus::Matched
+        );
+    }
+
+    #[test]
+    fn embedder_guard_adopts_legacy_stores_with_matching_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-guard.db");
+        let hash = HashEmbedder::new_256();
+        {
+            // A store written before the guard existed: rows but no meta.
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&NewMemory {
+                embedding: Some(hash.embed("legacy")),
+                ..mem("w", "legacy")
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        assert_eq!(
+            s.check_embedder(&hash, false).unwrap(),
+            EmbedderStatus::AdoptedLegacy {
+                stored_dimensions: Some(256)
+            }
+        );
+        assert!(s.meta_get(META_EMBEDDER_FINGERPRINT).unwrap().is_some());
+    }
+
+    #[test]
+    fn embedder_guard_rejects_dimension_and_fingerprint_mismatches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mismatch.db");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&NewMemory {
+                embedding: Some(HashEmbedder::new_256().embed("first")),
+                ..mem("w", "first")
+            })
+            .unwrap();
+            s.check_embedder(&HashEmbedder::new_256(), false).unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let err = s
+            .check_embedder(&HashEmbedder::new(64).unwrap(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("256") && err.contains("64"),
+            "names both: {err}"
+        );
+        // Same dimensions, different identity: still a mismatch.
+        let other = NamedEmbedder {
+            name: "other-embedder",
+            dim: 256,
+        };
+        let err = s.check_embedder(&other, false).unwrap_err().to_string();
+        assert!(
+            err.contains("hash-256") && err.contains("other-embedder"),
+            "names both sides: {err}"
+        );
+        // Escape hatch reports instead of failing and never rewrites.
+        let allowed = s.check_embedder(&other, true).unwrap();
+        assert!(matches!(allowed, EmbedderStatus::MismatchAllowed { .. }));
+        assert_eq!(
+            s.meta_get(META_EMBEDDER_FINGERPRINT).unwrap().as_deref(),
+            Some("hash-256@256"),
+            "the stored fingerprint must survive an allowed mismatch"
+        );
+    }
+
+    #[test]
+    fn legacy_store_dimension_mismatch_fails_with_both_sides_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-dims.db");
+        {
+            let s = SqliteStore::open(&path).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&NewMemory {
+                embedding: Some(HashEmbedder::new(256).unwrap().embed("x")),
+                ..mem("w", "x")
+            })
+            .unwrap();
+        }
+        let s = SqliteStore::open(&path).unwrap();
+        let err = s
+            .check_embedder(&HashEmbedder::new(384).unwrap(), false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("256") && err.contains("384"), "{err}");
+        assert!(matches!(
+            s.check_embedder(&HashEmbedder::new(384).unwrap(), true)
+                .unwrap(),
+            EmbedderStatus::MismatchAllowed { .. }
+        ));
+    }
+
+    // ---- Recall determinism and validation ----
+
+    #[test]
+    fn recall_ties_break_by_rowid_not_random_uuid() {
+        let s = store();
+        ns(&s, "w");
+        let first = s
+            .insert_memory(&NewMemory {
+                created_at: Some(100),
+                ..mem("w", "tie breaker")
+            })
+            .unwrap();
+        let second = s
+            .insert_memory(&NewMemory {
+                created_at: Some(100),
+                ..mem("w", "tie breaker")
+            })
+            .unwrap();
+        let hits = s
+            .recall("w", "tie breaker", None, &RecallParams::default(), 1_000)
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].memory.id, first.id);
+        assert_eq!(hits[1].memory.id, second.id);
+        // Repeat for stability.
+        let again = s
+            .recall("w", "tie breaker", None, &RecallParams::default(), 1_000)
+            .unwrap();
+        assert_eq!(
+            hits.iter().map(|h| h.memory.id.clone()).collect::<Vec<_>>(),
+            again
+                .iter()
+                .map(|h| h.memory.id.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn store_rejects_oversized_and_non_finite_inputs() {
+        let s = store();
+        ns(&s, "w");
+        let long = NewMemory {
+            text: "x".repeat(crate::validation::MAX_TEXT_CHARS + 1),
+            ..mem("w", "placeholder")
+        };
+        assert!(matches!(
+            s.insert_memory(&long).unwrap_err(),
+            RecallError::InvalidInput(_)
+        ));
+        let nan = NewMemory {
+            embedding: Some(vec![f32::NAN; 4]),
+            ..mem("w", "nan")
+        };
+        assert!(matches!(
+            s.insert_memory(&nan).unwrap_err(),
+            RecallError::InvalidInput(_)
+        ));
+        let too_many_tags = NewMemory {
+            tags: vec!["t".into(); crate::validation::MAX_TAGS + 1],
+            ..mem("w", "tags")
+        };
+        assert!(s.insert_memory(&too_many_tags).is_err());
+        let oversized_query = "q".repeat(crate::validation::MAX_QUERY_CHARS + 1);
+        assert!(
+            s.recall("w", &oversized_query, None, &RecallParams::default(), 1)
+                .is_err()
+        );
+        assert!(
+            s.delete_memory(&"i".repeat(crate::validation::MAX_ID_CHARS + 1))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn newer_schema_version_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("future.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA user_version = 999;").unwrap();
+        }
+        let err = match SqliteStore::open(&path) {
+            Ok(_) => panic!("a newer schema must be refused"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("newer than this build"), "{err}");
+    }
+
+    #[test]
+    fn keyed_upgrade_forensically_cleans_deleted_rows_and_wal_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("forensic.db");
+        let deleted_marker = "CANARY-deleted-plaintext-7a31";
+        let wal_marker = "CANARY-wal-frame-plaintext-4c92";
+        let keep_marker = "CANARY-live-plaintext-91d0";
+        // Keep the plaintext connection alive through the keyed open so the
+        // WAL sidecar is not checkpointed away by last-connection shutdown.
+        let plain = SqliteStore::open(&path).unwrap();
+        plain.create_namespace("w").unwrap();
+        plain.insert_memory(&mem("w", deleted_marker)).unwrap();
+        plain.insert_memory(&mem("w", wal_marker)).unwrap();
+        plain.insert_memory(&mem("w", keep_marker)).unwrap();
+        plain
+            .delete_memory(
+                &plain
+                    .list_memories(Some("w"), 10, 0)
+                    .unwrap()
+                    .into_iter()
+                    .find(|m| m.text == deleted_marker)
+                    .unwrap()
+                    .id,
+            )
+            .unwrap();
+        // Ensure the live and deleted text sit in the WAL, not only the main
+        // file (WAL mode commits frames there until checkpointed).
+        let wal_before = std::fs::read(path.with_extension("db-wal")).unwrap_or_default();
+        assert!(
+            !wal_before.is_empty(),
+            "test setup needs a non-empty WAL sidecar"
+        );
+
+        let key = StoreKey::from_hex(&"5a".repeat(32)).unwrap();
+        let keyed = SqliteStore::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            keyed.meta_get(META_FORENSIC_CLEAN).unwrap().as_deref(),
+            Some(FORENSIC_DONE),
+            "the upgrade must finish with a done marker"
+        );
+        let listed = keyed.list_memories(Some("w"), 10, 0).unwrap();
+        assert_eq!(listed.len(), 2, "deleted row stays deleted");
+        assert!(listed.iter().any(|m| m.text == wal_marker));
+        assert!(listed.iter().any(|m| m.text == keep_marker));
+        drop(keyed);
+        drop(plain);
+
+        for (label, buf) in [
+            ("main", std::fs::read(&path).unwrap()),
+            (
+                "wal",
+                std::fs::read(path.with_extension("db-wal")).unwrap_or_default(),
+            ),
+        ] {
+            let hay = String::from_utf8_lossy(&buf);
+            for marker in [deleted_marker, wal_marker, keep_marker] {
+                assert!(
+                    !hay.contains(marker),
+                    "{label} still contains plaintext {marker}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pending_forensic_marker_is_retried_on_next_keyed_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("retry.db");
+        let key = StoreKey::from_hex(&"6b".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+            s.meta_set(META_FORENSIC_CLEAN, FORENSIC_PENDING).unwrap();
+        }
+        let s = SqliteStore::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            s.meta_get(META_FORENSIC_CLEAN).unwrap().as_deref(),
+            Some(FORENSIC_DONE),
+            "the pending marker must be retried, not ignored"
+        );
     }
 }
 
