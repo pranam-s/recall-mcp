@@ -10,7 +10,7 @@ total}`. Keyword search works offline out of the box. An optional local ONNX
 embedder adds semantic matching without sending text anywhere. An optional
 per-database key seals memory text with ChaCha20-Poly1305.
 
-Status: **0.5.0, untagged until the owner tags it**. See
+Status: **0.5.0, tagged 2026-11-08**. See
 [docs/STATUS.md](docs/STATUS.md) for the current done/partial list and
 [docs/EVALUATION.md](docs/EVALUATION.md) for every measured number.
 
@@ -295,14 +295,12 @@ windows-msvc, not in CI.
 
 ## Releases
 
-Releases are tagged `v0.5.0` and later (annotated; tags stay local until the
-owner publishes). The crates publish as
+Releases are annotated tags; `v0.5.0` is the first. The crates publish as
 [`recall-mcp-core`](https://crates.io/crates/recall-mcp-core),
 [`recall-mcp-server`](https://crates.io/crates/recall-mcp-server), and
 [`recall-mcp-cli`](https://crates.io/crates/recall-mcp-cli). The release notes
 for this line are in [releases/NOTES-0.5.0.md](releases/NOTES-0.5.0.md); the
-checklist is [RELEASING.md](RELEASING.md). Publishing and tagging are owner
-gated.
+checklist is [RELEASING.md](RELEASING.md). Crates.io publication is owner-gated.
 
 ## License
 

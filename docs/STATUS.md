@@ -4,8 +4,9 @@ Current state. "Done" means implemented, tested locally, and committed. Numbers
 live in [EVALUATION.md](EVALUATION.md); this page says what exists and what does
 not.
 
-Release status: **0.5.0 is untagged until the owner tags and publishes it.**
-GitHub Actions has not run (billing), so no CI result is claimed.
+Release status: **0.5.0 is tagged `v0.5.0`; crates.io publication is
+owner-gated and follows the release workflow.** GitHub Actions has not run
+(billing), so no CI result is claimed.
 
 ## Done in 0.5.0
 

@@ -1,7 +1,7 @@
 # Recall-MCP 0.5.0
 
-Release date: 2026-11-08. Status: **untagged until the owner tags and publishes
-it**. 0.4.0 was never tagged or published; 0.5.0 is the first public release.
+Release date: 2026-11-08. Status: first public release, tag `v0.5.0`. 0.4.0
+was never tagged or published.
 
 ## Highlights
 
