@@ -130,13 +130,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: Download ONNX Runtime 1.28.0
-        run: |
-          curl -fsSL -o ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-linux-x64-1.28.0.tgz
-          tar -xzf ort.tgz
-          echo "ORT_DYLIB_PATH=$PWD/onnxruntime-linux-x64-1.28.0/lib/libonnxruntime.so" >> "$GITHUB_ENV"
-      - run: cargo test -p recall-mcp-core --features onnx,openai --lib --locked -- --test-threads=1
-      - run: cargo test -p recall-mcp-core --features onnx --test golden_eval semantic_set_with_onnx_meets_target --locked -- --test-threads=1
+      # Compile both optional features on every PR. The live ONNX model
+      # download is a scheduled security job, so a CDN hiccup cannot fail a
+      # code PR. The full local run is recorded in docs/EVALUATION.md.
+      - run: cargo check --workspace --all-targets --features "onnx openai" --locked
+      - run: cargo test -p recall-mcp-core --features openai --lib --locked -- --test-threads=1
 
   web:
     name: Web build + Playwright
