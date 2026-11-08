@@ -245,7 +245,7 @@ MCP and capture all embed identically.
 
 ## D-014 : Encryption at rest: AEAD over `memories.text` + keyed FTS token digests
 
-Competitor research (docs/history/docs/history/COMPETITORS.md rec #1) made plaintext single-file storage
+Competitor research (docs/history/COMPETITORS.md rec #1) made plaintext single-file storage
 a marketed weakness. Design, implemented in `recall-core::crypto` + the store:
 
 - Key: 256-bit, from `RECALL_MCP_KEY` (64 hex chars) or `RECALL_MCP_KEY_FILE`;
