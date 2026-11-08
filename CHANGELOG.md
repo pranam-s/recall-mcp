@@ -7,7 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.5.0] - 2026-11-08
 
-First tagged public release. 0.4.0 was never tagged or published.
+First public release. 0.4.0 was never tagged or published; 0.5.0 is tagged
+only after review and merge.
 
 ### Added
 

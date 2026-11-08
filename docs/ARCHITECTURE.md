@@ -200,7 +200,7 @@ arithmetic saturates.
 
 ## Known limitations
 
-- p95 at 10k memories measured 29.6 to 35.3 ms on the 2026-11-08 host, above
+- p95 at 10k memories measured 27.3 to 35.3 ms on the 2026-11-08 host, above
   the 25 ms PRD budget. The ignored manual gate records the failure.
 - Beyond roughly 100k memories per namespace, the D-002 ANN revisit applies.
 - Dense embeddings are invertible, so keyed mode does not protect text with

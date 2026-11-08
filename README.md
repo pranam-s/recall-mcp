@@ -34,19 +34,22 @@ Namespaces organize workspaces, and recall always filters by namespace. They
 are not a security boundary: one API key can read and write every namespace,
 so do not point mutually untrusted agents at one server.
 
-## Try it
+## Install
 
 Prerequisites: Rust stable and a C compiler for bundled SQLite (MSVC or gcc).
 Node 24+ is only needed for the web UI.
 
-Run the gates first:
-
 ```sh
-cargo test --workspace
+cargo install recall-mcp-cli --version 0.5.0 --locked
+# or install the checkout you are reading:
+cargo install --path crates/recall-cli --locked
 ```
 
-Then script the short `recall` binary (the older `recall-cli` name remains an
-alias):
+The package installs both `recall` and the older `recall-cli` alias.
+
+## Try it
+
+Script the short `recall` binary:
 
 ```console
 $ recall remember --db recall.db --namespace work --text "We deploy on Thursdays" --tags ops
@@ -262,10 +265,10 @@ revisit applies.
 
 ## Performance
 
-The ignored 10k-memory harness measured p95 **29.6 to 35.3 ms** on this host on
+The ignored 10k-memory harness measured p95 **27.3 to 35.3 ms** on this host on
 2026-11-08, against the PRD budget of 25 ms. The budget is **not met here**;
 the harness remains an ignored manual gate and was not relaxed. Means were
-20.2 to 22.9 ms and p50 19.0 to 22.0 ms. Recorded runs and the older history are
+17.7 to 22.9 ms and p50 16.5 to 22.0 ms. Recorded runs and the older history are
 in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Repository hygiene

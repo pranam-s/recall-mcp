@@ -7,11 +7,11 @@ claimed.
 
 ## Test suite
 
-`cargo test --workspace --locked`: **206 passed, 0 failed, 3 ignored**.
+`cargo test --workspace --locked`: **207 passed, 0 failed, 3 ignored**.
 
 | Suite | Passed | Covers |
 |---|---:|---|
-| recall-core unit | 117 | models, validation, views, crypto, embedders, scorer, store CRUD, update, recall ranking and ties, tag filters, packed cache, `data_version`, encryption upgrade and forensic cleanup, embedder guard, schema version, export/import, capture chunking, OpenAI request/dimension/redaction |
+| recall-core unit | 118 | models, validation, views, crypto, embedders, scorer, store CRUD, update, recall ranking and ties, tag filters, packed cache, `data_version`, encryption upgrade and forensic cleanup, embedder guard, schema version, export/import, capture chunking, OpenAI request/dimension/redaction |
 | recall-core golden eval | 2 | 100-query golden gate and hash semantic diagnostic |
 | recall-core proptests | 4 | crypto roundtrip/AAD, FTS syntax, chunking invariants, scorer linearity and bounds |
 | recall-core ignored | 3 | FTS query-plan probe, p95 harness, cost breakdown (manual gates) |
@@ -27,9 +27,9 @@ claimed.
 Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
-with onnxruntime 1.28.0 and a model cache: **125 passed, 2 ignored** (the
+with onnxruntime 1.28.0 and a model cache: **126 passed, 2 ignored** (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured **213 passed, 0 failed,
+`cargo test --workspace --all-features` run measured **214 passed, 0 failed,
 4 ignored**.
 
 Formatting and lints:
@@ -84,8 +84,8 @@ cargo test -p recall-mcp-core --release --test p95_latency -- --ignored --nocapt
 The harness seeds 10,000 embedded memories, runs 100 untimed warm-up recalls,
 then times 1,000 recalls. Run it with `--test-threads=1`: the cost-breakdown
 test seeds its own 10k store and distorts p95 when both ignored tests run in
-parallel. Runs 1-2 are from implementation; runs 3-5 are review runs with the
-serial command above:
+parallel. Runs 1-2 are from implementation; runs 3-6 are review and lead runs
+with the serial command above:
 
 | Run | mean | p50 | p95 | p99 | max | 25 ms gate |
 |---|---:|---:|---:|---:|---:|---|
@@ -94,6 +94,7 @@ serial command above:
 | 3 | 22.707 | 21.572 | **32.745** | 40.174 | 51.696 | FAIL |
 | 4 | 20.247 | 19.006 | **29.583** | 40.357 | 48.731 | FAIL |
 | 5 | 22.910 | 21.332 | **35.256** | 45.427 | 50.767 | FAIL |
+| 6 | 17.747 | 16.520 | **27.286** | 32.663 | 37.201 | FAIL |
 
 Cost breakdown from the final clean review run: hybrid recall 19.912 ms/call,
 keyword-only recall 19.233 ms/call, full-row materialization 447.898 ms/call.

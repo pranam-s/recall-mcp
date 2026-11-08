@@ -8,9 +8,8 @@ contain claims that no longer hold. Current documentation starts at
 
 # Recall-MCP 0.4.0
 
-Released 2026-09-20. Tag: `v0.4.0` (local; pushing and crates.io
-publication are owner-gated). Previous recorded project version: 0.3.1
-(2026-09-18).
+Prepared 2026-09-20. It was never tagged or published; 0.5.0 is the first
+public release. Previous recorded project version: 0.3.1 (2026-09-18).
 
 ## What this release is
 
