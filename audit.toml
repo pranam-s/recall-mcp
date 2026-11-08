@@ -1,0 +1,9 @@
+[advisories]
+# cargo-audit configuration (0.22+ reads audit.toml).
+#
+# RUSTSEC-2024-0436: `paste` is unmaintained. It is a transitive build-time
+# dependency of rmcp's macro stack; there is no upstream fix and no known
+# vulnerability. Reviewed 2026-11-08; re-review at the next dependency bump.
+
+[advisories.ignore]
+RUSTSEC-2024-0436 = "unmaintained build-time transitive dependency (paste via rmcp); no fix, not a vulnerability; reviewed 2026-11-08"
