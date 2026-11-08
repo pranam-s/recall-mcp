@@ -98,7 +98,8 @@ GitHub Actions has not run (billing), so no CI result is claimed.
 
 ## Partial
 
-1. **p95 at 10k memories.** The ignored release harness measured p95 29.6 to 35.3 ms on this host on 2026-11-08, against the 25 ms PRD budget. It is a
+1. **p95 at 10k memories.** The ignored release harness measured p95 29.6 to
+   35.3 ms on this host on 2026-11-08, against the 25 ms PRD budget. It is a
    measured failure, recorded in EVALUATION, and the threshold was not lowered.
    Host-load variance is part of the record. This is the main performance gap
    in 0.5.0.
