@@ -169,7 +169,7 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     );
 
     // 6) tools/call capture -> a transcript is auto-chunked into
-    // source=capture memories, mirroring the streamable-HTTP conformance flow.
+    // source=capture memories, mirroring the streamable HTTP conformance flow.
     let long = "Captured over stdio for the record. ".repeat(60); // ~2160 chars
     let response = session.request(&tool_call(
         7,

@@ -69,11 +69,10 @@ pub struct OnnxEmbedder {
 /// ONNX Runtime intra-op threads used by the production constructors
 /// ([`OnnxEmbedder::new`], [`OnnxEmbedder::with_model`],
 /// [`OnnxEmbedder::with_cache_dir`]): the machine's logical CPU count capped
-/// at 4. Measured on the 6-vCPU reference VM (D-020): 4 threads beat the
-/// runtime's use-all-CPUs default by 1.3–1.8× on capture-sized chunks and
-/// never lost a run overall, while 1–2 threads were clearly worse on long
-/// inputs. Capping (instead of using every CPU) also leaves headroom for the
-/// store and the HTTP runtime on small multi-tenant hosts.
+/// at 4. In local testing (D-020), 4 threads performed better than the
+/// runtime's use-all-CPUs default on capture-sized chunks, and 1 to 2 threads
+/// were worse on long inputs. Capping (instead of using every CPU) also leaves
+/// headroom for the store and the HTTP runtime on small multi-tenant hosts.
 pub fn default_intra_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -110,9 +109,9 @@ impl OnnxEmbedder {
 
     /// Build with an explicit model, cache directory, and ONNX Runtime
     /// intra-op thread count. `Some(n)` pins exactly `n` threads; `None`
-    /// restores the runtime default (one thread per logical CPU — measured
-    /// slower than the tuned default in D-020, kept as an explicit escape
-    /// hatch and used by the probe harness).
+    /// restores the runtime default (one thread per logical CPU, which was
+    /// slower in the local testing recorded in D-020, kept as an explicit
+    /// escape hatch and used by the probe harness).
     pub fn with_cache_dir_and_threads(
         model: OnnxModel,
         cache_dir: std::path::PathBuf,
@@ -233,9 +232,9 @@ mod tests {
 
     // Intra-op thread-count probe (ignored, release; D-020 evidence): builds
     // one ORT session per setting up front, then times single-text embedding
-    // latency in *interleaved* rounds — each setting experiences the same
-    // machine drift, so no ordering bias (this VM throttles visibly over a
-    // long sequential run). Three representative shapes: tool-call-sized
+    // latency in *interleaved* rounds. Each setting experiences the same drift
+    // over a long run, so there is no ordering bias. Three representative
+    // shapes: tool-call-sized
     // line, one-sentence note, capture-default ~1000-char chunk.
     //
     //   ORT_DYLIB_PATH=<onnxruntime.dll> cargo test -p recall-core --release \

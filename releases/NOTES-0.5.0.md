@@ -47,8 +47,8 @@ match; otherwise the guard names both sides and requires
 
 ## Verification
 
-These results were measured on the Windows MSVC development machine with
-rustc 1.99.1 on 2026-11-08. The exact output is in `docs/EVALUATION.md`.
+These results were measured in a Windows MSVC build with rustc 1.99.1 on
+2026-11-08. The exact output is in `docs/EVALUATION.md`.
 
 - `cargo test --workspace --locked`: 207 passed, 0 failed, 3 ignored.
 - `cargo test --workspace --all-features --locked` with onnxruntime 1.28.0:
@@ -71,7 +71,7 @@ rustc 1.99.1 on 2026-11-08. The exact output is in `docs/EVALUATION.md`.
 ## Limitations
 
 - p95 recall at 10k memories has a 25 ms design target. The harness is an
-  ignored manual test, so run it on your own hardware; the command is in
+  ignored manual test, so run it locally; the command is in
   `docs/EVALUATION.md`.
 - The OpenAI embedder has never been called against the live API because no
   key was available.

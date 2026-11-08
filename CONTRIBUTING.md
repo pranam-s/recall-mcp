@@ -30,7 +30,7 @@ transports, golden and semantic evals, property tests, and web e2e. Three tests
 are ignored manual diagnostics: the FTS query-plan probe, the p95 harness, and
 the cost breakdown. The ONNX semantic gate is behind `--features onnx`.
 
-## Gates before a pull request
+## Local gates
 
 Primary MSVC run:
 
@@ -49,9 +49,8 @@ before `-D warnings`. The wrapper forwards arguments verbatim.
 
 Quality gates:
 
-- recall-core coverage: lines and regions at or above 90. Measured 95.39% lines
-  and 94.19% regions on 2026-11-08. Branch coverage is unmeasured on stable
-  cargo-llvm-cov (D-010 amendment).
+- recall-core coverage: lines and regions at or above 90. Branch coverage is
+  unmeasured on stable cargo-llvm-cov (D-010 amendment).
 - Golden set: hit-rate@5 at or above 0.85 on 100 queries; MRR@10 is reported and
   gated at 0.80. The semantic set is gated on ONNX.
 - p95: the ignored 10k harness is a manual test with a 25 ms design target. The
@@ -59,17 +58,14 @@ Quality gates:
 - Web: `cd web && npm ci && npm audit --audit-level=high && npm run build &&
   npx playwright test`. axe WCAG 2.1 AA must stay at 0 violations.
 
-GitHub Actions runs the CI workflow on pushes to `master` and on pull requests.
-It covers formatting, clippy, tests on Linux and Windows, coverage, MSRV, rustdoc,
-feature builds, the web build and Playwright run, and the dependency audits.
-There is also a weekly scheduled security workflow for Rust and npm advisories
-and the ONNX live eval.
+These local commands are the gates. Run them before you commit.
 
 ## Conventions
 
 - Conventional commits, one green change per commit, tests in the same commit.
-- `recall-core` is a pure domain crate: no axum, rmcp, tokio, or HTTP/JSON DTO
-  types. Server and CLI are thin shells over the same engine.
+- `recall-core` is a pure domain crate: no HTTP server, MCP, or async runtime
+  types. JSON wire DTOs and the opt-in blocking embedder client are allowed.
+  Server and CLI are thin shells over the same engine.
 - No `unwrap` or `expect` outside tests. A justified opt-out is a local `#[allow]`
   with the invariant in a comment.
 - Wire changes update the OpenAPI document, conformance tests, and docs in the

@@ -36,7 +36,7 @@ $installPath = & $vswhere -latest -products * `
     -property installationPath
 if (-not $installPath) {
     # Some Build Tools installs are present on disk but absent from the
-    # vswhere catalog (seen on this dev machine). Fall back to the well-known
+    # vswhere catalog (seen in local testing). Fall back to the well-known
     # locations, newest first.
     $installPath = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\2022\BuildTools'),

@@ -34,9 +34,9 @@ Sources (checked 2026-09-06):
    recovery for the store mutex stays in `AppState::with_store` (D-007).
 6. HTTP and JSON mapping is explicit. Each `RecallError` variant maps to one
    status and JSON error shape in `recall-server` (404 unknown namespace, 400
-   invalid params, 409 duplicate, 500 with no information leak; see D-008), and
-   MCP tool errors map to JSON-RPC invalid-params or internal-error. Keep the
-   mapping table in one module.
+   invalid params, 409 duplicate, 500 with no information leak; see
+   `recall-server/src/error.rs`), and MCP tool errors map to JSON-RPC
+   invalid-params or internal-error. Keep the mapping table in one module.
 
 ## Rejected and optional
 

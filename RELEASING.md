@@ -3,6 +3,13 @@
 This is the maintainer checklist for a tagged release. The repository has three
 Rust crates, a web UI, and release archives.
 
+## Shipped assets
+
+The v0.5.0 GitHub release carries `recall-mcp-windows-x86_64.zip` and
+`SHA256SUMS.txt`. The zip contains `recall.exe`, `recall-cli.exe`, `LICENSE`, and
+`README.md`. Those assets were built and uploaded by hand; the release workflow
+has not produced a release yet.
+
 ## Publishing setup
 
 The crates.io packages have not been published. The release workflow's publish
@@ -13,8 +20,10 @@ job needs:
   `CARGO_REGISTRY_TOKEN` repository secret;
 - a GitHub environment named `release`.
 
-The release workflow runs when a `v*` tag is pushed, and it can also be started
-manually with an existing tag.
+The workflow is optional maintainer automation. When it is enabled, a `v*` tag
+push or a manual run with an existing tag starts it. It verifies the pins, runs
+the gates, builds Linux, Windows, and macOS archives, generates an SBOM and
+provenance attestations, and creates the GitHub release from the notes file.
 
 ## Version pins
 
@@ -22,16 +31,18 @@ Set the version to `X.Y.Z` in:
 
 - `[workspace.package] version` in `Cargo.toml`;
 - the path-dependency `version` fields;
+- `Cargo.lock` (run `cargo check --locked` after the manifest change);
 - the `info.version` field in `crates/recall-server/src/openapi.json`;
 - the MCP `version` literal in `crates/recall-server/src/mcp.rs`;
 - `CITATION.cff` (`version` and `date-released`);
 - `server.json`;
+- `web/package.json`;
 - the README status line and `CHANGELOG.md`;
 - `releases/NOTES-X.Y.Z.md`.
 
 The release workflow checks the Cargo, OpenAPI, MCP, CITATION, `server.json`, and
-release-notes pins before it publishes or builds anything. The README and
-CHANGELOG still need a manual check.
+release-notes pins before it publishes or builds anything. `Cargo.lock`,
+`web/package.json`, the README, and `CHANGELOG.md` still need a manual check.
 
 ## Gates
 
@@ -54,8 +65,7 @@ and semantic evals, and the web and axe results. Run the ignored 10k p95 harness
 a manual gate with a 25 ms design target, and record its result there too. The web
 build must keep axe WCAG 2.1 AA at 0 violations.
 
-The release workflow runs the Rust gates again on the tag. Check the workflow run
-for the tag before announcing the release.
+The release workflow runs the Rust gates again on the tag when it is used.
 
 ## Tag and GitHub release
 
@@ -67,13 +77,16 @@ for the tag before announcing the release.
    git push origin vX.Y.Z
    ```
 
-3. The release workflow verifies the pins, runs the gates, builds the archives,
-   generates an SBOM and provenance attestations, and creates the GitHub release
-   from `releases/NOTES-X.Y.Z.md`.
+3. Build the release assets for the platforms you ship. The v0.5.0 release was
+   assembled by hand: the Windows x86_64 zip and `SHA256SUMS.txt` were uploaded
+   to the GitHub release, with the body taken from `releases/NOTES-X.Y.Z.md`.
 4. Check the release assets. The v0.5.0 release carries
    `recall-mcp-windows-x86_64.zip` with `recall.exe`, `recall-cli.exe`, `LICENSE`,
-   and `README.md`. The workflow also defines Linux x86_64 and macOS aarch64
-   archives.
+   and `README.md`, plus `SHA256SUMS.txt`.
+
+The release workflow, when used, verifies the pins, runs the gates, builds Linux,
+Windows, and macOS archives, generates an SBOM and provenance attestations, and
+creates the GitHub release from `releases/NOTES-X.Y.Z.md`.
 
 The publish job in the workflow handles crates.io in the order below. It needs
 the token and environment described above and has not been run yet.

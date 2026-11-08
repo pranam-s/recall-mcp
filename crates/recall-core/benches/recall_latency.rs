@@ -1,4 +1,4 @@
-//! Criterion benchmark for the recall hot path (PRD success metric:
+//! Criterion benchmark for the recall hot path (design target:
 //! p95 `recall` < 25 ms on 10k memories).
 //!
 //! Run with `cargo bench -p recall-core` (criterion always uses the release

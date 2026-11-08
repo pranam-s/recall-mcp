@@ -2,11 +2,11 @@
 //! `list_memories`, and `capture`.
 //!
 //! Transport-neutral tool layer (rmcp 3.x, built against the MCP 2026-07-28
-//! spec) mounted over stdio and streamable-HTTP. Wire negotiation: rmcp 3.9
+//! spec) mounted over stdio and streamable HTTP. Wire negotiation: rmcp 3.9
 //! answers an `initialize` naming `2026-07-28` with `2025-11-25`, the newest
 //! version that still has an initialize handshake (the 2026-07-28 revision
 //! replaced the handshake with per-request metadata); both conformance tests
-//! pin this. The streamable-HTTP mount is guarded by the same API-key
+//! pin this. The streamable HTTP mount is guarded by the same API-key
 //! middleware as `/v1/*`; stdio needs none (it is a local child process).
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -133,8 +133,8 @@ impl RecallTools {
         &self,
         Parameters(params): Parameters<RememberParams>,
     ) -> Result<CallToolResult, McpError> {
-        // MCP callers are agents: remember must "just work" (PRD user story),
-        // so unlike the strict REST API we auto-create the namespace.
+        // MCP callers are agents: remember must "just work", so unlike the
+        // strict REST API we auto-create the namespace.
         recall_core::validation::validate_namespace(&params.namespace).map_err(Self::domain_err)?;
         recall_core::validation::validate_text(&params.text).map_err(Self::domain_err)?;
         recall_core::validation::validate_tags(&params.tags).map_err(Self::domain_err)?;
@@ -386,7 +386,7 @@ impl RecallTools {
 )]
 impl ServerHandler for RecallTools {}
 
-/// Build the streamable-HTTP MCP service for mounting at `/mcp`.
+/// Build the streamable HTTP MCP service for mounting at `/mcp`.
 pub fn streamable_http_service(
     state: &AppState,
     body_limit_bytes: usize,

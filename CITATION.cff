@@ -16,7 +16,7 @@ identifiers:
     value: "https://github.com/pranam-s/recall-mcp"
 abstract: >-
   A local-first semantic memory broker for AI agents. An MCP server
-  (stdio + streamable-HTTP) exposing remember/recall/forget/update/
+  (stdio + streamable HTTP) exposing remember/recall/forget/update/
   capture/list tools over one SQLite file, plus a REST API, OpenAPI
   document, Prometheus metrics, a web UI, and a CLI. Retrieval is a
   hybrid of BM25 keyword scoring, embedding cosine similarity, recency

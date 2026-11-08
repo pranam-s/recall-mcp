@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Transport: stdio or streamable-HTTP (`POST /mcp`). The server targets the
+Transport: stdio or streamable HTTP (`POST /mcp`). The server targets the
 `2026-07-28` spec. A legacy `initialize` naming `2026-07-28` is answered with
 `2025-11-25`, the newest version with a handshake. The newer lifecycle starts
 with `server/discover`, then sends per-request metadata in `_meta` plus the

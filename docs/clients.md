@@ -1,6 +1,6 @@
 # Client setup
 
-Recall-MCP speaks MCP over stdio and streamable-HTTP. Every example below uses
+Recall-MCP speaks MCP over stdio and streamable HTTP. Every example below uses
 the same six tools and the same memory file; only the client's configuration
 shape differs.
 
@@ -15,6 +15,13 @@ recall serve --bind 127.0.0.1:8787 --db recall.db
 # or, for local child-process clients:
 recall serve --stdio --db recall.db
 ```
+
+Check it with `curl -s http://127.0.0.1:8787/healthz`; the reply is
+`{"service":"recall-mcp","status":"ok","version":"0.5.0"}`.
+
+The server targets MCP `2026-07-28`. A legacy `initialize` naming that version is
+answered with `2025-11-25`, the newest version that still uses a handshake
+(D-004).
 
 If `RECALL_MCP_API_KEY` is set, HTTP clients must send it as
 `X-API-Key: <key>` or `Authorization: Bearer <key>`.
@@ -150,7 +157,9 @@ server or database is available.
 - `421` or a rejected Host: the default guard accepts loopback hosts only. Bind
   loopback locally or add the external host with `--allow-host`.
 - Empty recall results: the default hash embedder scores token overlap, so
-  paraphrases can miss. Re-run with `--embedder onnx` and the `onnx` feature if
-  you need paraphrase matching; use the same embedder that wrote the store.
+  paraphrases can miss. Paraphrase matching needs a binary built with the
+  `onnx` feature and a store created with `--embedder onnx`. Switching an
+  existing hash store to ONNX fails the embedder guard; the explicit
+  `--allow-embedder-mismatch` override works but lowers quality.
 - `embedder mismatch`: keep the original embedder, or pass
   `--allow-embedder-mismatch` knowingly. Mixing vector spaces lowers quality.

@@ -42,6 +42,4 @@ plaintext-to-keyed upgrade runs a forensic VACUUM and WAL truncate.
 Responses carry CSP, nosniff, frame denial, a referrer policy, COOP/CORP, a
 permissions policy, and `Cache-Control: no-store` on API responses.
 
-The CI workflow runs `cargo audit`, `cargo deny`, and `npm audit`. A scheduled
-security workflow repeats the Rust and npm advisory checks every week and runs
-the live ONNX eval.
+Maintainers run `cargo audit`, `cargo deny check`, and `npm audit` locally.

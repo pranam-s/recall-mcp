@@ -9,7 +9,7 @@ What changed and why.
 - [ ] CLI (`recall-cli`)
 - [ ] Web
 - [ ] Evals
-- [ ] CI, release, or docs
+- [ ] Release or docs
 
 ## Breaking changes and migration
 

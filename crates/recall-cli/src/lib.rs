@@ -54,7 +54,7 @@ enum OutputFormat {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the server: HTTP API + MCP streamable-HTTP (and the web UI if built),
+    /// Run the server: HTTP API + MCP streamable HTTP (and the web UI if built),
     /// or MCP over stdio with --stdio.
     Serve {
         /// Serve MCP over stdio instead of HTTP.

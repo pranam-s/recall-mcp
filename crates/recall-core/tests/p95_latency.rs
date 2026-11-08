@@ -1,4 +1,4 @@
-//! Exact recall-latency percentiles on the 10k-memory fixture (PRD gate:
+//! Exact recall-latency percentiles on the 10k-memory fixture (design target:
 //! p95 < 25 ms). Ignored by default because it seeds a large store; run with
 //!
 //! ```text
@@ -27,7 +27,7 @@ use recall_core::{
 
 const CORPUS_SIZE: usize = 10_000;
 const QUERY_COUNT: usize = 1_000;
-/// PRD success metric (docs/PRD.md): p95 recall < 25 ms on 10k memories.
+/// Design target: p95 recall < 25 ms on 10k memories.
 const P95_BUDGET_MS: f64 = 25.0;
 
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -85,9 +85,9 @@ fn p95_recall_latency_on_10k_memories_stays_under_budget() {
     let params = RecallParams::default();
 
     // Warm-up: fill the packed vector cache (first untagged recall) and the
-    // OS/SQLite caches so the timed region measures steady-state recall —
-    // the shape the PRD budget describes (reads against a warm namespace),
-    // not one-time first-touch costs.
+    // OS/SQLite caches so the timed region measures steady-state recall, the
+    // shape the design target describes (reads against a warm namespace),
+    // rather than one-time first-touch costs.
     const WARMUP_QUERIES: usize = 100;
     for i in 0..WARMUP_QUERIES {
         let query = format!("incident review note {} root cause", i % 250);
@@ -137,7 +137,7 @@ fn p95_recall_latency_on_10k_memories_stays_under_budget() {
     );
     assert!(
         p95 < P95_BUDGET_MS,
-        "p95 recall latency {p95:.3} ms breached the {P95_BUDGET_MS} ms PRD budget"
+        "p95 recall latency {p95:.3} ms breached the {P95_BUDGET_MS} ms design target"
     );
 }
 

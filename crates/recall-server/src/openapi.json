@@ -268,7 +268,7 @@
     },
     "/mcp": {
       "post": {
-        "summary": "MCP streamable-HTTP transport",
+        "summary": "MCP streamable HTTP transport",
         "description": "JSON-RPC endpoint built for the MCP 2026-07-28 spec (stateless per-request metadata, `server/discover`, `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` headers). Answers a legacy `initialize` with 2025-11-25 (D-004). Six tools: remember, recall, forget, update_memory, list_memories, capture. Same API-key requirement as /v1/*.",
         "responses": {
           "200": { "description": "JSON-RPC response" },

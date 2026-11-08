@@ -3,7 +3,7 @@
 ## Overview
 
 Recall-MCP is a local-first semantic memory broker for AI agents. It ships a
-Rust MCP server (stdio and streamable-HTTP, built on the SDK for the 2026-07-28
+Rust MCP server (stdio and streamable HTTP, built on the SDK for the 2026-07-28
 spec; the wire `initialize` handshake answers `2025-11-25`, see D-004) with six
 tools: `remember`, `recall`, `forget`, `update_memory`, `capture`, and
 `list_memories`. The same engine runs behind REST, an OpenAPI document, a web
@@ -31,9 +31,10 @@ planning work.
 
 ## Architecture boundaries (hard rules)
 
-- `crates/recall-core` is a pure domain crate: no axum, no rmcp, no tokio,
-  no HTTP/JSON types. Models, validation, compact views, `Store` trait,
-  `Embedder` trait, `HybridScorer`.
+- `crates/recall-core` is a pure domain crate: no HTTP server, MCP, or async
+  runtime types. JSON wire DTOs and the opt-in blocking embedder client are
+  allowed. Models, validation, compact views, `Store` trait, `Embedder` trait,
+  `HybridScorer`.
 - `recall-server` (axum + rmcp) and `recall-cli` (clap) are thin shells over
   core. Same engine behind REST, MCP, and CLI; no logic drift between them.
 - Published package names are `recall-mcp-core`, `recall-mcp-server`, and
@@ -66,20 +67,17 @@ planning work.
   All green before any commit is "done".
 - Coverage: 90% lines AND regions on recall-core via
   `cargo llvm-cov -p recall-mcp-core --fail-under-lines 90 --fail-under-regions 90`.
-  (Measured 2026-11-08 on Windows MSVC: 95.39% lines / 94.19% regions.
-  cargo-llvm-cov 0.9.1 has no branch fail-under; `--branch` needs nightly,
-  so true branch coverage is a recorded tooling gap, D-010 amendment.)
+  cargo-llvm-cov 0.9.1 has no branch fail-under; `--branch` needs nightly, so
+  true branch coverage is a recorded tooling gap (D-010 amendment). Numbers are
+  in docs/EVALUATION.md.
 - windows-gnu caveat: llvm-cov cannot run on windows-gnu (D-010); measure on
-  Windows MSVC or let the Linux CI coverage job enforce it. Never estimate or
-  fabricate a coverage number.
+  Windows MSVC. Never estimate or fabricate a coverage number.
 - The 10k harness is an ignored manual gate with a 25 ms p95 design target.
   Never lower it or claim it is met.
 - Web: `cd web && npm run build && npx playwright test` (axe AA must stay 0 violations).
 - Retrieval quality: evals/ golden set gates hit-rate@5 >= 0.85 (100 queries)
   plus MRR@10; the ONNX semantic set gates hit-rate@5 >= 0.85. No external
   benchmark claim.
-- CI: GitHub Actions runs the workspace tests, formatting, clippy, coverage,
-  web build, and dependency checks on push and pull requests.
 
 ## Verify before claiming
 

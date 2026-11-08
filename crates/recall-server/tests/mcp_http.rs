@@ -1,4 +1,4 @@
-//! MCP conformance smoke tests over the streamable-HTTP transport:
+//! MCP conformance smoke tests over the streamable HTTP transport:
 //! initialize -> tools/list -> tools/call, plus API-key behavior on /mcp.
 
 use axum::body::Body;

@@ -234,7 +234,7 @@ fn cors_layer(allowed_origins: &[String]) -> CorsLayer {
         .max_age(std::time::Duration::from_secs(600))
 }
 
-/// Build the complete application router: REST API, MCP streamable-HTTP,
+/// Build the complete application router: REST API, MCP streamable HTTP,
 /// metrics, optional static UI, CORS, tracing, body limit, rate limiting.
 pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> Router {
     let metrics = Arc::new(Metrics::new());
@@ -286,7 +286,7 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
         .layer(limit.clone());
 
     // The MCP endpoint mounts as its own scoped router so the API-key layer
-    // wraps the streamable-HTTP transport cleanly (including its session routes).
+    // wraps the streamable HTTP transport cleanly (including its session routes).
     let mcp: Router<AppState> = Router::new()
         .nest_service(
             "/mcp",

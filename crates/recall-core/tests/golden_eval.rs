@@ -176,7 +176,7 @@ fn golden_set_hit_rate_at_5_meets_target() {
     );
     assert!(
         (golden.hit_rate_target - 0.85).abs() < f64::EPSILON,
-        "gate must stay at the PRD-mandated 0.85"
+        "gate must stay at the 0.85 threshold"
     );
     // The expanded set must actually cover the three advertised categories.
     for case in ["tag-scoped", "temporal"] {

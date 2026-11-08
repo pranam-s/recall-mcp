@@ -21,9 +21,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.5.0] - 2026-11-08
 
-First public release, tagged `v0.5.0`. 0.4.0 was never tagged or published. The
-GitHub Actions CI workflow runs the gates on pushes to `master` and on pull
-requests.
+First public release, tagged `v0.5.0`. 0.4.0 was never tagged or published.
 
 ### Added
 
@@ -46,7 +44,7 @@ requests.
   identity in Stats, and pin, unpin, and delete actions with a native dialog.
 - A 100-query golden eval with MRR@10, a 50-query ONNX-gated semantic set,
   `evals/README.md`, client docs, a skill, token-budget tests, a Dockerfile,
-  release and security workflows, and 0.5.0 release notes.
+  release automation, and 0.5.0 release notes.
 
 ### Changed
 
@@ -127,8 +125,8 @@ Never tagged or published. The work that led to 0.5.0 included:
 - The web UI gained server-driven pagination, a metrics view, and a capture form.
   Five Playwright tests covered keyboard-only paging and axe AA scans.
 - Publication readiness: reqwest 0.13, the negotiated MCP protocol version pinned
-  on both transports, a keyed unicode round-trip test, `CITATION.cff`, updated CI
-  actions, and 160 tests.
+  on both transports, a keyed unicode round-trip test, `CITATION.cff`, and 160
+  tests.
 - A 0.3-era p95 re-baseline covered the read-only recall path and added a warm-up
   before the timed region.
 - The repository moved to GitHub at `pranam-s/recall-mcp`, and the README and

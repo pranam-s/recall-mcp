@@ -15,7 +15,7 @@ TypeScript, and Tailwind 4. Tests run with `cargo test`, coverage with
 ## What the system is
 
 A local-first semantic memory broker packaged three ways from one core: an MCP
-server (stdio and streamable-HTTP), an HTTP/JSON API with a hand-written
+server (stdio and streamable HTTP), an HTTP/JSON API with a hand-written
 OpenAPI document, and a CLI over the same engine. One SQLite file is the whole
 store.
 
@@ -149,7 +149,7 @@ REST:
 - `GET /healthz`, `GET /openapi.json`, `GET /metrics`
 
 MCP: six tools (`remember`, `recall`, `forget`, `update_memory`,
-`list_memories`, `capture`) over stdio and streamable-HTTP. Responses are
+`list_memories`, `capture`) over stdio and streamable HTTP. Responses are
 compact by default; `include_embedding` restores full records. `list_memories`
 defaults to 20 and caps at 100. `recall` accepts `format: "json"|"text"`; text
 keeps ranking and the full breakdown and rejects embeddings. Stateless
@@ -164,6 +164,13 @@ gets its own bucket, and the bucket map is bounded. The guard compares Host and
 Origin including scheme and normalized default ports. API, MCP, and metrics
 responses are `no-store` and carry CSP, nosniff, frame denial, referrer policy,
 COOP/CORP, and a permissions policy.
+
+Flags, environment variables, and config-file keys are listed in `recall serve
+--help`; D-017 records precedence and defaults. Over-limit requests get `429` with
+`Retry-After`, oversize bodies `413`, missing or wrong content types `415`, and
+unknown paths, wrong methods, bad query parameters, and malformed JSON share one
+JSON error shape. Foreign `Host` and `Origin` values get `421` and `403`. Ctrl-C
+drains in-flight requests and checkpoints the WAL; the SIGTERM arm is Unix-only.
 
 Store and embedder work runs through `spawn_blocking`, so a slow model call
 cannot starve the async runtime and no mutex guard crosses an await.
@@ -201,10 +208,8 @@ arithmetic saturates.
 - Coverage: lines and regions >= 90 on recall-core (D-010 amendment; no stable
   branch fail-under).
 
-GitHub Actions runs the workspace tests, formatting, clippy, coverage, web
-build with Playwright, and dependency checks on push and pull requests. The 10k
-p95 design target is 25 ms; the p95 harness is an ignored test that runs only
-when invoked manually.
+The 10k p95 design target is 25 ms; the p95 harness is an ignored test that runs
+only when invoked manually.
 
 ## Known limitations
 
