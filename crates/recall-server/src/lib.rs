@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
-use axum::http::{HeaderName, Method};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::{HeaderName, Method, StatusCode};
 use axum::routing::{delete, get, post};
 use recall_core::HashEmbedder;
 use tower_http::cors::CorsLayer;
@@ -45,6 +45,107 @@ pub const MAX_PAGE_LIMIT: usize = 10_000;
 /// capped at [`MAX_PAGE_LIMIT`].
 pub fn page_limit(limit: Option<usize>, default: usize) -> usize {
     limit.unwrap_or(default).min(MAX_PAGE_LIMIT)
+}
+
+/// Security headers applied to every response. The CSP is deliberately
+/// strict: the built UI loads only same-origin scripts and styles (Tailwind
+/// emits a stylesheet; the React bundle is an external module). Inline styles
+/// stay allowed because React sets a few presentational attributes.
+fn security_headers() -> [(&'static str, &'static str); 8] {
+    [
+        (
+            "content-security-policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self'; font-src 'self'; \
+             frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        ),
+        ("x-content-type-options", "nosniff"),
+        ("x-frame-options", "DENY"),
+        ("referrer-policy", "no-referrer"),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("cross-origin-resource-policy", "same-origin"),
+        (
+            "permissions-policy",
+            "camera=(), microphone=(), geolocation=(), payment=()",
+        ),
+        ("cache-control", "no-store"),
+    ]
+}
+
+/// Axum middleware: security headers on every response, plus `no-store` on
+/// API/MCP/metrics paths (static UI assets keep normal caching).
+async fn apply_security_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_string();
+    let mut response = next.run(request).await;
+    for (name, value) in security_headers() {
+        response.headers_mut().insert(
+            HeaderName::from_static(name),
+            axum::http::HeaderValue::from_static(value),
+        );
+    }
+    let api_surface = path.starts_with("/v1/")
+        || path == "/v1"
+        || path == "/mcp"
+        || path.starts_with("/mcp/")
+        || path == "/metrics";
+    if !api_surface {
+        response.headers_mut().remove(CACHE_CONTROL);
+    }
+    response
+}
+
+/// Convert framework-level rejections (unknown path, wrong method, body
+/// limit, extractor failures) into the same `{"error": ...}` JSON shape the
+/// handlers use. MCP owns its own JSON-RPC errors, so its paths are untouched.
+async fn jsonify_framework_errors(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_string();
+    let response = next.run(request).await;
+    if path == "/mcp" || path.starts_with("/mcp/") {
+        return response;
+    }
+    let status = response.status();
+    if !(status.is_client_error() || status.is_server_error()) {
+        return response;
+    }
+    let already_json = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if already_json {
+        return response;
+    }
+    let message = match status {
+        StatusCode::BAD_REQUEST => "bad request",
+        StatusCode::UNAUTHORIZED => "unauthorized",
+        StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::NOT_FOUND => "not found",
+        StatusCode::METHOD_NOT_ALLOWED => "method not allowed",
+        StatusCode::PAYLOAD_TOO_LARGE => "payload too large",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported media type",
+        StatusCode::MISDIRECTED_REQUEST => "misdirected request",
+        StatusCode::TOO_MANY_REQUESTS => "rate limit exceeded",
+        StatusCode::INTERNAL_SERVER_ERROR => "internal server error",
+        _ => status.canonical_reason().unwrap_or("request failed"),
+    };
+    // Preserve the headers clients act on (Allow for 405, Retry-After for
+    // 429, WWW-Authenticate for 401).
+    let preserve = ["allow", "retry-after", "www-authenticate"];
+    let mut replacement = crate::error::json_error(status, message);
+    for name in preserve {
+        if let Some(value) = response.headers().get(name) {
+            replacement
+                .headers_mut()
+                .insert(HeaderName::from_static(name), value.clone());
+        }
+    }
+    replacement
 }
 
 /// Server settings supplied by the binary (CLI `serve`).
@@ -187,7 +288,10 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
     // The MCP endpoint mounts as its own scoped router so the API-key layer
     // wraps the streamable-HTTP transport cleanly (including its session routes).
     let mcp: Router<AppState> = Router::new()
-        .nest_service("/mcp", mcp::streamable_http_service(&state))
+        .nest_service(
+            "/mcp",
+            mcp::streamable_http_service(&state, config.body_limit_bytes),
+        )
         .layer(auth)
         .layer(limit);
 
@@ -202,12 +306,17 @@ pub fn build_router(store: recall_core::SharedStore, config: &ServerConfig) -> R
         .layer(DefaultBodyLimit::max(config.body_limit_bytes))
         .layer(TraceLayer::new_for_http())
         .layer(cors_layer(&config.allowed_origins))
-        // Host/Origin guard outermost (AR-001): foreign hosts and cross-origin
-        // browser requests are rejected before any other layer runs.
+        // JSON error contract inside the guard: framework rejections become
+        // `{"error": ...}` before they leave the router.
+        .layer(axum::middleware::from_fn(jsonify_framework_errors))
+        // Host/Origin guard (AR-001): foreign hosts and cross-origin browser
+        // requests are rejected before any other layer runs.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             guard::enforce_same_origin,
         ))
+        // Headers last so they cover guard rejections too.
+        .layer(axum::middleware::from_fn(apply_security_headers))
         .with_state(state);
 
     match &config.web_dir {
@@ -293,6 +402,7 @@ mod tests {
         let app = build_router(
             store,
             &ServerConfig {
+                api_key: Some("bucket-a".into()),
                 rate_limit: Some(ratelimit::RateLimit {
                     rate: 1.0,
                     burst: 2.0,
@@ -324,7 +434,8 @@ mod tests {
                 >= 1,
             "Retry-After must carry a positive hint"
         );
-        // A different key still has its own bucket.
+        // A forged key is not a separate bucket: it shares `anonymous`, and
+        // its own first request is still only a 401.
         let other = app
             .oneshot(
                 Request::builder()
@@ -336,7 +447,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(other.status(), axum::http::StatusCode::OK);
+        assert_eq!(other.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -360,25 +471,30 @@ mod tests {
                 ..ServerConfig::default()
             },
         );
-        let guess = || {
+        let guess = |key: &'static str| {
             Request::builder()
                 .method("GET")
                 .uri("/v1/stats")
-                .header("x-api-key", "wrong-guess")
+                .header("x-api-key", key)
                 .body(axum::body::Body::empty())
                 .unwrap()
         };
-        let first = app.clone().oneshot(guess()).await.unwrap();
+        let first = app.clone().oneshot(guess("wrong-guess-1")).await.unwrap();
         assert_eq!(first.status(), axum::http::StatusCode::UNAUTHORIZED);
-        let second = app.clone().oneshot(guess()).await.unwrap();
+        let second = app.clone().oneshot(guess("wrong-guess-2")).await.unwrap();
         assert_eq!(second.status(), axum::http::StatusCode::UNAUTHORIZED);
-        // Bucket drained: the third guess is throttled before auth even runs.
-        let third = app.oneshot(guess()).await.unwrap();
+        // Bucket drained: a *rotated* third guess is throttled before auth,
+        // proving forged keys share the anonymous bucket instead of creating
+        // a fresh one per guess.
+        let third = app.clone().oneshot(guess("wrong-guess-3")).await.unwrap();
         assert_eq!(
             third.status(),
             axum::http::StatusCode::TOO_MANY_REQUESTS,
-            "wrong-key guessing must be throttled by the anonymous bucket"
+            "rotating wrong keys must not dodge the anonymous bucket"
         );
+        // The real key still has its own untouched bucket.
+        let valid = app.oneshot(guess("secret")).await.unwrap();
+        assert_eq!(valid.status(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
@@ -740,6 +856,88 @@ mod tests {
         assert!(
             res.headers().get("access-control-allow-origin").is_none(),
             "no CORS grant may exist without --allow-origin"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn slow_embedder_does_not_block_healthz() {
+        // The whole point of the spawn_blocking bridge: a 300 ms ONNX/HTTP
+        // embed must not starve the async runtime (single-threaded here).
+        #[derive(Debug)]
+        struct SlowEmbedder;
+        impl recall_core::Embedder for SlowEmbedder {
+            fn dimensions(&self) -> usize {
+                8
+            }
+            fn name(&self) -> &'static str {
+                "slow-test"
+            }
+            fn embed(&self, _text: &str) -> Vec<f32> {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                vec![0.1f32; 8]
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open(dir.path().join("t.db")).unwrap());
+        std::mem::forget(dir);
+        let app = build_router(
+            store,
+            &ServerConfig {
+                embedder: Arc::new(SlowEmbedder),
+                ..ServerConfig::default()
+            },
+        );
+        let create_ns = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/namespaces")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"name":"w"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_ns.status(), axum::http::StatusCode::CREATED);
+
+        let slow = tokio::spawn({
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/memories")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(
+                            r#"{"namespace":"w","text":"slow embed"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let health = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            app.oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/healthz")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            ),
+        )
+        .await
+        .expect("healthz must not wait for the embedder")
+        .unwrap();
+        assert_eq!(health.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            slow.await.unwrap().status(),
+            axum::http::StatusCode::CREATED
         );
     }
 }

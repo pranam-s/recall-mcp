@@ -4,6 +4,7 @@
 //! Implementations are `Send` (rusqlite's `Connection` is not `Sync`), so
 //! cross-thread sharing goes through [`crate::SharedStore`] (`Arc<Mutex<dyn Store>>`).
 
+use crate::embed::{Embedder, EmbedderStatus};
 use crate::error::Result;
 use crate::models::{Memory, MemoryUpdate, Namespace, NewMemory, RecallHit, RecallParams, Stats};
 
@@ -72,4 +73,15 @@ pub trait Store: Send {
     fn write_tx(&self, f: &mut dyn FnMut(&dyn Store) -> Result<()>) -> Result<()>;
 
     fn stats(&self) -> Result<Stats>;
+
+    /// Guard vector-space compatibility at open: stamp an empty store, adopt a
+    /// legacy store whose stored dimensions match, and fail (naming both
+    /// sides) when the embedder fingerprint or dimensions differ. With
+    /// `allow_mismatch` the mismatch is reported instead of failing, and the
+    /// stored fingerprint is left untouched so the warning persists.
+    fn check_embedder(
+        &self,
+        embedder: &dyn Embedder,
+        allow_mismatch: bool,
+    ) -> Result<EmbedderStatus>;
 }

@@ -36,7 +36,7 @@ pub fn presented_key(headers: &axum::http::HeaderMap) -> Option<String> {
 /// Constant-time byte comparison (subtle `ConstantTimeEq`), so a forged key
 /// cannot be probed byte-by-byte through timing. Differing lengths fail —
 /// the leak of "wrong length" is negligible next to the local threat model.
-fn keys_match(presented: &str, expected: &str) -> bool {
+pub(crate) fn keys_match(presented: &str, expected: &str) -> bool {
     presented.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 

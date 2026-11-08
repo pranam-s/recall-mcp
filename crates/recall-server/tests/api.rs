@@ -118,7 +118,7 @@ async fn memory_create_list_delete_with_validation() {
     // 201 with embedding auto-computed
     let (status, mem) = json_response(
         app.clone(),
-        request("POST", "/v1/memories", Some(json!({"namespace": "proj", "text": "sqlite is the storage engine", "tags": ["db"], "pinned": true}))),
+        request("POST", "/v1/memories?include_embedding=true", Some(json!({"namespace": "proj", "text": "sqlite is the storage engine", "tags": ["db"], "pinned": true}))),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -171,7 +171,8 @@ async fn memory_create_list_delete_with_validation() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list["items"].as_array().unwrap().len(), 2);
+    assert_eq!(list["total"], 2);
 
     // Delete -> 204 then 404
     let (status, _) = json_response(
@@ -343,7 +344,7 @@ async fn memory_update_and_recall_tag_filter() {
         app.clone(),
         request(
             "PATCH",
-            &format!("/v1/memories/{id_a}"),
+            &format!("/v1/memories/{id_a}?include_embedding=true"),
             Some(json!({
                 "text": "postgres vacuum and autovacuum tuning",
                 "tags": ["db", "maintenance"]
@@ -436,6 +437,12 @@ async fn stats_and_healthz_and_openapi() {
     assert_eq!(stats["total_memories"], 1);
     assert_eq!(stats["pinned_memories"], 1);
     assert_eq!(stats["per_namespace"][0]["count"], 1);
+    assert_eq!(stats["embedder"]["name"], "hash-256");
+    assert_eq!(stats["embedder"]["dimensions"], 256);
+    assert_eq!(
+        stats["embedder"]["fingerprint"], "hash-256@256",
+        "stats must expose the inner embedder's stable fingerprint"
+    );
 
     let res = app
         .clone()
@@ -540,20 +547,25 @@ async fn list_memories_paginates_with_total_count_header() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(page1.as_array().unwrap().len(), 2);
+    assert_eq!(page1["items"].as_array().unwrap().len(), 2);
+    assert_eq!(page1["total"], 5);
+    assert_eq!(page1["limit"], 2);
+    assert_eq!(page1["offset"], 0);
+    assert_eq!(page1["has_more"], true);
     let (status, page3) = json_response(
         app.clone(),
         request("GET", "/v1/memories?namespace=paged&limit=2&offset=4", None),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(page3.as_array().unwrap().len(), 1);
+    assert_eq!(page3["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page3["has_more"], false);
     // Pages tile the set without overlap (newest first).
-    let ids: Vec<&str> = page1
+    let ids: Vec<&str> = page1["items"]
         .as_array()
         .unwrap()
         .iter()
-        .chain(page3.as_array().unwrap())
+        .chain(page3["items"].as_array().unwrap())
         .map(|m| m["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids.len(), 3);
@@ -569,7 +581,7 @@ async fn capture_ingests_and_auto_chunks_a_transcript() {
         app.clone(),
         request(
             "POST",
-            "/v1/capture",
+            "/v1/capture?include_memories=true&include_embedding=true",
             Some(json!({
                 "namespace": "session-42",
                 "transcript": [
@@ -648,4 +660,222 @@ async fn capture_ingests_and_auto_chunks_a_transcript() {
         }),
         "captured memory must be recallable: {hits}"
     );
+}
+
+#[tokio::test]
+async fn framework_rejections_are_json_with_the_documented_statuses() {
+    let app = app_with(None);
+    let send = |req: Request<Body>| {
+        let app = app.clone();
+        async move {
+            let res = app.oneshot(req).await.expect("response");
+            let status = res.status();
+            let content_type = res
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            let bytes = res.into_body().collect().await.expect("body").to_bytes();
+            let body: Value =
+                serde_json::from_slice(&bytes).expect("every error body must be JSON");
+            (status, content_type, body)
+        }
+    };
+
+    // Malformed JSON.
+    let malformed = Request::builder()
+        .method("POST")
+        .uri("/v1/memories")
+        .header("content-type", "application/json")
+        .body(Body::from("{\"namespace\":"))
+        .unwrap();
+    let (status, content_type, body) = send(malformed).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        content_type.starts_with("application/json"),
+        "{content_type}"
+    );
+    assert!(body["error"].is_string(), "{body}");
+
+    // Missing/wrong content type.
+    let no_type = Request::builder()
+        .method("POST")
+        .uri("/v1/memories")
+        .body(Body::from(r#"{"namespace":"w","text":"x"}"#))
+        .unwrap();
+    let (status, _, body) = send(no_type).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(body["error"].is_string(), "{body}");
+    let text_type = Request::builder()
+        .method("POST")
+        .uri("/v1/memories")
+        .header("content-type", "text/plain")
+        .body(Body::from("hello"))
+        .unwrap();
+    let (status, _, body) = send(text_type).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert!(body["error"].is_string(), "{body}");
+
+    // Unknown path and wrong method.
+    let (status, _, body) = send(request("GET", "/nope", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body["error"].is_string(), "{body}");
+    let (status, _, body) = send(request("PUT", "/v1/stats", Some(json!({})))).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert!(body["error"].is_string(), "{body}");
+
+    // Bad query parameter.
+    let (status, _, body) = send(request("GET", "/v1/memories?limit=not-a-number", None)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn oversize_body_and_security_headers_are_json_and_hardened() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = shared(recall_core::SqliteStore::open(dir.path().join("limits.db")).expect("db"));
+    std::mem::forget(dir);
+    let app = build_router(
+        store,
+        &ServerConfig {
+            body_limit_bytes: 128,
+            ..Default::default()
+        },
+    );
+    let big = "x".repeat(1024);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/memories")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"namespace":"w","text":"{big}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        res.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .starts_with("application/json")
+    );
+
+    let res = app
+        .oneshot(request("GET", "/v1/stats", None))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let headers = res.headers();
+    let csp = headers
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .expect("CSP");
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+    assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
+    assert_eq!(
+        headers.get("cross-origin-opener-policy").unwrap(),
+        "same-origin"
+    );
+    assert_eq!(
+        headers.get("cross-origin-resource-policy").unwrap(),
+        "same-origin"
+    );
+    assert!(headers.get("permissions-policy").is_some());
+    assert_eq!(headers.get("cache-control").unwrap(), "no-store");
+}
+
+#[tokio::test]
+async fn origin_scheme_must_match_and_default_ports_are_normalized() {
+    let app = app_with(None);
+    // Same host and port but https Origin on an http request: cross-origin.
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/stats")
+                .header("host", "127.0.0.1:8787")
+                .header("origin", "https://127.0.0.1:8787")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    // An allowed origin without an explicit port equals the scheme default.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = shared(recall_core::SqliteStore::open(dir.path().join("origin.db")).expect("db"));
+    std::mem::forget(dir);
+    let app = build_router(
+        store,
+        &ServerConfig {
+            allowed_origins: vec!["https://agent.example".into()],
+            ..Default::default()
+        },
+    );
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/stats")
+                .header("host", "127.0.0.1:8787")
+                .header("origin", "https://AGENT.EXAMPLE:443")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn capture_rolls_back_namespace_and_chunks_on_failure() {
+    // A capture whose second chunk collides on id must leave no namespace
+    // and no first chunk behind: the whole ingest is one transaction.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = shared(recall_core::SqliteStore::open(dir.path().join("rollback.db")).expect("db"));
+    std::mem::forget(dir);
+    let prepared = recall_server::capture::PreparedCapture {
+        namespace: "half-written".into(),
+        memories: vec![
+            recall_core::NewMemory {
+                namespace: "half-written".into(),
+                text: "first chunk".into(),
+                tags: vec![],
+                source: Some("capture".into()),
+                pinned: false,
+                created_at: None,
+                id: Some("same-id".into()),
+                embedding: None,
+            },
+            recall_core::NewMemory {
+                namespace: "half-written".into(),
+                text: "second chunk".into(),
+                tags: vec![],
+                source: Some("capture".into()),
+                pinned: false,
+                created_at: None,
+                id: Some("same-id".into()),
+                embedding: None,
+            },
+        ],
+    };
+    let outcome = {
+        let guard = store.lock().unwrap();
+        recall_server::capture::commit(&*guard, &prepared)
+    };
+    assert!(outcome.is_err(), "duplicate ids must fail the capture");
+    let guard = store.lock().unwrap();
+    assert!(
+        guard.find_namespace("half-written").unwrap().is_none(),
+        "the namespace creation must roll back with the failed inserts"
+    );
+    assert_eq!(guard.count_memories(None).unwrap(), 0);
 }

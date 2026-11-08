@@ -50,4 +50,34 @@ impl AppState {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         f(&mut *guard)
     }
+
+    /// Async bridge for store work: the sync SQLite call runs on the blocking
+    /// pool, and no `MutexGuard` is held across an `.await`.
+    pub async fn with_store_async<R>(
+        &self,
+        f: impl FnOnce(&dyn recall_core::Store) -> recall_core::Result<R> + Send + 'static,
+    ) -> recall_core::Result<R>
+    where
+        R: Send + 'static,
+    {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            f(&mut *guard)
+        })
+        .await
+        .map_err(|e| recall_core::RecallError::Internal(format!("store task failed: {e}")))?
+    }
+
+    /// Async bridge for embedding: model inference (ONNX, HTTP) is blocking
+    /// and may take hundreds of milliseconds, so it must never run on an
+    /// async worker thread.
+    pub async fn embed_async(&self, text: String) -> recall_core::Result<Vec<f32>> {
+        let embedder = self.embedder.clone();
+        tokio::task::spawn_blocking(move || embedder.embed(&text))
+            .await
+            .map_err(|e| recall_core::RecallError::Embedder(format!("embedding task failed: {e}")))
+    }
 }

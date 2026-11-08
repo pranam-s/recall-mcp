@@ -1,16 +1,17 @@
 [package]
 name = "recall-mcp-cli"
 version.workspace = true
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/recall-mcp-cli"
 description = "CLI for Recall-MCP: serve (HTTP + MCP), remember, recall, export, import"
+categories = ["command-line-utilities", "api-bindings"]
 keywords = ["mcp", "memory", "cli", "agent"]
 readme = "../../README.md"
-
-[[bin]]
-name = "recall-cli"
-path = "src/main.rs"
+include = ["src/**", "tests/**", "LICENSE", "../../README.md"]
 
 [dependencies]
 recall-core = { workspace = true }

@@ -4,12 +4,45 @@
 use crate::error::{RecallError, Result};
 use crate::util::{fnv1a64, tokenize};
 
+/// Stable identity of the embedder that wrote a store's vectors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbedderMeta {
+    pub fingerprint: String,
+    pub name: String,
+    pub dimensions: usize,
+}
+
+/// Outcome of the core embedder guard at store open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmbedderStatus {
+    /// Empty/new store: the embedder identity was stamped.
+    Stamped,
+    /// Stored identity matches the current embedder.
+    Matched,
+    /// Pre-guard store with no identity: adopted because the stored vector
+    /// dimensions match (or no vectors exist). Callers should log a warning.
+    AdoptedLegacy { stored_dimensions: Option<usize> },
+    /// Identity mismatch explicitly allowed by the operator. The stored
+    /// fingerprint is NOT rewritten, so the guard keeps warning next time.
+    MismatchAllowed {
+        stored: EmbedderMeta,
+        current: EmbedderMeta,
+    },
+}
+
 /// Turns text into a fixed-length dense vector.
 pub trait Embedder: Send + Sync {
     fn dimensions(&self) -> usize;
     fn name(&self) -> &'static str;
     /// Embed `text`; never panics. Empty/whitespace text yields a zero vector.
     fn embed(&self, text: &str) -> Vec<f32>;
+    /// Stable identity for the vectors this embedder writes. Stored in
+    /// `store_meta` so an incompatible embedder cannot silently mix vector
+    /// spaces (same-dimension models are the dangerous case). The default
+    /// combines the stable name with the dimensionality.
+    fn fingerprint(&self) -> String {
+        format!("{}@{}", self.name(), self.dimensions())
+    }
     /// Whether this embedder produces dense neural sentence embeddings — the
     /// class that published embedding-inversion attacks (vec2text-style) can
     /// partially reverse into text. The server/CLI use this to warn when

@@ -1,3 +1,11 @@
+# HISTORICAL: Adversarial review
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Adversarial review: recall-mcp
 
 - **Reviewer:** independent hostile review

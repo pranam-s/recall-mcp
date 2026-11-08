@@ -1,56 +1,646 @@
 {
-  "description": "Recall-MCP golden set: 50 queries with expected memory ids. The eval test seeds evals/corpus.json verbatim into a fresh SQLite store with the default HashEmbedder, runs each query through hybrid recall with k=5, and gates hit-rate@5 (fraction of queries whose expected memory appears in the top 5) at >= 0.85.",
   "hit_rate_target": 0.85,
+  "mrr_target": 0.8,
   "queries": [
-    { "namespace": "eng", "query": "when do we ship to production each week", "expect_id": "eng-01" },
-    { "namespace": "eng", "query": "how long does a rollback take", "expect_id": "eng-01" },
-    { "namespace": "eng", "query": "postgres max connections per instance", "expect_id": "eng-02" },
-    { "namespace": "eng", "query": "who to ask before raising the database pool", "expect_id": "eng-02" },
-    { "namespace": "eng", "query": "where does the staging database live", "expect_id": "eng-03" },
-    { "namespace": "eng", "query": "workspace layout architecture decision", "expect_id": "eng-05" },
-    { "namespace": "eng", "query": "api rate limit per key", "expect_id": "eng-06" },
-    { "namespace": "eng", "query": "websocket reconnect backoff timing", "expect_id": "eng-07" },
-    { "namespace": "eng", "query": "which timezone do cron jobs use", "expect_id": "eng-08" },
-    { "namespace": "eng", "query": "how do spans relate to gateway logs", "expect_id": "eng-09" },
-    { "namespace": "eng", "query": "where does request id logging come from", "expect_id": "eng-09" },
-    { "namespace": "eng", "query": "terraform state bucket for queue infrastructure", "expect_id": "eng-10" },
-    { "namespace": "eng", "query": "minimum ios and android versions supported", "expect_id": "eng-11" },
-    { "namespace": "eng", "query": "which clients get the maintenance screen", "expect_id": "eng-11" },
-    { "namespace": "eng", "query": "how to refresh the search index cache", "expect_id": "eng-12" },
-    { "namespace": "eng", "query": "p95 latency at 3000 requests per second", "expect_id": "eng-13" },
-    { "namespace": "eng", "query": "where do billing workers run in kubernetes", "expect_id": "eng-14" },
-    { "namespace": "eng", "query": "single sign on token lifetime", "expect_id": "eng-15" },
-    { "namespace": "eng", "query": "oidc identity provider integration details", "expect_id": "eng-15" },
-    { "namespace": "eng", "query": "when are database backups taken", "expect_id": "eng-16" },
-    { "namespace": "eng", "query": "backup retention days cold storage", "expect_id": "eng-16" },
-    { "namespace": "product", "query": "how many steps in onboarding now", "expect_id": "product-01" },
-    { "namespace": "product", "query": "usability study changes to the flow", "expect_id": "product-01" },
-    { "namespace": "product", "query": "team plan price per seat", "expect_id": "product-02" },
-    { "namespace": "product", "query": "when does the reporting dashboard beta start", "expect_id": "product-03" },
-    { "namespace": "product", "query": "top reason customers churn", "expect_id": "product-04" },
-    { "namespace": "product", "query": "which integration do leavers miss most", "expect_id": "product-04" },
-    { "namespace": "product", "query": "q4 roadmap top priority", "expect_id": "product-05" },
-    { "namespace": "product", "query": "what powers the docs site search", "expect_id": "product-06" },
-    { "namespace": "product", "query": "routing of billing support tickets", "expect_id": "product-07" },
-    { "namespace": "product", "query": "waitlist size after launch post", "expect_id": "product-08" },
-    { "namespace": "product", "query": "signups since the front page launch", "expect_id": "product-08" },
-    { "namespace": "product", "query": "biggest accessibility gap from the audit", "expect_id": "product-09" },
-    { "namespace": "product", "query": "export formats supported csv json", "expect_id": "product-10" },
-    { "namespace": "product", "query": "why no pdf export yet", "expect_id": "product-10" },
-    { "namespace": "product", "query": "advisory board quarterly focus", "expect_id": "product-11" },
-    { "namespace": "product", "query": "trial length for enterprise prospects", "expect_id": "product-12" },
-    { "namespace": "personal", "query": "dentist appointment date and time", "expect_id": "personal-01" },
-    { "namespace": "personal", "query": "where is the dentist located", "expect_id": "personal-01" },
-    { "namespace": "personal", "query": "when does the gym membership renew", "expect_id": "personal-02" },
-    { "namespace": "personal", "query": "cancel climbing if shoulder not healed", "expect_id": "personal-02" },
-    { "namespace": "personal", "query": "passport expiration renewal timing", "expect_id": "personal-03" },
-    { "namespace": "personal", "query": "which coffee beans do i like", "expect_id": "personal-04" },
-    { "namespace": "personal", "query": "favorite roast from the roastery", "expect_id": "personal-04" },
-    { "namespace": "personal", "query": "watering schedule for the plants", "expect_id": "personal-05" },
-    { "namespace": "personal", "query": "how to contact the landlord about repairs", "expect_id": "personal-06" },
-    { "namespace": "personal", "query": "when does book club meet", "expect_id": "personal-07" },
-    { "namespace": "personal", "query": "what novel is the club reading", "expect_id": "personal-07" },
-    { "namespace": "personal", "query": "where are tax documents stored", "expect_id": "personal-08" },
-    { "namespace": "personal", "query": "gift idea for mom in december", "expect_id": "personal-11" }
+    {
+      "namespace": "product",
+      "query": "deploy payments friday",
+      "expect_id": "m01"
+    },
+    {
+      "namespace": "product",
+      "query": "mobile offline sync",
+      "expect_id": "m02"
+    },
+    {
+      "namespace": "product",
+      "query": "password reset expiry",
+      "expect_id": "m03"
+    },
+    {
+      "namespace": "product",
+      "query": "checkout payment methods",
+      "expect_id": "m04"
+    },
+    {
+      "namespace": "product",
+      "query": "search ranking relevance recency",
+      "expect_id": "m05"
+    },
+    {
+      "namespace": "product",
+      "query": "onboarding wizard steps",
+      "expect_id": "m06"
+    },
+    {
+      "namespace": "product",
+      "query": "dark mode system theme",
+      "expect_id": "m07"
+    },
+    {
+      "namespace": "product",
+      "query": "export csv json",
+      "expect_id": "m08"
+    },
+    {
+      "namespace": "product",
+      "query": "notification batching interval",
+      "expect_id": "m09"
+    },
+    {
+      "namespace": "product",
+      "query": "pricing subscription tiers",
+      "expect_id": "m10"
+    },
+    {
+      "namespace": "product",
+      "query": "avatar crop profile",
+      "expect_id": "m11"
+    },
+    {
+      "namespace": "product",
+      "query": "revoke invite links owner",
+      "expect_id": "m12"
+    },
+    {
+      "namespace": "product",
+      "query": "dashboard refresh interval",
+      "expect_id": "m13"
+    },
+    {
+      "namespace": "product",
+      "query": "keyboard shortcuts control key",
+      "expect_id": "m14"
+    },
+    {
+      "namespace": "product",
+      "query": "screen reader async status",
+      "expect_id": "m15"
+    },
+    {
+      "namespace": "product",
+      "query": "api rate limit sixty",
+      "expect_id": "m16"
+    },
+    {
+      "namespace": "product",
+      "query": "image conversion webp",
+      "expect_id": "m17"
+    },
+    {
+      "namespace": "product",
+      "query": "deleted workspace recovery window",
+      "expect_id": "m18"
+    },
+    {
+      "namespace": "product",
+      "query": "two factor authenticator apps",
+      "expect_id": "m19"
+    },
+    {
+      "namespace": "product",
+      "query": "help centre fuzzy search",
+      "expect_id": "m20"
+    },
+    {
+      "namespace": "ops",
+      "query": "postgres backups nightly",
+      "expect_id": "m21"
+    },
+    {
+      "namespace": "ops",
+      "query": "kubernetes autoscale twelve nodes",
+      "expect_id": "m22"
+    },
+    {
+      "namespace": "ops",
+      "query": "redis lru eviction",
+      "expect_id": "m23"
+    },
+    {
+      "namespace": "ops",
+      "query": "alerts page on call",
+      "expect_id": "m24"
+    },
+    {
+      "namespace": "ops",
+      "query": "nginx tls termination",
+      "expect_id": "m25"
+    },
+    {
+      "namespace": "ops",
+      "query": "incident review two days",
+      "expect_id": "m26"
+    },
+    {
+      "namespace": "ops",
+      "query": "database migrations before deploy",
+      "expect_id": "m27"
+    },
+    {
+      "namespace": "ops",
+      "query": "logs retention thirty days",
+      "expect_id": "m28"
+    },
+    {
+      "namespace": "ops",
+      "query": "staging mirrors production",
+      "expect_id": "m29"
+    },
+    {
+      "namespace": "ops",
+      "query": "secrets rotation ninety days",
+      "expect_id": "m30"
+    },
+    {
+      "namespace": "ops",
+      "query": "load balancer healthz",
+      "expect_id": "m31"
+    },
+    {
+      "namespace": "ops",
+      "query": "disk usage alert eighty",
+      "expect_id": "m32"
+    },
+    {
+      "namespace": "ops",
+      "query": "queue retry failed jobs",
+      "expect_id": "m33"
+    },
+    {
+      "namespace": "ops",
+      "query": "cdn cache static assets",
+      "expect_id": "m34"
+    },
+    {
+      "namespace": "ops",
+      "query": "backup restore quarterly test",
+      "expect_id": "m35"
+    },
+    {
+      "namespace": "ops",
+      "query": "cpu throttling latency pods",
+      "expect_id": "m36"
+    },
+    {
+      "namespace": "ops",
+      "query": "dependency upgrades tuesday",
+      "expect_id": "m37"
+    },
+    {
+      "namespace": "ops",
+      "query": "audit log admin actions",
+      "expect_id": "m38"
+    },
+    {
+      "namespace": "ops",
+      "query": "status page regional outages",
+      "expect_id": "m39"
+    },
+    {
+      "namespace": "ops",
+      "query": "container image signing cosign",
+      "expect_id": "m40"
+    },
+    {
+      "namespace": "research",
+      "query": "benchmark bm25 dense retrieval",
+      "expect_id": "m41"
+    },
+    {
+      "namespace": "research",
+      "query": "chunking long documents recall",
+      "expect_id": "m42"
+    },
+    {
+      "namespace": "research",
+      "query": "embedding inversion reconstruct text",
+      "expect_id": "m43"
+    },
+    {
+      "namespace": "research",
+      "query": "hybrid search lexical semantic",
+      "expect_id": "m44"
+    },
+    {
+      "namespace": "research",
+      "query": "recency decay exponential curve",
+      "expect_id": "m45"
+    },
+    {
+      "namespace": "research",
+      "query": "annotated corpus labelled pairs",
+      "expect_id": "m46"
+    },
+    {
+      "namespace": "research",
+      "query": "precision at five top results",
+      "expect_id": "m47"
+    },
+    {
+      "namespace": "research",
+      "query": "token budget agent context",
+      "expect_id": "m48"
+    },
+    {
+      "namespace": "research",
+      "query": "embeddings plaintext at rest",
+      "expect_id": "m49"
+    },
+    {
+      "namespace": "research",
+      "query": "offline eval golden set",
+      "expect_id": "m50"
+    },
+    {
+      "namespace": "product",
+      "query": "deploy payments friday",
+      "expect_id": "m01",
+      "tags": [
+        "release"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "mobile offline sync",
+      "expect_id": "m02",
+      "tags": [
+        "mobile"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "password reset expiry",
+      "expect_id": "m03",
+      "tags": [
+        "auth"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "checkout payment methods",
+      "expect_id": "m04",
+      "tags": [
+        "payments"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "search ranking relevance recency",
+      "expect_id": "m05",
+      "tags": [
+        "search"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "onboarding wizard steps",
+      "expect_id": "m06",
+      "tags": [
+        "ux"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "dark mode system theme",
+      "expect_id": "m07",
+      "tags": [
+        "ux"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "export csv json",
+      "expect_id": "m08",
+      "tags": [
+        "data"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "notification batching interval",
+      "expect_id": "m09",
+      "tags": [
+        "notifications"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "pricing subscription tiers",
+      "expect_id": "m10",
+      "tags": [
+        "billing"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "avatar crop profile",
+      "expect_id": "m11",
+      "tags": [
+        "ux"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "revoke invite links owner",
+      "expect_id": "m12",
+      "tags": [
+        "permissions"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "dashboard refresh interval",
+      "expect_id": "m13",
+      "tags": [
+        "dashboard"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "keyboard shortcuts control key",
+      "expect_id": "m14",
+      "tags": [
+        "accessibility"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "screen reader async status",
+      "expect_id": "m15",
+      "tags": [
+        "accessibility"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "api rate limit sixty",
+      "expect_id": "m16",
+      "tags": [
+        "api"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "image conversion webp",
+      "expect_id": "m17",
+      "tags": [
+        "media"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "deleted workspace recovery window",
+      "expect_id": "m18",
+      "tags": [
+        "retention"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "two factor authenticator apps",
+      "expect_id": "m19",
+      "tags": [
+        "auth"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "product",
+      "query": "help centre fuzzy search",
+      "expect_id": "m20",
+      "tags": [
+        "support"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "postgres backups nightly",
+      "expect_id": "m21",
+      "tags": [
+        "database"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "kubernetes autoscale twelve nodes",
+      "expect_id": "m22",
+      "tags": [
+        "infra"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "redis lru eviction",
+      "expect_id": "m23",
+      "tags": [
+        "cache"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "alerts page on call",
+      "expect_id": "m24",
+      "tags": [
+        "monitoring"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "nginx tls termination",
+      "expect_id": "m25",
+      "tags": [
+        "infra"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "incident review two days",
+      "expect_id": "m26",
+      "tags": [
+        "process"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "database migrations before deploy",
+      "expect_id": "m27",
+      "tags": [
+        "database"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "logs retention thirty days",
+      "expect_id": "m28",
+      "tags": [
+        "logging"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "staging mirrors production",
+      "expect_id": "m29",
+      "tags": [
+        "environments"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "secrets rotation ninety days",
+      "expect_id": "m30",
+      "tags": [
+        "security"
+      ],
+      "case": "tag-scoped"
+    },
+    {
+      "namespace": "ops",
+      "query": "load balancer healthz",
+      "expect_id": "m31",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "disk usage alert eighty",
+      "expect_id": "m32",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "queue retry failed jobs",
+      "expect_id": "m33",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "cdn cache static assets",
+      "expect_id": "m34",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "backup restore quarterly test",
+      "expect_id": "m35",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "cpu throttling latency pods",
+      "expect_id": "m36",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "dependency upgrades tuesday",
+      "expect_id": "m37",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "audit log admin actions",
+      "expect_id": "m38",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "status page regional outages",
+      "expect_id": "m39",
+      "case": "temporal"
+    },
+    {
+      "namespace": "ops",
+      "query": "container image signing cosign",
+      "expect_id": "m40",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "benchmark bm25 dense retrieval",
+      "expect_id": "m41",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "chunking long documents recall",
+      "expect_id": "m42",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "embedding inversion reconstruct text",
+      "expect_id": "m43",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "hybrid search lexical semantic",
+      "expect_id": "m44",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "recency decay exponential curve",
+      "expect_id": "m45",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "annotated corpus labelled pairs",
+      "expect_id": "m46",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "precision at five top results",
+      "expect_id": "m47",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "token budget agent context",
+      "expect_id": "m48",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "embeddings plaintext at rest",
+      "expect_id": "m49",
+      "case": "temporal"
+    },
+    {
+      "namespace": "research",
+      "query": "offline eval golden set",
+      "expect_id": "m50",
+      "case": "temporal"
+    }
   ]
 }

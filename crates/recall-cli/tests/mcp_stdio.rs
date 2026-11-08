@@ -99,7 +99,7 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     assert_eq!(response["id"], 1);
     let result = unwrap_result(&response);
     assert_eq!(result["serverInfo"]["name"], "recall-mcp");
-    // Wire pin: rmcp 3.3 answers a `2026-07-28` initialize with `2025-11-25`
+    // Wire pin: rmcp 3.9 answers a `2026-07-28` initialize with `2025-11-25`
     // (the newest legacy handshake version — the 2026-07-28 revision replaced
     // the handshake with per-request metadata). Pinned against SDK drift.
     assert_eq!(result["protocolVersion"], "2025-11-25");
@@ -161,7 +161,7 @@ fn conformance_initialize_tools_list_call_over_stdio() {
         json!({ "namespace": "stdio-test" }),
     ));
     assert_eq!(
-        tool_text(unwrap_result(&response))
+        tool_text(unwrap_result(&response))["items"]
             .as_array()
             .unwrap()
             .len(),
@@ -180,7 +180,8 @@ fn conformance_initialize_tools_list_call_over_stdio() {
                 {"role": "user", "content": "the stdio capture round trip works", "at": 1_786_000_500},
                 {"role": "assistant", "content": long}
             ],
-            "tags": ["session:stdio"]
+            "tags": ["session:stdio"],
+            "include_memories": true
         }),
     ));
     assert_eq!(response["id"], 7);
@@ -223,4 +224,60 @@ fn tool_call(id: u64, name: &str, args: Value) -> Value {
         "method": "tools/call",
         "params": { "name": name, "arguments": args }
     })
+}
+
+fn draft_meta() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {}
+    })
+}
+
+#[test]
+fn stateless_2026_07_28_discover_list_and_call_over_stdio() {
+    // No initialize handshake and no headers: stdio requests carry the
+    // protocol version in `_meta`, the 2026-07-28 lifecycle.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("stateless-stdio.db");
+    let db = db_path.to_str().unwrap();
+    let mut session = StdioSession::spawn(db);
+
+    let response = session.request(&json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "server/discover",
+        "params": { "_meta": draft_meta() }
+    }));
+    let discovered = unwrap_result(&response);
+    assert!(
+        discovered["supportedVersions"]
+            .as_array()
+            .is_some_and(|v| v.iter().any(|x| x == "2026-07-28")),
+        "discover must advertise 2026-07-28: {discovered}"
+    );
+
+    let response = session.request(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": { "_meta": draft_meta() }
+    }));
+    assert_eq!(
+        unwrap_result(&response)["tools"].as_array().unwrap().len(),
+        6
+    );
+
+    let response = session.request(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "remember",
+            "arguments": {"namespace": "stateless-stdio", "text": "no handshake needed"},
+            "_meta": draft_meta()
+        }
+    }));
+    let stored = tool_text(unwrap_result(&response));
+    assert_eq!(stored["text"], "no handshake needed");
+    assert_eq!(stored["source"], "mcp");
 }

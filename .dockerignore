@@ -1,0 +1,16 @@
+target
+web/node_modules
+web/dist
+web/playwright-report
+web/test-results
+.fastembed_cache
+.git
+.github
+docs
+evals
+skills
+spikes
+releases
+*.db
+*.db-wal
+*.db-shm

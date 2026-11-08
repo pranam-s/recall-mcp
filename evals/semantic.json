@@ -1,0 +1,256 @@
+{
+  "hit_rate_target": 0.85,
+  "mrr_target": 0.8,
+  "queries": [
+    {
+      "namespace": "product",
+      "query": "ship the billing service at the end of the week",
+      "expect_id": "m01"
+    },
+    {
+      "namespace": "product",
+      "query": "the mobile client keeps working offline and syncs later",
+      "expect_id": "m02"
+    },
+    {
+      "namespace": "product",
+      "query": "account recovery links stop working quickly",
+      "expect_id": "m03"
+    },
+    {
+      "namespace": "product",
+      "query": "customers can pay by card or phone wallet",
+      "expect_id": "m04"
+    },
+    {
+      "namespace": "product",
+      "query": "the result list mixes match quality with how new an item is",
+      "expect_id": "m05"
+    },
+    {
+      "namespace": "product",
+      "query": "new users finish setup through a brief guided sequence",
+      "expect_id": "m06"
+    },
+    {
+      "namespace": "product",
+      "query": "the interface switches palette with the desktop setting",
+      "expect_id": "m07"
+    },
+    {
+      "namespace": "product",
+      "query": "users can save their data as a spreadsheet or structured file",
+      "expect_id": "m08"
+    },
+    {
+      "namespace": "product",
+      "query": "notification alerts arrive in batched digests every ten minutes",
+      "expect_id": "m09"
+    },
+    {
+      "namespace": "product",
+      "query": "plans are shown at three different levels",
+      "expect_id": "m10"
+    },
+    {
+      "namespace": "product",
+      "query": "profile pictures are trimmed into a round shape",
+      "expect_id": "m11"
+    },
+    {
+      "namespace": "product",
+      "query": "the person in charge can cancel pending invitations",
+      "expect_id": "m12"
+    },
+    {
+      "namespace": "product",
+      "query": "the dashboard overview updates every thirty seconds",
+      "expect_id": "m13"
+    },
+    {
+      "namespace": "product",
+      "query": "hotkeys rely on ctrl in the windows build",
+      "expect_id": "m14"
+    },
+    {
+      "namespace": "product",
+      "query": "assistive technology reads out background updates",
+      "expect_id": "m15"
+    },
+    {
+      "namespace": "product",
+      "query": "clients may call the service once per second on average",
+      "expect_id": "m16"
+    },
+    {
+      "namespace": "product",
+      "query": "pictures are transcoded into a modern compressed format",
+      "expect_id": "m17"
+    },
+    {
+      "namespace": "product",
+      "query": "a deleted workspace can be restored within seven days",
+      "expect_id": "m18"
+    },
+    {
+      "namespace": "product",
+      "query": "second factor codes come from a token generator",
+      "expect_id": "m19"
+    },
+    {
+      "namespace": "product",
+      "query": "documentation lookup tolerates small typos",
+      "expect_id": "m20"
+    },
+    {
+      "namespace": "ops",
+      "query": "postgres database backups run nightly at two am",
+      "expect_id": "m21"
+    },
+    {
+      "namespace": "ops",
+      "query": "container capacity grows up to a dozen machines",
+      "expect_id": "m22"
+    },
+    {
+      "namespace": "ops",
+      "query": "the in-memory store drops the oldest unused entries first",
+      "expect_id": "m23"
+    },
+    {
+      "namespace": "ops",
+      "query": "incidents wake the duty responder after a short delay",
+      "expect_id": "m24"
+    },
+    {
+      "namespace": "ops",
+      "query": "the reverse proxy handles encryption ahead of the app",
+      "expect_id": "m25"
+    },
+    {
+      "namespace": "ops",
+      "query": "incident postmortems are scheduled within two business days",
+      "expect_id": "m26"
+    },
+    {
+      "namespace": "ops",
+      "query": "schema changes complete ahead of the application rollout",
+      "expect_id": "m27"
+    },
+    {
+      "namespace": "ops",
+      "query": "log archives stay for a month in blob storage",
+      "expect_id": "m28"
+    },
+    {
+      "namespace": "ops",
+      "query": "the test deployment copies the live configuration",
+      "expect_id": "m29"
+    },
+    {
+      "namespace": "ops",
+      "query": "credentials and secrets are replaced every ninety days",
+      "expect_id": "m30"
+    },
+    {
+      "namespace": "ops",
+      "query": "traffic routing probes the liveness endpoint",
+      "expect_id": "m31"
+    },
+    {
+      "namespace": "ops",
+      "query": "capacity warnings trigger when storage is nearly full",
+      "expect_id": "m32"
+    },
+    {
+      "namespace": "ops",
+      "query": "background tasks are attempted again a few times",
+      "expect_id": "m33"
+    },
+    {
+      "namespace": "ops",
+      "query": "edge servers keep frontend files for twelve months",
+      "expect_id": "m34"
+    },
+    {
+      "namespace": "ops",
+      "query": "recovery drills happen four times a year",
+      "expect_id": "m35"
+    },
+    {
+      "namespace": "ops",
+      "query": "performance critical containers avoid processor limits",
+      "expect_id": "m36"
+    },
+    {
+      "namespace": "ops",
+      "query": "third party packages update weekly on a fixed day",
+      "expect_id": "m37"
+    },
+    {
+      "namespace": "ops",
+      "query": "the audit log records privileged admin actions",
+      "expect_id": "m38"
+    },
+    {
+      "namespace": "ops",
+      "query": "customers see which geography is affected",
+      "expect_id": "m39"
+    },
+    {
+      "namespace": "ops",
+      "query": "artifacts carry a verifiable cryptographic signature",
+      "expect_id": "m40"
+    },
+    {
+      "namespace": "research",
+      "query": "the study weighs keyword scoring against neural vectors",
+      "expect_id": "m41"
+    },
+    {
+      "namespace": "research",
+      "query": "splitting big texts lifts retrieval accuracy",
+      "expect_id": "m42"
+    },
+    {
+      "namespace": "research",
+      "query": "vectors may be reversed back into readable passages",
+      "expect_id": "m43"
+    },
+    {
+      "namespace": "research",
+      "query": "the ranking mixes word matching with meaning matching",
+      "expect_id": "m44"
+    },
+    {
+      "namespace": "research",
+      "query": "freshness falls off smoothly over time",
+      "expect_id": "m45"
+    },
+    {
+      "namespace": "research",
+      "query": "human judges marked a few hundred query examples",
+      "expect_id": "m46"
+    },
+    {
+      "namespace": "research",
+      "query": "quality is scored on the leading handful of hits",
+      "expect_id": "m47"
+    },
+    {
+      "namespace": "research",
+      "query": "token budgets limit how much context an assistant can read",
+      "expect_id": "m48"
+    },
+    {
+      "namespace": "research",
+      "query": "vectors are not sealed by the encryption layer",
+      "expect_id": "m49"
+    },
+    {
+      "namespace": "research",
+      "query": "regression checks rely on a stable labelled collection",
+      "expect_id": "m50"
+    }
+  ]
+}

@@ -12,8 +12,12 @@ const repoRoot = join(here, "..", "..");
 const exe = join(repoRoot, "target", "debug", process.platform === "win32" ? "recall-cli.exe" : "recall-cli");
 const webDir = join(repoRoot, "web", "dist");
 const db = join(mkdtempSync(join(tmpdir(), "recall-e2e-")), "e2e.db");
+const port = process.env.RECALL_E2E_PORT ?? "8799";
+const apiKey = process.env.RECALL_E2E_API_KEY;
+const args = ["serve", "--bind", `127.0.0.1:${port}`, "--db", db, "--web-dir", webDir];
+if (apiKey) args.push("--api-key", apiKey);
 
-const child = spawn(exe, ["serve", "--bind", "127.0.0.1:8799", "--db", db, "--web-dir", webDir], {
+const child = spawn(exe, args, {
   stdio: ["ignore", "inherit", "inherit"],
 });
 

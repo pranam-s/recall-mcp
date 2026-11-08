@@ -1,147 +1,209 @@
 # Recall-MCP architecture
 
-Describes the **shipped v0.3 design** (2026-09-11 revision; the pre-implementation
-v1 sketch (sqlite-vec, trait `Scorer`, `--embedding-api`, utoipa) was abandoned
-during build-out; history is in git, decisions in docs/adr/DECISIONS.md).
+Describes the shipped 0.5.0 design. Per-decision records and dated amendments
+live in [adr/DECISIONS.md](adr/DECISIONS.md) (D-001 to D-021). Measured numbers
+live in [EVALUATION.md](EVALUATION.md).
 
-**Stack:** Rust 2024 (GNU toolchain, Windows) · Axum 0.8 + Tokio · SQLite via
-rusqlite (bundled, FTS5) · rmcp 3.3 (targets the MCP 2026-07-28 spec; the
-wire `initialize` handshake answers `2025-11-25`, see D-004) · React 19 +
+**Stack:** Rust 2024 (MSVC primary, GNU secondary) · Axum 0.8 + Tokio · SQLite
+via rusqlite 0.41 (bundled, FTS5) · rmcp 3.9 (targets the MCP 2026-07-28 spec;
+the wire `initialize` handshake answers `2025-11-25`, D-004) · React 19 +
 Vite 8 + TypeScript + Tailwind 4 · `cargo test` + `cargo llvm-cov` +
 Playwright/axe.
 
-## Components
+## What the system is
 
-```
+A local-first semantic memory broker packaged three ways from one core: an MCP
+server (stdio and streamable-HTTP), an HTTP/JSON API with a hand-written
+OpenAPI document, and a CLI over the same engine. One SQLite file is the whole
+store.
+
+The product thesis is explainable retrieval: every recall result carries
+`{bm25, vector, recency, pinned_boost, total}`, never a black-box top-k. The
+components are computed separately, unit-tested, and rendered by the web UI.
+
+## Layering
+
+```text
 crates/
-  recall-core/       # pure domain: models, Store trait + SqliteStore (FTS5, WAL,
-                     # BLOB embeddings, packed vector cache, maintenance ops),
-                     # crypto (ChaCha20-Poly1305 + keyed FTS digests), Embedder
-                     # trait (HashEmbedder default; OnnxEmbedder/OpenAIEmbedder
-                     # behind cargo features), concrete HybridScorer, capture
-                     # chunking, export/import
-  recall-server/     # axum REST API (/v1/*), hand-written OpenAPI document,
-                     # /metrics (Prometheus 0.0.4), auth + rate-limit + origin
-                     # guard middleware, rmcp MCP tools over streamable-HTTP and
-                     # stdio, shared capture pipeline
-  recall-cli/        # clap CLI: serve (HTTP+MCP / --stdio), remember, recall,
-                     # update, export, import, backup, vacuum
-web/                 # React 19 + Vite 8 + TS UI; talks to the HTTP API only
-evals/               # fixture corpus (40 memories) + golden set (50 queries)
+  recall-core/    pure domain: models, validation, compact views, Store trait,
+                  SqliteStore (FTS5, WAL, crypto, packed vector cache,
+                  maintenance), Embedder trait + hash/ONNX/OpenAI, HybridScorer,
+                  capture chunking, export/import
+  recall-server/  axum REST (/v1/*), OpenAPI, /metrics, auth, bounded token
+                  bucket, Host/Origin guard, security headers, JSON errors, rmcp
+                  tools over HTTP and stdio, spawn_blocking bridges
+  recall-cli/     clap surface: serve, remember, recall, update, forget, list,
+                  capture, stats, keygen, export, import, backup, vacuum
+web/              React + Vite SPA, a pure API client, Playwright + axe e2e
+evals/            100-memory corpus, 100 golden queries, 50 semantic queries
+skills/           agent skill plus CLI and MCP references
+docs/             architecture, decisions, evaluation, status, clients, history
 ```
 
-Rationale (ADR-001): workspace crates keep the domain pure (no axum/rmcp/tokio
-types in core), which is what makes the coverage gate (lines + regions >= 90)
-achievable and the MCP transport swappable.
+The pure-core rule (D-001) is not aesthetic. The coverage gate is achievable
+because the scorer, store, embedders, chunker, crypto, validation, and views are
+testable without an HTTP runtime. The MCP transport is swappable because core
+does not know it exists. Input is validated in core and again at each edge,
+which is deliberate duplication: a shared validation layer typed for async HTTP
+would drag axum types back into core.
 
-## Data model (SQLite, single file; D-002 as amended)
+## Data model
 
 ```sql
-store_meta(key TEXT PK, value TEXT)           -- at-rest mode marker + key-check blob
+store_meta(key TEXT PK, value TEXT)           -- mode, key check, forensic marker,
+                                              -- embedder identity
 namespaces(id TEXT PK, name TEXT UNIQUE, created_at INTEGER)
 memories(id TEXT PK, namespace_id TEXT FK REFERENCES namespaces ON DELETE CASCADE,
-         text TEXT NOT NULL,                  -- ciphertext in keyed mode (D-014)
-         fts_tokens TEXT NOT NULL DEFAULT '', -- plaintext text OR keyed HMAC digests
+         text TEXT NOT NULL,                  -- ciphertext in keyed mode
+         fts_tokens TEXT NOT NULL DEFAULT '', -- plaintext text or HMAC digests
          tags TEXT /*json*/, embedding BLOB /*f32 LE, nullable*/,
          source TEXT DEFAULT 'agent', pinned INTEGER DEFAULT 0,
-         created_at INTEGER, last_accessed_at INTEGER /*write-time only, AR-018*/)
-memories_fts(fts_tokens)   -- FTS5, external-content over memories, trigger-synced
+         created_at INTEGER, last_accessed_at INTEGER /*write-time only*/)
+memories_fts(fts_tokens)   -- FTS5 external-content index, trigger-synced
 ```
 
-There is **no vector extension**: embedding similarity is a brute-force exact
-cosine scan over the BLOBs in rowid order (D-002 amended; sqlite-vec was
-abandoned), with an exact top-k candidate heap and a slim scoring-columns scan
-(D-016), served from a packed in-memory vector cache that any write invalidates
-(D-019). `scan_cap` (default 10 000 rows/namespace) bounds the vector scan;
-keyword candidates are capped at `candidate_cap` (200); both bounds are
-documented approximations (README "Ranking pipeline").
+`PRAGMA user_version` is 2. A newer schema is refused instead of guessed at.
+The connection sets a 5 s busy timeout, WAL, foreign keys, `synchronous=NORMAL`,
+a larger page cache, and memory-mapped reads.
 
-## Encryption at rest (D-014, optional per database)
+There is no vector extension. Similarity is an exact cosine scan over embedding
+BLOBs in rowid order (D-002, amended by D-016 and D-019), with a bounded exact
+top-k heap and a packed in-memory cache. `scan_cap` (default 10,000 rows per
+namespace) bounds the vector scan and `candidate_cap` (200) bounds keyword
+candidates. Both are documented approximations.
 
-`RECALL_MCP_KEY` (64 hex) or `RECALL_MCP_KEY_FILE`. The 256-bit master key is
-HKDF-SHA256-split into an AEAD subkey (`recall-mcp:v1:aead`) and an FTS-MAC
-subkey (`recall-mcp:v1:fts-mac`; key separation, AR-002). `memories.text`
-is `enc:v1:<base64(nonce‖ct‖tag)>` under ChaCha20-Poly1305 (random 96-bit
-nonce per record, safe to ~2^32 encryptions; AAD binds the row id); the FTS
-index holds HMAC-SHA256 token digests truncated to 128 bits, so BM25 works on
-ciphertext. A stored key-check blob makes a wrong key fail at open. Plaintext
-databases are upgraded in place on first keyed open (transaction, with
-`secure_delete=ON`, VACUUM + truncated WAL checkpoint, AR-013); pre-HKDF
-stores are migrated automatically. Documented residual plaintext:
-`tags`/`source`/embeddings (invertible for dense embedders, AR-003) and
-`export` output.
+The packed cache records `PRAGMA data_version`. Another connection's commit
+changes that value, so a stale cache is rebuilt instead of serving old vectors.
+Local writes invalidate the cache directly. Tag-filtered recalls bypass it
+because the cache does not carry tags.
+
+## Recall path
+
+1. **Keyword candidates.** FTS5 `MATCH` over `memories_fts`, ordered by BM25
+   with a rowid tie-break. BM25 is normalized against the candidate set. In
+   keyed mode both documents and queries are HMAC token digests, so ranking sees
+   the same token multiplicities while plaintext stays off disk.
+2. **Vector candidates.** An exact cosine pass reads `(rowid, embedding,
+   created_at, pinned)` and computes from BLOB bytes with the query norm hoisted
+   out of the loop. A bounded max-heap keeps the best vector-only rows. Outside
+   the keyword set BM25 is zero, so a vector-only total is the final total and
+   the heap provably cannot drop a row that belongs in the top k.
+3. **Scoring.** `total = w_bm25*norm_bm25 + w_vector*cosine +
+   w_recency*exp(-days/tau) + pinned_boost`; defaults 0.45/0.45/0.10, tau 30
+   days, boost 0.2, tunable per request. Weights and tau are validated.
+4. **Ordering.** Total desc, created_at desc, rowid asc. The candidate heap and
+   final sort use the same comparator, so ties are deterministic.
+5. **Post-processing.** Full rows are fetched only for survivors. Recall is
+   read-only: `last_accessed_at` is written at insert/update time only (AR-018).
+
+## Encryption at rest (D-014)
+
+`RECALL_MCP_KEY` (64 hex characters) or `RECALL_MCP_KEY_FILE`. HKDF-SHA256
+derives separate AEAD (`recall-mcp:v1:aead`) and FTS-MAC
+(`recall-mcp:v1:fts-mac`) subkeys. `memories.text` is
+`enc:v1:<base64(nonce || ciphertext || tag)>` under ChaCha20-Poly1305 with a
+random 96-bit nonce and the row id bound as AAD. The FTS index stores
+HMAC-SHA256 token digests truncated to 128 bits. A stored key-check blob makes
+a wrong key fail at open.
+
+Every plaintext-to-keyed transition runs with `secure_delete`, then VACUUM and
+`wal_checkpoint(TRUNCATE)`. A `forensic_clean` marker is written `pending` in
+the same transaction as the mode marker and key check, and set `done` only
+after the checkpoint drains the WAL. An interrupted clean retries on the next
+keyed open. Pre-HKDF stores migrate in one transaction. A forensic test covers a
+deleted plaintext row and a plaintext-era WAL frame.
+
+Documented residual plaintext: namespace names, tags, `source`, embeddings
+(invertible for dense embedders), and `export` output.
 
 ## Embedders
 
-Trait `Embedder` (`dimensions/name/embed/embedding_invertible`): `HashEmbedder`
-(deterministic feature hashing, 256-dim, offline, default), `OnnxEmbedder`
-(all-MiniLM-L6-v2 quantized, 384-dim, behind the `onnx` feature + fastembed),
-`OpenAIEmbedder` (behind the `openai` feature; configured via
-`RECALL_MCP_OPENAI_*`, response dims validated, AR-005). Selection is
-`--embedder`/env/config-file resolved in core (`select_embedder`) and carried
-on `ServerConfig` so REST/MCP/capture embed identically. There is no trait
-`Scorer`: ranking is the concrete `HybridScorer` struct.
+The `Embedder` trait exposes `dimensions`, `name`, `fingerprint`, `embed`, and
+`embedding_invertible`. Implementations: `HashEmbedder` (feature hashing,
+256 dimensions, offline, default), `OnnxEmbedder` (all-MiniLM-L6-v2 quantized,
+384 dimensions, `onnx` feature), and `OpenAIEmbedder` (`openai` feature, key
+redacted in Debug, `dimensions` sent for text-embedding-3 models, response
+dimensions validated).
 
-## API surface (HTTP)
+Selection is runtime and fail-closed: an unknown name or a missing feature is a
+typed error, never a silent fallback. The store stamps the embedder
+fingerprint, name, and dimensions in `store_meta`. Empty stores stamp, legacy
+stores with matching dimensions adopt with a warning, and a mismatch names both
+sides and requires `--allow-embedder-mismatch`; that override does not rewrite
+the stored fingerprint.
 
-- `POST /v1/namespaces` · `GET /v1/namespaces`
-- `POST /v1/memories` `{namespace, text, tags?, pinned?, embedding?}` → 201
-  (caller vectors must match the embedder's dims, AR-005)
-- `GET /v1/memories?namespace=&limit=&offset=` → `X-Total-Count` pagination,
-  limit clamped at `MAX_PAGE_LIMIT` (10 000, AR-004)
-- `PATCH /v1/memories/{id}` (partial update, re-embeds on text change)
-- `DELETE /v1/memories/{id}` · `GET /v1/stats`
-- `POST /v1/recall` `{namespace, query, k?, tau_days?, weights?, pinned_boost?, tags?}`
-  → ranked `[memory + breakdown]` (`breakdown: {bm25, vector, recency,
-  pinned_boost, total}`)
-- `POST /v1/capture` `{namespace, transcript, tags?, max_chunk_chars?}` (D-018)
-- `GET /healthz`, `GET /openapi.json` (hand-written document, ADR-007),
-  `GET /metrics` (Prometheus 0.0.4)
-- MCP over streamable-HTTP (`/mcp`) and stdio (`recall-cli serve --stdio`):
-  six tools (`remember`, `recall`, `forget`, `update_memory`,
-  `list_memories`, `capture`) with JSON-Schema input schemas.
+## HTTP and MCP surfaces
 
-Middleware (outermost first): Host/Origin guard (AR-001: foreign Host → 421,
-cross-origin Origin → 403, CORS only for `--allow-origin` opt-ins) → rate
-limiter (token bucket per presented key, AR-012) → API-key auth (constant-time)
-→ body limit (1 MiB default) → tracing/metrics.
+REST:
 
-## Ranking
+- `POST/GET /v1/namespaces`
+- `POST/GET /v1/memories` (compact page by default; `include_embedding=true`
+  restores full records)
+- `PATCH/DELETE /v1/memories/{id}`
+- `POST /v1/recall` (compact hits with breakdowns; `include_embedding=true`)
+- `POST /v1/capture` (compact summary; `include_memories=true` opts in)
+- `GET /v1/stats` (counts plus embedder identity)
+- `GET /healthz`, `GET /openapi.json`, `GET /metrics`
 
-`total = w_bm25·norm_bm25 + w_vector·cosine + w_recency·exp(-Δdays/tau_days) +
-pinned_boost`; defaults 0.45 / 0.45 / 0.10 / 30 d / 0.2, all tunable per
-request with validation (`k ∈ [1,100]`, finite weights, `tau_days > 0`,
-`tau_days: null` disables recency). Deterministic tie-break: total desc,
-created_at desc, id asc.
+MCP: six tools (`remember`, `recall`, `forget`, `update_memory`,
+`list_memories`, `capture`) over stdio and streamable-HTTP. Responses are
+compact by default; `include_embedding` restores full records. `list_memories`
+defaults to 20 and caps at 100. `recall` accepts `format: "json"|"text"`; text
+keeps ranking and the full breakdown and rejects embeddings. Stateless
+2026-07-28 requests carry `_meta` plus `MCP-Protocol-Version`, `Mcp-Method`, and
+`Mcp-Name`. Unknown-id `forget` is an invalid-params error, matching REST's
+404.
 
-## ADRs (summary; full text in docs/adr/DECISIONS.md)
+Middleware order (outermost first): security headers, Host/Origin guard, JSON
+error contract, CORS, tracing, body limit, then rate limit and auth on protected
+routers. The limiter runs before auth; only a key matching the configured key
+gets its own bucket, and the bucket map is bounded. The guard compares Host and
+Origin including scheme and normalized default ports. API, MCP, and metrics
+responses are `no-store` and carry CSP, nosniff, frame denial, referrer policy,
+COOP/CORP, and a permissions policy.
 
-- ADR-001 Rust workspace with pure-core crate: testability + coverage target; web/MCP as shells.
-- ADR-002 (amended) SQLite + FTS5 + brute-force exact cosine (sqlite-vec abandoned); 1M-row ceiling documented.
-- ADR-003 HashEmbedder default: deterministic tests + true offline; onnx/openai as pluggable opt-in features.
-- ADR-004 rmcp SDK; no hand-rolled fallback; spec version pinned.
-- ADR-005 GNU toolchain on Windows (no MSVC Build Tools dependency).
-- ADR-006 UI is a pure API client (no SSR); OpenAPI hand-written (D-006).
-- D-007…D-021 cover the shared-store shape, API-key auth (D-008), the
-  namespace/capture semantics (D-009, D-018), coverage honesty (D-010), local
-  ONNX embeddings (D-013), encryption at rest (D-014), update semantics
-  (D-015), the recall fast path (D-016), hardening defaults (D-017), thread
-  tuning (D-020), and the memory-poisoning threat model (D-021).
+Store and embedder work runs through `spawn_blocking`, so a slow model call
+cannot starve the async runtime and no mutex guard crosses an await.
+
+## Capture
+
+Transcript messages are split deterministically (paragraph, then sentence,
+then a hard character wrap; default 1000 characters, clamped to 100 to 8000).
+Each chunk is embedded outside the store lock, tagged `role:<role>`, and stored
+with `source="capture"`. Namespace creation and every chunk insert run in one
+`BEGIN IMMEDIATE` transaction; a failure leaves no namespace and no partial
+transcript.
+
+## Validation and limits
+
+Core enforces namespace, text, query, id, tag, source, embedding dimension and
+finiteness, capture message count, and total capture characters. Defaults:
+query 10,000 characters, text 100,000, namespace 200, id 256, tag 100,
+100 tags, embedding 8,192 dimensions, 1,000 capture messages, 2,000,000 capture
+characters. Recall caps are bounded (`candidate_cap <= 10,000`,
+`scan_cap <= 1,000,000`), list binds saturate instead of wrapping, and recency
+arithmetic saturates.
 
 ## Testing strategy
 
-- recall-core: unit tests (scorer properties, embedder determinism, store CRUD,
-  crypto roundtrips, export/import) + property-based tests (`proptest`: crypto
-  roundtrip/wrong-AAD, FTS query validity, chunking invariants, scorer
-  linearity, token-bucket invariants) + mutation testing (`cargo-mutants`,
-  `mutants.toml` gates `crypto.rs`/`scorer.rs`; first recorded run: 51
-  mutants, 45 caught, 0 missed, 6 unviable; results in EVALUATION.md).
-- recall-server: router-level `oneshot` integration tests + MCP conformance
-  over streamable-HTTP and stdio (initialize → tools/list → tools/call, error
-  mapping, auth).
-- Golden-set eval test: 50 QA pairs, hit-rate@5 ≥ 0.85 gate.
-- e2e: real-binary CLI tests over sockets; UI Playwright + axe AA.
-- Latency: exact p95 harness (ignored by default, release runs) + criterion.
-- Coverage: `cargo llvm-cov --fail-under-lines 90 --fail-under-regions 90`
-  on recall-core (cargo-llvm-cov 0.9.1 has no branch fail-under; D-010
-  amendment), enforced in CI (linux-gnu) and measured locally on windows-msvc.
+- recall-core: unit tests, property tests (crypto/AAD, FTS syntax, chunking,
+  scorer, token bucket), golden and semantic evals, ignored latency harnesses,
+  and mutation testing for `crypto.rs`/`scorer.rs`.
+- recall-server: router-level integration tests, JSON error contract, security
+  headers, Host/Origin, rate limiter, slow embedder, MCP conformance over both
+  transports, stateless 2026-07-28, and token budgets.
+- recall-cli: real-binary e2e for every command, encryption, backup, compact
+  output, keygen, the `recall` alias, and stdio MCP.
+- Web: production-shaped server plus Playwright and axe AA.
+- Coverage: lines and regions >= 90 on recall-core (D-010 amendment; no stable
+  branch fail-under).
+
+## Known limitations
+
+- p95 at 10k memories measured 27.3 to 35.3 ms on the 2026-11-08 host, above
+  the 25 ms PRD budget. The ignored manual gate records the failure.
+- Beyond roughly 100k memories per namespace, the D-002 ANN revisit applies.
+- Dense embeddings are invertible, so keyed mode does not protect text with
+  ONNX or OpenAI vectors.
+- The OpenAI embedder has never been called live here (no key).
+- CI workflows are committed but Actions is disabled for billing.

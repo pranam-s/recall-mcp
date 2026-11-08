@@ -26,6 +26,7 @@ Sources (live 2026-09-06):
   `repository`, `readme`, `keywords`, `categories`.
 - **Bundled builds**: `rusqlite` stays `features = ["bundled"]` so windows-gnu
   (D-005) needs no system SQLite; document gcc as the only external prereq.
+  MSVC builds use the same bundled path through the project wrapper.
 
 ## rustfmt
 
@@ -48,7 +49,7 @@ Sources (live 2026-09-06):
 - Measure before optimizing: the book's workflow is profile → identify →
   fix → re-measure. For the p95 < 25 ms / 10k-memories PRD budget, build a
   criterion benchmark on `HybridScorer` + the recall scan path *before*
-  touching code (see docs/ALTERNATIVES.md, benchmarks section).
+  touching code (see docs/history/ALTERNATIVES.md, benchmarks section).
 - Default low-risk wins documented by the book: avoid unnecessary
   allocation/clones in the hot path, prefer iterators over collect-then-scan,
   avoid bounds-check-avoiding `unsafe` (we don't need it), build with
@@ -57,9 +58,11 @@ Sources (live 2026-09-06):
 ## Testing conventions (Cargo Book + ecosystem norm)
 
 - Unit tests inline (`#[cfg(test)] mod tests`) in `recall-core`; integration
-  tests per crate in `tests/`; one doc-test per public API item (C-EXAMPLE).
-- Commands are non-negotiable: `cargo test --workspace`,
-  `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`.
+  tests per crate in `tests/`; public behavior gets a test even when a doc test
+  would be nicer.
+- Commands are non-negotiable: `cargo test --workspace --locked`,
+  `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`.
 - windows-gnu caveat: `cargo llvm-cov` cannot run on windows-gnu (no profiler
   runtime, D-010); it runs on windows-msvc and is enforced on linux-gnu CI.
   Gate: lines + regions >= 90 on recall-core (cargo-llvm-cov 0.9.1 has no

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pranam-s/recall-mcp",
+  "title": "Recall-MCP",
+  "description": "Local-first memory broker with explainable hybrid recall over MCP, REST, CLI, and a web UI.",
+  "version": "0.5.0",
+  "repository": {
+    "url": "https://github.com/pranam-s/recall-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/pranam-s/recall-mcp",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "recall-mcp-cli",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        { "type": "positional", "value": "serve" },
+        { "type": "named", "name": "--stdio" }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/pranam-s/recall-mcp:0.5.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        { "type": "positional", "value": "serve" },
+        { "type": "named", "name": "--stdio" }
+      ]
+    }
+  ]
+}

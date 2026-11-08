@@ -3,11 +3,15 @@
 // Curated clippy opt-ins (docs/style-guides/rust-tooling-conventions.md).
 #![warn(clippy::dbg_macro, clippy::todo, clippy::unimplemented)]
 
+use std::io::IsTerminal as _;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use recall_core::export::{ExportData, export, import};
+use recall_core::views::{
+    CompactCaptureSummary, CompactListPage, CompactMemory, CompactRecallHit, render_hits_text,
+};
 use recall_core::{
     Embedder, MemoryUpdate, NewMemory, RecallParams, SharedStore, SqliteStore, shared, unix_now,
 };
@@ -15,24 +19,37 @@ use recall_server::build_router;
 
 #[derive(Parser)]
 #[command(
-    name = "recall-cli",
+    name = "recall",
     version,
     about = "Local-first semantic memory broker (MCP + HTTP + CLI)",
     propagate_version = true
 )]
 struct Cli {
     /// SQLite database file (created if missing). Applies to every subcommand.
-    #[arg(long, global = true, default_value = "recall.db")]
+    #[arg(
+        long,
+        global = true,
+        env = "RECALL_MCP_DB",
+        default_value = "recall.db"
+    )]
     db: PathBuf,
     /// Embedder for remember/recall/update and the server: `hash` (default),
-    /// `onnx` or `openai` (env RECALL_MCP_EMBEDDER). The non-default values
-    /// need their cargo features (`--features onnx|openai`) plus their
-    /// runtime setup; all embeds must use the same embedder a store was
-    /// populated with. See `select_embedder` in recall-core.
+    /// `onnx` or `openai` (env RECALL_MCP_EMBEDDER).
     #[arg(long, global = true)]
     embedder: Option<String>,
+    /// Open a store whose embedder fingerprint/dimensions differ from the
+    /// current embedder. Mixing vector spaces degrades recall; the warning is
+    /// explicit and the stored fingerprint is not rewritten.
+    #[arg(long, global = true, env = "RECALL_MCP_ALLOW_EMBEDDER_MISMATCH")]
+    allow_embedder_mismatch: bool,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Json,
+    Text,
 }
 
 #[derive(Subcommand)]
@@ -70,19 +87,18 @@ enum Command {
         /// Browser origin allowed cross-origin API access (repeatable), e.g.
         /// `--allow-origin http://localhost:5173` for the Vite dev server.
         /// Default: same-origin only — no CORS, foreign origins rejected.
-        #[arg(long = "allow-origin", value_name = "ORIGIN")]
+        #[arg(long = "allow-origin", value_name = "ORIGIN", alias = "allow-origins")]
         allow_origin: Vec<String>,
         /// Extra Host header values to accept besides loopback hosts
         /// (repeatable), for non-loopback bindings such as a LAN IP or a
         /// container healthcheck name. Requests with other Host values are
         /// rejected as misdirected (DNS-rebinding defense).
-        #[arg(long = "allow-host", value_name = "HOST")]
+        #[arg(long = "allow-host", value_name = "HOST", alias = "allow-hosts")]
         allow_host: Vec<String>,
     },
-    /// Store one memory (prints the created record as JSON; the embedding
-    /// vector is omitted unless --show-embedding).
+    /// Store one memory.
     Remember {
-        #[arg(long)]
+        #[arg(long, env = "RECALL_MCP_NAMESPACE")]
         namespace: String,
         #[arg(long)]
         text: String,
@@ -90,16 +106,19 @@ enum Command {
         tags: Vec<String>,
         #[arg(long)]
         pinned: bool,
-        /// Include the stored embedding vector in the printed JSON. Off by
-        /// default: the vector is storage detail, and for a screen-reader
-        /// user it reads as hundreds of spoken zeros per record.
+        /// Full old record shape instead of the compact default.
+        #[arg(long)]
+        full: bool,
+        /// Include the stored embedding vector in the printed JSON.
         #[arg(long)]
         show_embedding: bool,
-    },
-    /// Recall memories (prints ranked hits with breakdowns as JSON; the
-    /// embedding vectors are omitted unless --show-embedding).
-    Recall {
+        /// Pretty-print JSON even when stdout is a pipe.
         #[arg(long)]
+        pretty: bool,
+    },
+    /// Recall memories (ranked hits with score breakdowns).
+    Recall {
+        #[arg(long, env = "RECALL_MCP_NAMESPACE")]
         namespace: String,
         #[arg(long)]
         query: String,
@@ -112,12 +131,20 @@ enum Command {
         /// Only return memories carrying ALL of these tags.
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Output format (default json; text is compact and keeps ranking).
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+        /// Full old record shape instead of the compact default.
+        #[arg(long)]
+        full: bool,
         /// Include each hit's embedding vector in the printed JSON.
         #[arg(long)]
         show_embedding: bool,
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
     },
-    /// Update a memory in place (only the given fields change; prints the
-    /// record; the embedding vector is omitted unless --show-embedding).
+    /// Update a memory in place (only the given fields change).
     Update {
         /// Id of the memory to update.
         #[arg(long)]
@@ -131,9 +158,76 @@ enum Command {
         /// Change the pinned flag.
         #[arg(long)]
         pinned: Option<bool>,
+        /// Full old record shape instead of the compact default.
+        #[arg(long)]
+        full: bool,
         /// Include the stored embedding vector in the printed JSON.
         #[arg(long)]
         show_embedding: bool,
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// Permanently delete one memory by id.
+    Forget {
+        #[arg(long)]
+        id: String,
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// List memories in a namespace, newest first.
+    List {
+        #[arg(long, env = "RECALL_MCP_NAMESPACE")]
+        namespace: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Full old record shape instead of the compact default.
+        #[arg(long)]
+        full: bool,
+        /// Include embedding vectors in the printed JSON.
+        #[arg(long)]
+        show_embedding: bool,
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// Ingest a transcript JSON file as chunked memories.
+    Capture {
+        #[arg(long, env = "RECALL_MCP_NAMESPACE")]
+        namespace: String,
+        /// JSON file containing an array of `{role, content, at}` messages.
+        #[arg(long)]
+        file: PathBuf,
+        /// Extra tags applied to every captured chunk.
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Chunk size cap in characters (default 1000).
+        #[arg(long)]
+        max_chunk_chars: Option<usize>,
+        /// Include every captured record instead of the summary.
+        #[arg(long)]
+        include_memories: bool,
+        /// Include embeddings in the captured records.
+        #[arg(long)]
+        show_embedding: bool,
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// Print store statistics.
+    Stats {
+        /// Pretty-print JSON even when stdout is a pipe.
+        #[arg(long)]
+        pretty: bool,
+    },
+    /// Generate a fresh 256-bit store key and write it owner-only.
+    Keygen {
+        /// Output file (created with owner-only permissions).
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Export the whole store to a JSON file.
     Export {
@@ -169,6 +263,48 @@ fn open_store(db: &PathBuf) -> Result<SharedStore> {
     Ok(shared(store))
 }
 
+/// Read UTF-8 text with an optional byte-order mark stripped. Config files,
+/// key files, and exports written by Windows editors commonly start with a
+/// BOM; refusing them for an invisible character is hostile.
+fn read_text(path: &PathBuf) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    String::from_utf8(bytes.to_vec()).with_context(|| format!("{} is not UTF-8", path.display()))
+}
+
+/// Guard the store's vector space against the resolved embedder. Returns the
+/// status so `serve` can log adoption warnings; a mismatch fails unless the
+/// operator passed the explicit escape hatch.
+fn guard_embedder(
+    store: &SharedStore,
+    embedder: &dyn Embedder,
+    allow_mismatch: bool,
+) -> Result<recall_core::EmbedderStatus> {
+    let guard = store.lock().unwrap_or_else(|p| p.into_inner());
+    let status = guard
+        .check_embedder(embedder, allow_mismatch)
+        .context("check store embedder")?;
+    match &status {
+        recall_core::EmbedderStatus::AdoptedLegacy { stored_dimensions } => {
+            tracing::warn!(
+                embedder = %embedder.name(),
+                stored_dimensions = ?stored_dimensions,
+                "store had no embedder fingerprint; adopted it because the dimensions match. \
+                 If this store was written by a different embedder, re-embed the records"
+            );
+        }
+        recall_core::EmbedderStatus::MismatchAllowed { stored, current } => {
+            tracing::warn!(
+                stored = %stored.fingerprint,
+                current = %current.fingerprint,
+                "embedder mismatch allowed; recall quality will degrade because vector spaces differ"
+            );
+        }
+        _ => {}
+    }
+    Ok(status)
+}
+
 /// Key from `RECALL_MCP_KEY` (64 hex chars) or a file path in
 /// `RECALL_MCP_KEY_FILE` whose contents are the 64-hex-char key. A malformed
 /// key is an error, never a silent fallback to plaintext.
@@ -181,7 +317,7 @@ fn encryption_key() -> Result<Option<recall_core::crypto::StoreKey>> {
     } else {
         match std::env::var("RECALL_MCP_KEY_FILE") {
             Ok(path) if !path.trim().is_empty() => {
-                let text = std::fs::read_to_string(&path)
+                let text = read_text(&PathBuf::from(&path))
                     .with_context(|| format!("read RECALL_MCP_KEY_FILE {path}"))?;
                 Some(text)
             }
@@ -194,8 +330,14 @@ fn encryption_key() -> Result<Option<recall_core::crypto::StoreKey>> {
     }
 }
 
-fn print_json(value: serde_json::Value) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(&value)?);
+fn print_json(value: serde_json::Value, pretty_flag: bool) -> Result<()> {
+    // Compact when piped (one line, token-friendly), pretty on a terminal or
+    // with --pretty.
+    if pretty_flag || std::io::stdout().is_terminal() {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+    } else {
+        println!("{}", serde_json::to_string(&value)?);
+    }
     Ok(())
 }
 
@@ -243,6 +385,20 @@ fn write_private(path: &PathBuf, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Restrict an existing file to the current user where the OS supports it.
+fn restrict_permissions(path: &PathBuf) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
 fn env_api_key() -> Option<String> {
     std::env::var("RECALL_MCP_API_KEY").ok()
 }
@@ -266,6 +422,7 @@ struct ServeArgs {
     embedder: Option<String>,
     allow_origin: Vec<String>,
     allow_host: Vec<String>,
+    allow_embedder_mismatch: bool,
 }
 
 /// Optional serve overrides from a JSON file (`--config`), merged with the
@@ -279,8 +436,30 @@ struct ServeConfigFile {
     rate_burst: Option<f64>,
     body_limit: Option<usize>,
     embedder: Option<String>,
+    #[serde(alias = "allow_origin")]
     allow_origins: Option<Vec<String>>,
+    #[serde(alias = "allow_host")]
     allow_hosts: Option<Vec<String>>,
+}
+
+/// Validate an opt-in browser origin: `http`/`https` scheme, non-empty host,
+/// optional numeric port, and no path/query/fragment. Rejecting a path here
+/// catches the common `https://app.example/` typo at startup instead of
+/// silently never matching the browser's `Origin` header (which has no path).
+fn validate_origin(origin: &str) -> Result<()> {
+    let (scheme, authority) = origin
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("expected scheme://host[:port]"))?;
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
+        anyhow::bail!("scheme must be http or https");
+    }
+    if authority.is_empty() || authority.contains('/') || authority.contains('?') {
+        anyhow::bail!("expected scheme://host[:port] with no path, query, or fragment");
+    }
+    if origin.parse::<axum::http::HeaderValue>().is_err() {
+        anyhow::bail!("not a valid HTTP origin value");
+    }
+    Ok(())
 }
 
 fn env_parse<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
@@ -324,8 +503,7 @@ fn serve_config(
 ) -> Result<(recall_server::ServerConfig, String)> {
     let file: ServeConfigFile = match config_file {
         Some(path) => {
-            let raw = std::fs::read_to_string(path)
-                .with_context(|| format!("read config {}", path.display()))?;
+            let raw = read_text(path).with_context(|| format!("read config {}", path.display()))?;
             serde_json::from_str(&raw)
                 .with_context(|| format!("parse config {}", path.display()))?
         }
@@ -386,9 +564,7 @@ fn serve_config(
     .map(|o| o.trim().to_string())
     .collect();
     for origin in &allow_origin {
-        if !origin.contains("://") || origin.parse::<axum::http::HeaderValue>().is_err() {
-            anyhow::bail!("invalid --allow-origin {origin:?}: expected scheme://host[:port]");
-        }
+        validate_origin(origin).with_context(|| format!("invalid --allow-origin {origin:?}"))?;
     }
     let allow_host = if args.allow_host.is_empty() {
         file.allow_hosts.unwrap_or_default()
@@ -415,6 +591,11 @@ async fn serve(args: &ServeArgs, config_file: Option<&PathBuf>) -> Result<()> {
     let keyed = encryption_key()?.is_some();
     let store = open_store(&args.db)?;
     let (config, bind) = serve_config(args, config_file)?;
+    guard_embedder(
+        &store,
+        config.embedder.as_ref(),
+        args.allow_embedder_mismatch,
+    )?;
     if keyed && config.embedder.embedding_invertible() {
         tracing::warn!(
             embedder = %config.embedder.name(),
@@ -487,8 +668,7 @@ async fn shutdown_signal() {
     tracing::info!("shutdown signal received; draining in-flight requests");
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -499,6 +679,7 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let db = cli.db.clone();
+    let allow_mismatch = cli.allow_embedder_mismatch;
     match &cli.command {
         Command::Serve {
             stdio,
@@ -525,6 +706,7 @@ async fn main() -> Result<()> {
                     embedder: cli.embedder.clone(),
                     allow_origin: allow_origin.clone(),
                     allow_host: allow_host.clone(),
+                    allow_embedder_mismatch: allow_mismatch,
                 },
                 config.as_ref(),
             )
@@ -535,21 +717,22 @@ async fn main() -> Result<()> {
             text,
             tags,
             pinned,
+            full,
             show_embedding,
+            pretty,
         } => {
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
-            // Scripted remember is agent-like: create the namespace if missing.
-            let namespace = namespace.trim().to_string();
-            if namespace.is_empty() {
-                anyhow::bail!("namespace must not be empty");
-            }
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
+            recall_core::validation::validate_namespace(namespace)?;
+            recall_core::validation::validate_text(text)?;
+            recall_core::validation::validate_tags(tags)?;
             let embedding = embedder.embed(text);
             // One guard for the whole read-modify sequence (the mutex is not re-entrant).
             let guard = store.lock().unwrap_or_else(|p| p.into_inner());
-            guard.get_or_create_namespace(&namespace)?;
+            guard.get_or_create_namespace(namespace)?;
             let memory = guard.insert_memory(&NewMemory {
-                namespace,
+                namespace: namespace.clone(),
                 text: text.clone(),
                 tags: tags.clone(),
                 source: Some("cli".to_string()),
@@ -559,10 +742,12 @@ async fn main() -> Result<()> {
                 embedding: Some(embedding),
             })?;
             drop(guard);
-            print_json(memory_json(
-                serde_json::to_value(&memory)?,
-                *show_embedding,
-            )?)
+            let value = if *full || *show_embedding {
+                memory_json(serde_json::to_value(&memory)?, *show_embedding)?
+            } else {
+                serde_json::to_value(CompactMemory::from(&memory))?
+            };
+            print_json(value, *pretty)
         }
         Command::Recall {
             namespace,
@@ -570,10 +755,20 @@ async fn main() -> Result<()> {
             k,
             tau_days,
             tags,
+            format,
+            full,
             show_embedding,
+            pretty,
         } => {
+            if matches!(format, OutputFormat::Text) && *show_embedding {
+                anyhow::bail!("--show-embedding cannot be combined with --format text");
+            }
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
+            recall_core::validation::validate_namespace(namespace)?;
+            recall_core::validation::validate_query(query)?;
+            recall_core::validation::validate_tags(tags)?;
             let params = RecallParams {
                 k: *k,
                 tau_days: if *tau_days <= 0.0 {
@@ -584,6 +779,7 @@ async fn main() -> Result<()> {
                 tags: tags.clone(),
                 ..RecallParams::default()
             };
+            params.validate()?;
             let query_embedding = embedder.embed(query);
             let hits = store.lock().unwrap_or_else(|p| p.into_inner()).recall(
                 namespace,
@@ -592,17 +788,35 @@ async fn main() -> Result<()> {
                 &params,
                 unix_now(),
             )?;
-            print_json(memory_json(serde_json::to_value(&hits)?, *show_embedding)?)
+            match format {
+                OutputFormat::Text => {
+                    print!("{}", render_hits_text(&hits));
+                    Ok(())
+                }
+                OutputFormat::Json => {
+                    let value = if *full || *show_embedding {
+                        memory_json(serde_json::to_value(&hits)?, *show_embedding)?
+                    } else {
+                        serde_json::to_value(
+                            hits.iter().map(CompactRecallHit::from).collect::<Vec<_>>(),
+                        )?
+                    };
+                    print_json(value, *pretty)
+                }
+            }
         }
         Command::Update {
             id,
             text,
             tags,
             pinned,
+            full,
             show_embedding,
+            pretty,
         } => {
             let store = open_store(&db)?;
             let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
             let mut update = MemoryUpdate {
                 text: text.clone(),
                 tags: tags.clone(),
@@ -617,10 +831,137 @@ async fn main() -> Result<()> {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .update_memory(id, &update)?;
-            print_json(memory_json(
-                serde_json::to_value(&memory)?,
-                *show_embedding,
-            )?)
+            let value = if *full || *show_embedding {
+                memory_json(serde_json::to_value(&memory)?, *show_embedding)?
+            } else {
+                serde_json::to_value(CompactMemory::from(&memory))?
+            };
+            print_json(value, *pretty)
+        }
+        Command::Forget { id, pretty } => {
+            let store = open_store(&db)?;
+            let deleted = store
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .delete_memory(id)?;
+            if !deleted {
+                anyhow::bail!("memory not found: {id}");
+            }
+            print_json(serde_json::json!({ "id": id, "deleted": true }), *pretty)
+        }
+        Command::List {
+            namespace,
+            limit,
+            offset,
+            full,
+            show_embedding,
+            pretty,
+        } => {
+            let store = open_store(&db)?;
+            let limit = category_limit(*limit);
+            let guard = store.lock().unwrap_or_else(|p| p.into_inner());
+            let total = guard.count_memories(namespace.as_deref())?;
+            let memories = guard.list_memories(namespace.as_deref(), limit, *offset)?;
+            drop(guard);
+            let page: CompactListPage<serde_json::Value> = if *full || *show_embedding {
+                let items = memories
+                    .iter()
+                    .map(|m| -> Result<serde_json::Value> {
+                        memory_json(serde_json::to_value(m)?, *show_embedding)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                CompactListPage::new(items, total, limit, *offset)
+            } else {
+                let items = memories
+                    .iter()
+                    .map(|m| serde_json::to_value(CompactMemory::from(m)))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                CompactListPage::new(items, total, limit, *offset)
+            };
+            print_json(serde_json::to_value(page)?, *pretty)
+        }
+        Command::Capture {
+            namespace,
+            file,
+            tags,
+            max_chunk_chars,
+            include_memories,
+            show_embedding,
+            pretty,
+        } => {
+            let store = open_store(&db)?;
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
+            let raw =
+                read_text(file).with_context(|| format!("read transcript {}", file.display()))?;
+            let transcript: Vec<recall_server::capture::CaptureMessage> =
+                serde_json::from_str(&raw)
+                    .with_context(|| format!("parse transcript {}", file.display()))?;
+            let request = recall_server::capture::CaptureRequest {
+                namespace: namespace.clone(),
+                transcript,
+                tags: tags.clone(),
+                max_chunk_chars: *max_chunk_chars,
+                include_memories: *include_memories,
+                include_embedding: false,
+            };
+            let prepared = recall_server::capture::prepare(embedder.as_ref(), &request)?;
+            let captured = {
+                let guard = store.lock().unwrap_or_else(|p| p.into_inner());
+                recall_server::capture::commit(&*guard, &prepared)?
+            };
+            let value = if *include_memories {
+                let memories = if *show_embedding {
+                    captured
+                        .iter()
+                        .map(serde_json::to_value)
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    captured
+                        .iter()
+                        .map(|m| serde_json::to_value(CompactMemory::from(m)))
+                        .collect::<Result<Vec<_>, _>>()?
+                };
+                serde_json::to_value(serde_json::json!({
+                    "namespace": namespace,
+                    "captured": captured.len(),
+                    "memories": memories,
+                }))?
+            } else {
+                serde_json::to_value(CompactCaptureSummary::new(namespace, &captured))?
+            };
+            print_json(value, *pretty)
+        }
+        Command::Stats { pretty } => {
+            let store = open_store(&db)?;
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            let stats = store.lock().unwrap_or_else(|p| p.into_inner()).stats()?;
+            let mut value = serde_json::to_value(stats)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "embedder".into(),
+                    serde_json::json!({
+                        "name": embedder.name(),
+                        "dimensions": embedder.dimensions(),
+                        "fingerprint": embedder.fingerprint(),
+                    }),
+                );
+            }
+            print_json(value, *pretty)
+        }
+        Command::Keygen { out } => {
+            let key = recall_core::crypto::StoreKey::generate();
+            if out.exists() {
+                anyhow::bail!("refusing to overwrite existing key file {}", out.display());
+            }
+            write_private(out, format!("{}\n", key.to_hex()).as_bytes())
+                .with_context(|| format!("write key file {}", out.display()))?;
+            println!(
+                "wrote a new 256-bit key to {} (owner-only where supported). \
+                 Keep it secret; losing it means losing access to keyed stores.",
+                out.display()
+            );
+            Ok(())
         }
         Command::Export { out } => {
             let store = open_store(&db)?;
@@ -633,7 +974,7 @@ async fn main() -> Result<()> {
                     // success line (AR-021).
                     write_private(path, json.as_bytes())
                         .with_context(|| format!("write {}", path.display()))?;
-                    println!(
+                    eprintln!(
                         "exported {} namespaces, {} memories to {} — WARNING: this file is \
                          plaintext JSON and bypasses encryption at rest",
                         data.namespaces.len(),
@@ -643,6 +984,9 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
                 None => {
+                    eprintln!(
+                        "WARNING: exporting plaintext JSON to stdout bypasses encryption at rest"
+                    );
                     println!("{json}");
                     Ok(())
                 }
@@ -650,11 +994,12 @@ async fn main() -> Result<()> {
         }
         Command::Import { file } => {
             let store = open_store(&db)?;
-            let raw = std::fs::read_to_string(file)
-                .with_context(|| format!("read {}", file.display()))?;
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
+            let raw = read_text(file).with_context(|| format!("read {}", file.display()))?;
             let data: ExportData = serde_json::from_str(&raw)?;
             let report = import(&*store.lock().unwrap_or_else(|p| p.into_inner()), &data)?;
-            print_json(serde_json::to_value(report)?)
+            print_json(serde_json::to_value(report)?, false)
         }
         Command::Backup { out } => {
             if out.exists() {
@@ -663,6 +1008,7 @@ async fn main() -> Result<()> {
                     out.display()
                 );
             }
+            let keyed = encryption_key()?.is_some();
             let store = open_store(&db)?;
             let guard = store.lock().unwrap_or_else(|p| p.into_inner());
             guard.checkpoint_wal().context("WAL checkpoint")?;
@@ -670,11 +1016,24 @@ async fn main() -> Result<()> {
                 .vacuum_into(out)
                 .with_context(|| format!("backup into {}", out.display()))?;
             let stats = guard.stats()?;
-            print_json(serde_json::json!({
-                "backup": out.display().to_string(),
-                "total_namespaces": stats.total_namespaces,
-                "total_memories": stats.total_memories,
-            }))
+            drop(guard);
+            restrict_permissions(out)?;
+            if !keyed {
+                eprintln!(
+                    "WARNING: this backup is a plaintext database copy; treat {} like the \
+                     original unencrypted store and store it accordingly",
+                    out.display()
+                );
+            }
+            print_json(
+                serde_json::json!({
+                    "backup": out.display().to_string(),
+                    "encrypted": keyed,
+                    "total_namespaces": stats.total_namespaces,
+                    "total_memories": stats.total_memories,
+                }),
+                false,
+            )
         }
         Command::Vacuum => {
             let store = open_store(&db)?;
@@ -682,13 +1041,22 @@ async fn main() -> Result<()> {
             guard.vacuum().context("VACUUM")?;
             guard.checkpoint_wal().context("WAL checkpoint")?;
             let stats = guard.stats()?;
-            print_json(serde_json::json!({
-                "vacuumed": db.display().to_string(),
-                "total_namespaces": stats.total_namespaces,
-                "total_memories": stats.total_memories,
-            }))
+            print_json(
+                serde_json::json!({
+                    "vacuumed": db.display().to_string(),
+                    "total_namespaces": stats.total_namespaces,
+                    "total_memories": stats.total_memories,
+                }),
+                false,
+            )
         }
     }
+}
+
+/// CLI page size: at least 1, capped at the same 10 000 the HTTP surfaces
+/// use for non-MCP listing. MCP has its own tighter 100 budget.
+fn category_limit(limit: usize) -> usize {
+    limit.clamp(1, recall_server::MAX_PAGE_LIMIT)
 }
 
 #[cfg(test)]
@@ -734,6 +1102,7 @@ mod tests {
             embedder: None,
             allow_origin: Vec::new(),
             allow_host: Vec::new(),
+            allow_embedder_mismatch: false,
         }
     }
 
@@ -819,6 +1188,34 @@ mod tests {
             err.root_cause().to_string().contains("onnx"),
             "error must name the embedder: {err:#}"
         );
+    }
+
+    /// The shared reader strips a UTF-8 BOM for config, key, and import files.
+    #[test]
+    fn read_text_strips_a_utf8_bom_for_config_key_and_import_reads() {
+        let _guard = env_lock();
+        clear_serve_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bom.json");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(br#"{"bind":"127.0.0.1:1"}"#);
+        std::fs::write(&path, bytes).unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with('{'), "BOM must be stripped: {text:?}");
+        let mut args = serve_args();
+        args.bind = None;
+        let (_, bind) = serve_config(&args, Some(&path)).unwrap();
+        assert_eq!(bind, "127.0.0.1:1", "a BOM config must be parsed");
+
+        // The same reader feeds RECALL_MCP_KEY_FILE and import, so this pins
+        // the shared behavior those paths rely on.
+        let key_path = dir.path().join("key.txt");
+        let mut key = vec![0xEF, 0xBB, 0xBF];
+        key.extend_from_slice(
+            b"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a\n",
+        );
+        std::fs::write(&key_path, key).unwrap();
+        assert_eq!(read_text(&key_path).unwrap().trim().len(), 64);
     }
 
     /// Glue: a `--config` file lands in the produced `ServerConfig`, flags

@@ -234,6 +234,17 @@ impl RecallParams {
         if self.candidate_cap == 0 || self.scan_cap == 0 {
             return Err(RecallError::InvalidInput("caps must be > 0".into()));
         }
+        if self.candidate_cap > 10_000 {
+            return Err(RecallError::InvalidInput(
+                "candidate_cap must be at most 10000".into(),
+            ));
+        }
+        if self.scan_cap > 1_000_000 {
+            return Err(RecallError::InvalidInput(
+                "scan_cap must be at most 1000000".into(),
+            ));
+        }
+        crate::validation::validate_tags(&self.tags)?;
         self.weights.validate()
     }
 }

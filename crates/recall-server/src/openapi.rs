@@ -14,6 +14,27 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(DOCUMENT).expect("openapi.json must parse");
         assert_eq!(doc["openapi"], "3.1.0");
+        assert_eq!(
+            doc["info"]["version"],
+            env!("CARGO_PKG_VERSION"),
+            "OpenAPI version must follow the crate version"
+        );
+        // Both auth schemes are documented and applied by default.
+        assert_eq!(
+            doc["components"]["securitySchemes"]["bearerAuth"]["scheme"],
+            "bearer"
+        );
+        assert_eq!(
+            doc["components"]["securitySchemes"]["apiKeyAuth"]["name"],
+            "X-API-Key"
+        );
+        assert!(doc["security"].as_array().unwrap().len() >= 2);
+        assert!(
+            doc["paths"]["/healthz"]["get"]["security"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
         let paths = doc["paths"].as_object().unwrap();
         for path in [
             "/v1/namespaces",
@@ -24,6 +45,7 @@ mod tests {
             "/v1/stats",
             "/metrics",
             "/healthz",
+            "/mcp",
         ] {
             assert!(paths.contains_key(path), "missing {path}");
         }
@@ -41,7 +63,21 @@ mod tests {
         );
         assert!(doc["components"]["schemas"]["ScoreBreakdown"].is_object());
         assert!(doc["components"]["schemas"]["MemoryUpdate"].is_object());
-        // Drift guards for the v0.3 production surface (D-016..D-018).
+        // v0.5 compact/full views and the paginated shape.
+        for schema in [
+            "CompactMemory",
+            "CompactRecallHit",
+            "MemoryListPage",
+            "CaptureSummary",
+            "EmbedderInfo",
+            "MemoryOrCompact",
+            "RecallHitOrFull",
+        ] {
+            assert!(
+                doc["components"]["schemas"][schema].is_object(),
+                "missing schema {schema}"
+            );
+        }
         assert!(
             paths["/v1/memories"]["get"]["parameters"]
                 .as_array()
@@ -49,6 +85,14 @@ mod tests {
                 .iter()
                 .any(|p| p["name"] == "offset"),
             "list pagination (offset) must be documented"
+        );
+        assert!(
+            paths["/v1/memories"]["get"]["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "include_embedding"),
+            "include_embedding must be documented"
         );
         assert!(
             paths["/v1/memories"]["get"]["responses"]["200"]["headers"]["X-Total-Count"]
@@ -61,13 +105,44 @@ mod tests {
                 .is_object(),
             "capture ingest must be documented"
         );
-        assert!(
-            paths["/metrics"]["get"].is_object(),
-            "metrics endpoint must be documented"
-        );
-        assert!(
-            doc["components"]["responses"]["RateLimited"].is_object(),
-            "429 shape must be documented"
-        );
+        // Error contract: 401/404/405/413/415/429 shapes.
+        for response in [
+            "Unauthorized",
+            "NotFound",
+            "MethodNotAllowed",
+            "PayloadTooLarge",
+            "UnsupportedMediaType",
+            "RateLimited",
+        ] {
+            assert!(
+                doc["components"]["responses"][response].is_object(),
+                "missing error response {response}"
+            );
+        }
+        // Every operation can be called with the wrong method; document the
+        // 405 (and its Allow header) everywhere rather than only on /v1/stats.
+        for (path, operations) in paths {
+            for method in ["get", "post", "delete", "patch", "put"] {
+                if let Some(operation) = operations.get(method) {
+                    assert!(
+                        operation["responses"]["405"].is_object(),
+                        "{method} {path} must document the JSON 405 response"
+                    );
+                }
+            }
+        }
+        // MCP doc names all six tools and the 2026-07-28 discover lifecycle.
+        let mcp = paths["/mcp"]["post"]["description"].as_str().unwrap();
+        for tool in [
+            "remember",
+            "recall",
+            "forget",
+            "update_memory",
+            "list_memories",
+            "capture",
+        ] {
+            assert!(mcp.contains(tool), "MCP description must name {tool}");
+        }
+        assert!(mcp.contains("server/discover"), "{mcp}");
     }
 }

@@ -4,7 +4,7 @@
 //! Run with `cargo bench -p recall-core` (criterion always uses the release
 //! profile). The exact p50/p95/p99 numbers against the same fixture come from
 //! `tests/p95_latency.rs` (`cargo test -p recall-core --release --test
-//! p95_latency -- --ignored --nocapture`).
+//! p95_latency -- --ignored --nocapture --test-threads=1`).
 //!
 //! Fixture: one namespace, 10,000 memories with 256-dim HashEmbedder vectors
 //! (the default embedder), which is the documented worst case for the

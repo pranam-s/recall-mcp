@@ -1,10 +1,14 @@
-# License audit: Cargo.lock (2026-09-18)
+# License audit: Cargo.lock (2026-09-18 snapshot)
 
-Every package in `Cargo.lock` at its locked version, checked against the
-crates.io registry API (one request per crate-version pair, 395 published
-packages + this workspace). `cargo-deny` would automate this; it is not part
-of the local toolchain, so the review ran manually. Re-run after any
-dependency change.
+This is the 2026-09-18 manual snapshot of every package in `Cargo.lock` at its
+then-locked version, checked against the crates.io registry API (395 published
+packages plus this workspace). It is history; the 0.5.0 lock has 403 packages.
+`cargo deny check` is the current gate and runs locally and in CI.
+
+`cargo deny check` is now part of the local and CI gates, with `deny.toml`
+allow-listing the permissive licenses below. It passes on the 0.5.0 lock. The
+per-package table here is kept as the manual record; re-run the audit after a
+dependency change if a new license family appears.
 
 ## Result: no copyleft conflict with the MIT license
 

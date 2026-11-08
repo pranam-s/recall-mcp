@@ -1,46 +1,1009 @@
 {
-  "description": "Fixture corpus for the Recall-MCP golden-set retrieval eval (authored alongside evals/golden.json; the eval test seeds these memories verbatim into a fresh SQLite store).",
-  "namespaces": ["eng", "product", "personal"],
+  "namespaces": [
+    "product",
+    "ops",
+    "research"
+  ],
   "memories": [
-    { "id": "eng-01", "namespace": "eng", "text": "The deploy pipeline runs on Thursday afternoons; rollbacks take about ten minutes through the ops console.", "tags": ["deploy", "ops"] },
-    { "id": "eng-02", "namespace": "eng", "text": "Postgres connection pool size is capped at 20 per service instance; raise it with the database team first.", "tags": ["postgres", "config"] },
-    { "id": "eng-03", "namespace": "eng", "text": "The staging environment database lives on the shared virtual machine, snapshot it before schema migrations.", "tags": ["staging", "database"] },
-    { "id": "eng-04", "namespace": "eng", "text": "Feature flags are stored in the flags table and cached for five minutes in the api service.", "tags": ["flags", "api"] },
-    { "id": "eng-05", "namespace": "eng", "text": "Rust workspace layout decision: pure core crate, server crate for axum, cli crate for scripting.", "tags": ["rust", "architecture"] },
-    { "id": "eng-06", "namespace": "eng", "text": "Rate limiting kicks in at 100 requests per minute per api key; return 429 with a retry-after header.", "tags": ["api", "limits"] },
-    { "id": "eng-07", "namespace": "eng", "text": "The websocket gateway reconnects with exponential backoff starting at 250 milliseconds.", "tags": ["websocket", "reliability"] },
-    { "id": "eng-08", "namespace": "eng", "text": "Cron jobs run in utc on the scheduler box; never schedule anything at midnight utc on the first of the month.", "tags": ["cron", "ops"] },
-    { "id": "eng-09", "namespace": "eng", "text": "Logging goes through the tracing pipeline; spans carry a request id that matches the gateway logs.", "tags": ["logging", "debugging"] },
-    { "id": "eng-10", "namespace": "eng", "text": "Terraform state for the queue infrastructure is in the s3 bucket infra-tfstate, lock with dynamodb.", "tags": ["terraform", "infra"] },
-    { "id": "eng-11", "namespace": "eng", "text": "The mobile client targets ios 17 and android 14; older versions get the maintenance screen.", "tags": ["mobile", "clients"] },
-    { "id": "eng-12", "namespace": "eng", "text": "Cache invalidation for the search index happens through the reindex endpoint, not by hand editing redis.", "tags": ["cache", "search"] },
-    { "id": "eng-13", "namespace": "eng", "text": "Load test results from june: the api gateway saturated at 3000 requests per second with p95 at 40 milliseconds.", "tags": ["performance", "api"] },
-    { "id": "eng-14", "namespace": "eng", "text": "Kubernetes namespace prod-eu runs three replicas of the billing worker behind the payments queue.", "tags": ["kubernetes", "billing"] },
-    { "id": "eng-15", "namespace": "eng", "text": "The single sign on integration uses oidc against the company identity provider, token lifetime is one hour.", "tags": ["auth", "sso"] },
-    { "id": "eng-16", "namespace": "eng", "text": "Database backups run nightly at 02:00 and are retained for thirty days in cold storage.", "tags": ["database", "backup"] },
-    { "id": "product-01", "namespace": "product", "text": "The onboarding flow was shortened to three steps after the march usability study.", "tags": ["onboarding", "ux"] },
-    { "id": "product-02", "namespace": "product", "text": "Pricing tiers: starter is free, team is twelve dollars per seat, enterprise is negotiated annually.", "tags": ["pricing"] },
-    { "id": "product-03", "namespace": "product", "text": "The beta program for the reporting dashboard starts in q3 with fifty design partner customers.", "tags": ["beta", "dashboard"] },
-    { "id": "product-04", "namespace": "product", "text": "Churn interviews show the top reason for leaving is missing calendar integrations.", "tags": ["churn", "research"] },
-    { "id": "product-05", "namespace": "product", "text": "Roadmap priority for q4 is the notification center, then saved views, then the mobile refresh.", "tags": ["roadmap"] },
-    { "id": "product-06", "namespace": "product", "text": "The docs site search is powered by the same hybrid retrieval engine as the assistant.", "tags": ["docs", "search"] },
-    { "id": "product-07", "namespace": "product", "text": "Support tickets tagged billing are routed to the finance rota every morning at nine.", "tags": ["support", "billing"] },
-    { "id": "product-08", "namespace": "product", "text": "The waitlist grew to four thousand signups after the launch post hit the front page.", "tags": ["launch", "growth"] },
-    { "id": "product-09", "namespace": "product", "text": "Accessibility audit fixes are tracked in the a11y epic; keyboard navigation was the biggest gap.", "tags": ["accessibility", "audit"] },
-    { "id": "product-10", "namespace": "product", "text": "The export feature ships csv and json; pdf export is deliberately out of scope for now.", "tags": ["export", "scope"] },
-    { "id": "product-11", "namespace": "product", "text": "Customer advisory board meets quarterly; the next session focuses on workflow automation requests.", "tags": ["customers", "feedback"] },
-    { "id": "product-12", "namespace": "product", "text": "The trial length is fourteen days, extendable to thirty by the sales team for enterprise prospects.", "tags": ["trial", "sales"] },
-    { "id": "personal-01", "namespace": "personal", "text": "Dentist appointment is booked for the tenth of october at nine in the morning on birch street.", "tags": ["health", "appointment"] },
-    { "id": "personal-02", "namespace": "personal", "text": "The climbing gym membership renews in november; cancel before then if the shoulder has not healed.", "tags": ["fitness", "money"] },
-    { "id": "personal-03", "namespace": "personal", "text": "Passport expires next summer; renew it before the spring trip planning starts.", "tags": ["travel", "admin"] },
-    { "id": "personal-04", "namespace": "personal", "text": "Favorite coffee beans are the ethiopian light roast from the roastery on the market square.", "tags": ["coffee", "preferences"] },
-    { "id": "personal-05", "namespace": "personal", "text": "Standing reminder: water the plants every sunday evening, the ferns need less than the herbs.", "tags": ["home", "reminder"] },
-    { "id": "personal-06", "namespace": "personal", "text": "The landlord prefers maintenance requests by email, not the portal; include photos up front.", "tags": ["home", "admin"] },
-    { "id": "personal-07", "namespace": "personal", "text": "Book club meets the first tuesday of each month; this month we are reading the short history novel.", "tags": ["reading", "social"] },
-    { "id": "personal-08", "namespace": "personal", "text": "Tax documents folder lives in the cloud drive under finance and the accountant needs them by march.", "tags": ["finance", "deadline"] },
-    { "id": "personal-09", "namespace": "personal", "text": "Running plan: three easy five kilometer runs per week, one long run on saturdays.", "tags": ["fitness", "running"] },
-    { "id": "personal-10", "namespace": "personal", "text": "The car service is due after fifteen thousand kilometers; the mechanic on oak road is reliable.", "tags": ["car", "maintenance"] },
-    { "id": "personal-11", "namespace": "personal", "text": "Gift idea for mom: the ceramics workshop in december, she mentioned wanting to try pottery.", "tags": ["family", "ideas"] },
-    { "id": "personal-12", "namespace": "personal", "text": "Preference for meetings: no meetings before ten in the morning, deep work block from eight to ten.", "tags": ["work", "preferences"] }
+    {
+      "id": "m01",
+      "namespace": "product",
+      "text": "deploy the payments service on friday",
+      "tags": [
+        "release",
+        "topic:01"
+      ],
+      "age_days": 1
+    },
+    {
+      "id": "m02",
+      "namespace": "product",
+      "text": "the mobile app uses offline first sync",
+      "tags": [
+        "mobile",
+        "topic:02"
+      ],
+      "age_days": 2
+    },
+    {
+      "id": "m03",
+      "namespace": "product",
+      "text": "password reset emails expire after fifteen minutes",
+      "tags": [
+        "auth",
+        "topic:03"
+      ],
+      "age_days": 3
+    },
+    {
+      "id": "m04",
+      "namespace": "product",
+      "text": "checkout accepts credit cards and apple pay",
+      "tags": [
+        "payments",
+        "topic:04"
+      ],
+      "age_days": 4
+    },
+    {
+      "id": "m05",
+      "namespace": "product",
+      "text": "search results are ranked by relevance and recency",
+      "tags": [
+        "search",
+        "topic:05"
+      ],
+      "age_days": 5
+    },
+    {
+      "id": "m06",
+      "namespace": "product",
+      "text": "the onboarding wizard has four short steps",
+      "tags": [
+        "ux",
+        "topic:06"
+      ],
+      "age_days": 6
+    },
+    {
+      "id": "m07",
+      "namespace": "product",
+      "text": "dark mode follows the operating system theme",
+      "tags": [
+        "ux",
+        "topic:07"
+      ],
+      "age_days": 7
+    },
+    {
+      "id": "m08",
+      "namespace": "product",
+      "text": "exports download as csv and json",
+      "tags": [
+        "data",
+        "topic:08"
+      ],
+      "age_days": 8
+    },
+    {
+      "id": "m09",
+      "namespace": "product",
+      "text": "notifications are batched every ten minutes",
+      "tags": [
+        "notifications",
+        "topic:09"
+      ],
+      "age_days": 9
+    },
+    {
+      "id": "m10",
+      "namespace": "product",
+      "text": "the pricing page lists three subscription tiers",
+      "tags": [
+        "billing",
+        "topic:10"
+      ],
+      "age_days": 10
+    },
+    {
+      "id": "m11",
+      "namespace": "product",
+      "text": "avatars are cropped to a circle in the profile",
+      "tags": [
+        "ux",
+        "topic:11"
+      ],
+      "age_days": 11
+    },
+    {
+      "id": "m12",
+      "namespace": "product",
+      "text": "invite links can be revoked by the workspace owner",
+      "tags": [
+        "permissions",
+        "topic:12"
+      ],
+      "age_days": 12
+    },
+    {
+      "id": "m13",
+      "namespace": "product",
+      "text": "the dashboard refreshes every thirty seconds",
+      "tags": [
+        "dashboard",
+        "topic:13"
+      ],
+      "age_days": 13
+    },
+    {
+      "id": "m14",
+      "namespace": "product",
+      "text": "keyboard shortcuts use the control key on windows",
+      "tags": [
+        "accessibility",
+        "topic:14"
+      ],
+      "age_days": 14
+    },
+    {
+      "id": "m15",
+      "namespace": "product",
+      "text": "screen readers announce async status changes",
+      "tags": [
+        "accessibility",
+        "topic:15"
+      ],
+      "age_days": 15
+    },
+    {
+      "id": "m16",
+      "namespace": "product",
+      "text": "the api rate limit is sixty requests per minute",
+      "tags": [
+        "api",
+        "topic:16"
+      ],
+      "age_days": 16
+    },
+    {
+      "id": "m17",
+      "namespace": "product",
+      "text": "uploaded images are converted to webp",
+      "tags": [
+        "media",
+        "topic:17"
+      ],
+      "age_days": 17
+    },
+    {
+      "id": "m18",
+      "namespace": "product",
+      "text": "deleted workspaces are recoverable for seven days",
+      "tags": [
+        "retention",
+        "topic:18"
+      ],
+      "age_days": 18
+    },
+    {
+      "id": "m19",
+      "namespace": "product",
+      "text": "two factor login supports authenticator apps",
+      "tags": [
+        "auth",
+        "topic:19"
+      ],
+      "age_days": 19
+    },
+    {
+      "id": "m20",
+      "namespace": "product",
+      "text": "the help centre search uses fuzzy matching",
+      "tags": [
+        "support",
+        "topic:20"
+      ],
+      "age_days": 20
+    },
+    {
+      "id": "m21",
+      "namespace": "ops",
+      "text": "postgres backups run nightly at two am",
+      "tags": [
+        "database",
+        "topic:21"
+      ],
+      "age_days": 1
+    },
+    {
+      "id": "m22",
+      "namespace": "ops",
+      "text": "the kubernetes cluster autoscales to twelve nodes",
+      "tags": [
+        "infra",
+        "topic:22"
+      ],
+      "age_days": 2
+    },
+    {
+      "id": "m23",
+      "namespace": "ops",
+      "text": "redis cache eviction uses least recently used",
+      "tags": [
+        "cache",
+        "topic:23"
+      ],
+      "age_days": 3
+    },
+    {
+      "id": "m24",
+      "namespace": "ops",
+      "text": "alerts page the on call engineer after five minutes",
+      "tags": [
+        "monitoring",
+        "topic:24"
+      ],
+      "age_days": 4
+    },
+    {
+      "id": "m25",
+      "namespace": "ops",
+      "text": "nginx terminates tls before the application",
+      "tags": [
+        "infra",
+        "topic:25"
+      ],
+      "age_days": 5
+    },
+    {
+      "id": "m26",
+      "namespace": "ops",
+      "text": "the incident review happens within two business days",
+      "tags": [
+        "process",
+        "topic:26"
+      ],
+      "age_days": 6
+    },
+    {
+      "id": "m27",
+      "namespace": "ops",
+      "text": "database migrations run before the new binary starts",
+      "tags": [
+        "database",
+        "topic:27"
+      ],
+      "age_days": 7
+    },
+    {
+      "id": "m28",
+      "namespace": "ops",
+      "text": "logs are retained for thirty days in object storage",
+      "tags": [
+        "logging",
+        "topic:28"
+      ],
+      "age_days": 8
+    },
+    {
+      "id": "m29",
+      "namespace": "ops",
+      "text": "the staging environment mirrors production settings",
+      "tags": [
+        "environments",
+        "topic:29"
+      ],
+      "age_days": 9
+    },
+    {
+      "id": "m30",
+      "namespace": "ops",
+      "text": "secrets rotate every ninety days",
+      "tags": [
+        "security",
+        "topic:30"
+      ],
+      "age_days": 10
+    },
+    {
+      "id": "m31",
+      "namespace": "ops",
+      "text": "the load balancer health check hits slash healthz",
+      "tags": [
+        "infra",
+        "topic:31"
+      ],
+      "age_days": 11
+    },
+    {
+      "id": "m32",
+      "namespace": "ops",
+      "text": "disk usage alerts fire above eighty percent",
+      "tags": [
+        "monitoring",
+        "topic:32"
+      ],
+      "age_days": 12
+    },
+    {
+      "id": "m33",
+      "namespace": "ops",
+      "text": "queue workers retry failed jobs three times",
+      "tags": [
+        "queues",
+        "topic:33"
+      ],
+      "age_days": 13
+    },
+    {
+      "id": "m34",
+      "namespace": "ops",
+      "text": "the cdn caches static assets for one year",
+      "tags": [
+        "infra",
+        "topic:34"
+      ],
+      "age_days": 14
+    },
+    {
+      "id": "m35",
+      "namespace": "ops",
+      "text": "backup restores are tested each quarter",
+      "tags": [
+        "process",
+        "topic:35"
+      ],
+      "age_days": 15
+    },
+    {
+      "id": "m36",
+      "namespace": "ops",
+      "text": "cpu throttling is disabled for latency sensitive pods",
+      "tags": [
+        "infra",
+        "topic:36"
+      ],
+      "age_days": 16
+    },
+    {
+      "id": "m37",
+      "namespace": "ops",
+      "text": "dependency upgrades ship every tuesday",
+      "tags": [
+        "maintenance",
+        "topic:37"
+      ],
+      "age_days": 17
+    },
+    {
+      "id": "m38",
+      "namespace": "ops",
+      "text": "the audit log records every admin action",
+      "tags": [
+        "security",
+        "topic:38"
+      ],
+      "age_days": 18
+    },
+    {
+      "id": "m39",
+      "namespace": "ops",
+      "text": "the status page reflects regional outages",
+      "tags": [
+        "support",
+        "topic:39"
+      ],
+      "age_days": 19
+    },
+    {
+      "id": "m40",
+      "namespace": "ops",
+      "text": "container images are signed with cosign",
+      "tags": [
+        "security",
+        "topic:40"
+      ],
+      "age_days": 20
+    },
+    {
+      "id": "m41",
+      "namespace": "research",
+      "text": "the benchmark compares bm25 with dense retrieval",
+      "tags": [
+        "retrieval",
+        "topic:41"
+      ],
+      "age_days": 1
+    },
+    {
+      "id": "m42",
+      "namespace": "research",
+      "text": "chunking long documents improves recall quality",
+      "tags": [
+        "retrieval",
+        "topic:42"
+      ],
+      "age_days": 2
+    },
+    {
+      "id": "m43",
+      "namespace": "research",
+      "text": "embedding inversion attacks can reconstruct text",
+      "tags": [
+        "security",
+        "topic:43"
+      ],
+      "age_days": 3
+    },
+    {
+      "id": "m44",
+      "namespace": "research",
+      "text": "hybrid search blends lexical and semantic signals",
+      "tags": [
+        "retrieval",
+        "topic:44"
+      ],
+      "age_days": 4
+    },
+    {
+      "id": "m45",
+      "namespace": "research",
+      "text": "recency decay uses an exponential curve",
+      "tags": [
+        "ranking",
+        "topic:45"
+      ],
+      "age_days": 5
+    },
+    {
+      "id": "m46",
+      "namespace": "research",
+      "text": "the annotated corpus has three hundred labelled pairs",
+      "tags": [
+        "eval",
+        "topic:46"
+      ],
+      "age_days": 6
+    },
+    {
+      "id": "m47",
+      "namespace": "research",
+      "text": "precision at five measures the top results",
+      "tags": [
+        "eval",
+        "topic:47"
+      ],
+      "age_days": 7
+    },
+    {
+      "id": "m48",
+      "namespace": "research",
+      "text": "token budgets shape agent context usage",
+      "tags": [
+        "agents",
+        "topic:48"
+      ],
+      "age_days": 8
+    },
+    {
+      "id": "m49",
+      "namespace": "research",
+      "text": "stored embeddings remain plaintext by design",
+      "tags": [
+        "security",
+        "topic:49"
+      ],
+      "age_days": 9
+    },
+    {
+      "id": "m50",
+      "namespace": "research",
+      "text": "offline evaluation uses a fixed golden set",
+      "tags": [
+        "eval",
+        "topic:50"
+      ],
+      "age_days": 10
+    },
+    {
+      "id": "v01",
+      "namespace": "product",
+      "text": "deploy the payments service on friday (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:01"
+      ],
+      "age_days": 2
+    },
+    {
+      "id": "v02",
+      "namespace": "product",
+      "text": "the mobile app uses offline first sync (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:02"
+      ],
+      "age_days": 3
+    },
+    {
+      "id": "v03",
+      "namespace": "product",
+      "text": "password reset emails expire after fifteen minutes (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:03"
+      ],
+      "age_days": 4
+    },
+    {
+      "id": "v04",
+      "namespace": "product",
+      "text": "checkout accepts credit cards and apple pay (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:04"
+      ],
+      "age_days": 5
+    },
+    {
+      "id": "v05",
+      "namespace": "product",
+      "text": "search results are ranked by relevance and recency (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:05"
+      ],
+      "age_days": 6
+    },
+    {
+      "id": "v06",
+      "namespace": "product",
+      "text": "the onboarding wizard has four short steps (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:06"
+      ],
+      "age_days": 7
+    },
+    {
+      "id": "v07",
+      "namespace": "product",
+      "text": "dark mode follows the operating system theme (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:07"
+      ],
+      "age_days": 8
+    },
+    {
+      "id": "v08",
+      "namespace": "product",
+      "text": "exports download as csv and json (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:08"
+      ],
+      "age_days": 9
+    },
+    {
+      "id": "v09",
+      "namespace": "product",
+      "text": "notifications are batched every ten minutes (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:09"
+      ],
+      "age_days": 10
+    },
+    {
+      "id": "v10",
+      "namespace": "product",
+      "text": "the pricing page lists three subscription tiers (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:10"
+      ],
+      "age_days": 11
+    },
+    {
+      "id": "v11",
+      "namespace": "product",
+      "text": "avatars are cropped to a circle in the profile (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:11"
+      ],
+      "age_days": 12
+    },
+    {
+      "id": "v12",
+      "namespace": "product",
+      "text": "invite links can be revoked by the workspace owner (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:12"
+      ],
+      "age_days": 13
+    },
+    {
+      "id": "v13",
+      "namespace": "product",
+      "text": "the dashboard refreshes every thirty seconds (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:13"
+      ],
+      "age_days": 14
+    },
+    {
+      "id": "v14",
+      "namespace": "product",
+      "text": "keyboard shortcuts use the control key on windows (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:14"
+      ],
+      "age_days": 15
+    },
+    {
+      "id": "v15",
+      "namespace": "product",
+      "text": "screen readers announce async status changes (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:15"
+      ],
+      "age_days": 16
+    },
+    {
+      "id": "v16",
+      "namespace": "product",
+      "text": "the api rate limit is sixty requests per minute (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:16"
+      ],
+      "age_days": 2
+    },
+    {
+      "id": "v17",
+      "namespace": "product",
+      "text": "uploaded images are converted to webp (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:17"
+      ],
+      "age_days": 3
+    },
+    {
+      "id": "v18",
+      "namespace": "product",
+      "text": "deleted workspaces are recoverable for seven days (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:18"
+      ],
+      "age_days": 4
+    },
+    {
+      "id": "v19",
+      "namespace": "product",
+      "text": "two factor login supports authenticator apps (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:19"
+      ],
+      "age_days": 5
+    },
+    {
+      "id": "v20",
+      "namespace": "product",
+      "text": "the help centre search uses fuzzy matching (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:20"
+      ],
+      "age_days": 6
+    },
+    {
+      "id": "v21",
+      "namespace": "ops",
+      "text": "postgres backups run nightly at two am (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:21"
+      ],
+      "age_days": 7
+    },
+    {
+      "id": "v22",
+      "namespace": "ops",
+      "text": "the kubernetes cluster autoscales to twelve nodes (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:22"
+      ],
+      "age_days": 8
+    },
+    {
+      "id": "v23",
+      "namespace": "ops",
+      "text": "redis cache eviction uses least recently used (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:23"
+      ],
+      "age_days": 9
+    },
+    {
+      "id": "v24",
+      "namespace": "ops",
+      "text": "alerts page the on call engineer after five minutes (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:24"
+      ],
+      "age_days": 10
+    },
+    {
+      "id": "v25",
+      "namespace": "ops",
+      "text": "nginx terminates tls before the application (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:25"
+      ],
+      "age_days": 11
+    },
+    {
+      "id": "v26",
+      "namespace": "ops",
+      "text": "the incident review happens within two business days (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:26"
+      ],
+      "age_days": 12
+    },
+    {
+      "id": "v27",
+      "namespace": "ops",
+      "text": "database migrations run before the new binary starts (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:27"
+      ],
+      "age_days": 13
+    },
+    {
+      "id": "v28",
+      "namespace": "ops",
+      "text": "logs are retained for thirty days in object storage (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:28"
+      ],
+      "age_days": 14
+    },
+    {
+      "id": "v29",
+      "namespace": "ops",
+      "text": "the staging environment mirrors production settings (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:29"
+      ],
+      "age_days": 15
+    },
+    {
+      "id": "v30",
+      "namespace": "ops",
+      "text": "secrets rotate every ninety days (workspace variant note)",
+      "tags": [
+        "variant",
+        "topic:30"
+      ],
+      "age_days": 16
+    },
+    {
+      "id": "o31",
+      "namespace": "ops",
+      "text": "the load balancer health check hits slash healthz",
+      "tags": [
+        "archive",
+        "topic:31"
+      ],
+      "age_days": 130
+    },
+    {
+      "id": "o32",
+      "namespace": "ops",
+      "text": "disk usage alerts fire above eighty percent",
+      "tags": [
+        "archive",
+        "topic:32"
+      ],
+      "age_days": 131
+    },
+    {
+      "id": "o33",
+      "namespace": "ops",
+      "text": "queue workers retry failed jobs three times",
+      "tags": [
+        "archive",
+        "topic:33"
+      ],
+      "age_days": 132
+    },
+    {
+      "id": "o34",
+      "namespace": "ops",
+      "text": "the cdn caches static assets for one year",
+      "tags": [
+        "archive",
+        "topic:34"
+      ],
+      "age_days": 133
+    },
+    {
+      "id": "o35",
+      "namespace": "ops",
+      "text": "backup restores are tested each quarter",
+      "tags": [
+        "archive",
+        "topic:35"
+      ],
+      "age_days": 134
+    },
+    {
+      "id": "o36",
+      "namespace": "ops",
+      "text": "cpu throttling is disabled for latency sensitive pods",
+      "tags": [
+        "archive",
+        "topic:36"
+      ],
+      "age_days": 135
+    },
+    {
+      "id": "o37",
+      "namespace": "ops",
+      "text": "dependency upgrades ship every tuesday",
+      "tags": [
+        "archive",
+        "topic:37"
+      ],
+      "age_days": 136
+    },
+    {
+      "id": "o38",
+      "namespace": "ops",
+      "text": "the audit log records every admin action",
+      "tags": [
+        "archive",
+        "topic:38"
+      ],
+      "age_days": 137
+    },
+    {
+      "id": "o39",
+      "namespace": "ops",
+      "text": "the status page reflects regional outages",
+      "tags": [
+        "archive",
+        "topic:39"
+      ],
+      "age_days": 138
+    },
+    {
+      "id": "o40",
+      "namespace": "ops",
+      "text": "container images are signed with cosign",
+      "tags": [
+        "archive",
+        "topic:40"
+      ],
+      "age_days": 139
+    },
+    {
+      "id": "o41",
+      "namespace": "research",
+      "text": "the benchmark compares bm25 with dense retrieval",
+      "tags": [
+        "archive",
+        "topic:41"
+      ],
+      "age_days": 120
+    },
+    {
+      "id": "o42",
+      "namespace": "research",
+      "text": "chunking long documents improves recall quality",
+      "tags": [
+        "archive",
+        "topic:42"
+      ],
+      "age_days": 121
+    },
+    {
+      "id": "o43",
+      "namespace": "research",
+      "text": "embedding inversion attacks can reconstruct text",
+      "tags": [
+        "archive",
+        "topic:43"
+      ],
+      "age_days": 122
+    },
+    {
+      "id": "o44",
+      "namespace": "research",
+      "text": "hybrid search blends lexical and semantic signals",
+      "tags": [
+        "archive",
+        "topic:44"
+      ],
+      "age_days": 123
+    },
+    {
+      "id": "o45",
+      "namespace": "research",
+      "text": "recency decay uses an exponential curve",
+      "tags": [
+        "archive",
+        "topic:45"
+      ],
+      "age_days": 124
+    },
+    {
+      "id": "o46",
+      "namespace": "research",
+      "text": "the annotated corpus has three hundred labelled pairs",
+      "tags": [
+        "archive",
+        "topic:46"
+      ],
+      "age_days": 125
+    },
+    {
+      "id": "o47",
+      "namespace": "research",
+      "text": "precision at five measures the top results",
+      "tags": [
+        "archive",
+        "topic:47"
+      ],
+      "age_days": 126
+    },
+    {
+      "id": "o48",
+      "namespace": "research",
+      "text": "token budgets shape agent context usage",
+      "tags": [
+        "archive",
+        "topic:48"
+      ],
+      "age_days": 127
+    },
+    {
+      "id": "o49",
+      "namespace": "research",
+      "text": "stored embeddings remain plaintext by design",
+      "tags": [
+        "archive",
+        "topic:49"
+      ],
+      "age_days": 128
+    },
+    {
+      "id": "o50",
+      "namespace": "research",
+      "text": "offline evaluation uses a fixed golden set",
+      "tags": [
+        "archive",
+        "topic:50"
+      ],
+      "age_days": 129
+    }
   ]
 }

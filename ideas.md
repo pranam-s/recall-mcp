@@ -9,18 +9,17 @@ is for the not-yet-decided.
 
 - **ANN or packed-vector-file retrieval beyond ~100k memories/namespace**
   (D-002, mandatory revisit beyond that scale). Deferred: the 10k worst case
-  meets its 25 ms p95 budget in steady state (p95 20.1-20.9 ms, re-baselined
-  post-AR-018); building ANN now would add an index format with no problem to
-  solve at realistic scales. LanceDB is the recorded first choice when the
-  trigger fires.
+  does not meet the 25 ms p95 budget (see EVALUATION), but the residual is the
+  FTS keyword pass, not the vector scan; building ANN now would add an index
+  format without addressing that floor. LanceDB is the recorded first choice
+  when the scale trigger fires.
 - **FTS candidate-pass optimization** (remediation path (b) in D-002):
-  keyword-only floor ~14.8 ms/call in the cold diagnostic. Untriggered while
-  the hybrid path stays within budget.
-- **Cold-open first-recall latency**: the first recall after a fresh build
-  breaches the budget once (p95 32.8 ms) because the packed vector cache
-  fills and first page faults land in the tail. A warm-up-on-serve could
-  remove it; deferred because it is one-time cost outside the PRD metric,
-  documented rather than hidden.
+  keyword-only floor ~15-17 ms/call in the measured diagnostics. This is the
+  remaining cause of the p95 budget failure and is the next performance item.
+- **Cold-open first-recall latency**: the first recall after a fresh process
+  is slower because the packed vector cache fills and first page faults land in
+  the tail. A warm-up-on-serve could remove that extra cost; it would not fix
+  the steady-state p95 gap above.
 - **Eviction / recency-of-use policy**: the `last_accessed_at` column is
   reserved for it (write-time only since AR-018; recalls no longer touch
   it). Needs a use case before it earns an UPDATE back on the hot path.
@@ -35,24 +34,23 @@ is for the not-yet-decided.
 - **True branch coverage gate**: cargo-llvm-cov has no branch fail-under on
   stable Rust (`--branch` needs nightly; D-010 amendment). Bring the branch
   gate back when stable rustc ships branch instrumentation.
-- **cargo-deny in CI** (licenses + advisories): blocked on Actions being
-  disabled (zero paid CI). The manual license audit lives in
-  `docs/LICENSE-AUDIT.md` until then.
 
 ## Surface
 
-- **Web UI with API key support** (AR-017): the UI sends no `X-API-Key`, so
-  it only works against a keyless local server. Extending `web/src/api.ts`
-  to collect and send the key is small but needs a UX for secret entry that
-  does not put the key in localStorage.
 - **Generated TypeScript client from the OpenAPI document** (D-006):
   `web/src/api.ts` is hand-typed. OpenAPI codegen was rejected for the v1
   UI (generated clients lag the doc and bloat the bundle); revisit if a
   second API consumer appears.
+- **Live API-key UX for a keyed server**: the web console now saves the key in
+  sessionStorage and sends `X-API-Key`; a full login/session story is still
+  out of scope.
 - **OpenAI embedder live verification**: request/parse/dims logic is unit-
   tested but the client has never called the live API (no key available
   during development). One recorded live call would close the last untested-by-execution
   path.
+- **Docker image publish**: the Dockerfile and server.json are committed, but
+  no workflow pushes the advertised `ghcr.io` image. The owner must add a
+  registry login and image push before the OCI package can resolve.
 
 ## Not pursuing (decided, do not re-litigate)
 

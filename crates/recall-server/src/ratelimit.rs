@@ -1,12 +1,11 @@
 //! Token-bucket rate limiting for the HTTP transports.
 //!
-//! One bucket per presented API key (or one shared `anonymous` bucket when
-//! auth is off / no key was presented). The limiter is layered outside the
-//! auth middleware (AR-012), so wrong/missing-key requests are throttled by
-//! the anonymous bucket — brute-force key guessing costs requests even with
-//! auth enabled. Zero dependencies: the bucket math is a few lines and
-//! windows-gnu-safe, and burst/refill are configured explicitly in
-//! `ServerConfig`.
+//! One bucket per validated configured API key, and one shared `anonymous`
+//! bucket for every missing, invalid, or unauthenticated request. The limiter
+//! is layered outside auth (AR-012), so wrong-key requests are throttled by the
+//! anonymous bucket and rotating forged keys cannot create fresh buckets.
+//! Zero dependencies: the bucket math is a few lines and windows-gnu-safe;
+//! burst/refill are configured explicitly in `ServerConfig`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -49,10 +48,12 @@ struct Bucket {
 #[derive(Debug)]
 pub struct RateLimiter {
     limits: RateLimit,
+    max_buckets: usize,
     buckets: Mutex<HashMap<String, Bucket>>,
 }
 
-/// Upper bound on tracked keys; stale buckets are swept beyond this.
+/// Upper bound on tracked keys; stale buckets are swept and the least
+/// recently used are evicted beyond this.
 const MAX_BUCKETS: usize = 10_000;
 /// Idle time after which a bucket becomes sweepable.
 const BUCKET_IDLE: Duration = Duration::from_secs(3600);
@@ -62,6 +63,18 @@ const BUCKET_IDLE: Duration = Duration::from_secs(3600);
 pub enum Admission {
     Admitted,
     Limited { retry_after_secs: u64 },
+}
+
+/// Bucket identity: only a key that matches the configured API key gets its
+/// own bucket. Missing and invalid keys all share `anonymous`, so rotating
+/// forged keys cannot create unbounded state or dodge the limit.
+fn bucket_key(state: &crate::state::AppState, headers: &axum::http::HeaderMap) -> String {
+    match (&state.api_key, crate::auth::presented_key(headers)) {
+        (Some(expected), Some(presented)) if crate::auth::keys_match(&presented, expected) => {
+            presented
+        }
+        _ => "anonymous".into(),
+    }
 }
 
 /// Axum middleware: per-key (or shared anonymous) token bucket in front of
@@ -74,9 +87,7 @@ pub async fn enforce(
     let Some(limiter) = state.rate_limiter.clone() else {
         return next.run(request).await;
     };
-    // Bucket by presented key; unauthenticated traffic shares one bucket so
-    // key-guessing floods cannot rotate buckets.
-    let key = crate::auth::presented_key(request.headers()).unwrap_or_else(|| "anonymous".into());
+    let key = bucket_key(&state, request.headers());
     match limiter.check(&key) {
         Admission::Admitted => next.run(request).await,
         Admission::Limited { retry_after_secs } => {
@@ -88,8 +99,14 @@ pub async fn enforce(
 
 impl RateLimiter {
     pub fn new(limits: RateLimit) -> Self {
+        Self::new_with_capacity(limits, MAX_BUCKETS)
+    }
+
+    /// Testable constructor with an explicit bucket-map bound.
+    pub fn new_with_capacity(limits: RateLimit, max_buckets: usize) -> Self {
         Self {
             limits,
+            max_buckets: max_buckets.max(1),
             buckets: Mutex::new(HashMap::new()),
         }
     }
@@ -99,8 +116,20 @@ impl RateLimiter {
     pub fn check(&self, key: &str) -> Admission {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
-        if buckets.len() > MAX_BUCKETS {
+        if !buckets.contains_key(key) && buckets.len() >= self.max_buckets {
+            // First drop idle buckets; if the map is still full of active
+            // keys, evict the least recently used one (smallest last_refill).
             buckets.retain(|_, b| now.duration_since(b.last_refill) < BUCKET_IDLE);
+            while buckets.len() >= self.max_buckets {
+                let Some(oldest) = buckets
+                    .iter()
+                    .min_by_key(|(_, b)| b.last_refill)
+                    .map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                buckets.remove(&oldest);
+            }
         }
         let limits = self.limits;
         let bucket = buckets.entry(key.to_string()).or_insert(Bucket {
@@ -119,6 +148,11 @@ impl RateLimiter {
                 retry_after_secs: wait.ceil().max(1.0) as u64,
             }
         }
+    }
+
+    #[cfg(test)]
+    fn tracked_buckets(&self) -> usize {
+        self.buckets.lock().unwrap_or_else(|p| p.into_inner()).len()
     }
 }
 
@@ -187,5 +221,55 @@ mod tests {
             Admission::Admitted,
             "0.005 tokens is not enough"
         );
+    }
+
+    #[test]
+    fn bucket_map_is_hard_bounded_even_under_active_rotation() {
+        let l = RateLimiter::new_with_capacity(
+            RateLimit {
+                rate: 1.0,
+                burst: 2.0,
+            },
+            4,
+        );
+        for i in 0..100 {
+            assert_eq!(l.check(&format!("key-{i}")), Admission::Admitted);
+        }
+        assert!(
+            l.tracked_buckets() <= 4,
+            "active-key rotation must not grow the map without bound: {}",
+            l.tracked_buckets()
+        );
+    }
+
+    fn test_state(api_key: Option<&str>) -> crate::state::AppState {
+        let store =
+            recall_core::shared(recall_core::SqliteStore::open_in_memory().expect("in-memory"));
+        crate::state::AppState::new(
+            store,
+            std::sync::Arc::new(recall_core::HashEmbedder::new_256()),
+            api_key.map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn only_a_validated_configured_key_gets_its_own_bucket() {
+        let state = test_state(Some("secret"));
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-api-key", "secret".parse().unwrap());
+        assert_eq!(bucket_key(&state, &headers), "secret");
+        // Rotating forged keys all land in the anonymous bucket.
+        for guess in ["guess-1", "guess-2", "guess-3"] {
+            let mut forged = axum::http::HeaderMap::new();
+            forged.insert("x-api-key", guess.parse().unwrap());
+            assert_eq!(bucket_key(&state, &forged), "anonymous");
+        }
+        let empty = axum::http::HeaderMap::new();
+        assert_eq!(bucket_key(&state, &empty), "anonymous");
+        // With auth disabled every request is anonymous (no key to validate).
+        let open = test_state(None);
+        let mut key = axum::http::HeaderMap::new();
+        key.insert("x-api-key", "whatever".parse().unwrap());
+        assert_eq!(bucket_key(&open, &key), "anonymous");
     }
 }

@@ -1,3 +1,11 @@
+# HISTORICAL: Competitor notes
+
+This document is kept for context. It describes an earlier state and may
+contain claims that no longer hold. Current documentation starts at
+[../STATUS.md](../STATUS.md) and [../EVALUATION.md](../EVALUATION.md).
+
+---
+
 # Competitive landscape: AI-agent memory (researched 2026-09-06)
 
 All star counts / activity observed on 2026-09-06 via the GitHub API. Pricing

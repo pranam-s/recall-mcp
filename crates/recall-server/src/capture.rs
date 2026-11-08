@@ -7,32 +7,28 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 /// One transcript message. `role` is prefixed into the stored text and added
-/// as a `role:<role>` tag for analytics; `at` becomes the chunks'
-/// `created_at` when present.
+/// as a `role:<role>` tag; `at` becomes the chunks' `created_at`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CaptureMessage {
     pub role: Option<String>,
     pub content: String,
-    /// Optional message timestamp (unix seconds).
     #[serde(default)]
     pub at: Option<i64>,
 }
 
-/// Body of `POST /v1/capture` and the arguments of the MCP `capture` tool:
-/// an agent transcript chunked into memories server-side.
+/// Body of `POST /v1/capture` and the arguments of the MCP `capture` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CaptureRequest {
-    /// Namespace (workspace) to store the transcript in; created
-    /// automatically if unknown (the agent-shaped path, D-009).
     pub namespace: String,
-    /// Transcript messages; each becomes one or more memories.
     pub transcript: Vec<CaptureMessage>,
-    /// Extra tags applied to every captured chunk.
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Chunk size cap in characters (default 1000, clamped to 100..=8000).
     #[serde(default)]
     pub max_chunk_chars: Option<usize>,
+    #[serde(default)]
+    pub include_memories: bool,
+    #[serde(default)]
+    pub include_embedding: bool,
 }
 
 /// A validated, fully embedded capture: chunks carry their vectors so the
@@ -53,12 +49,17 @@ pub fn prepare(
             "namespace must not be empty".into(),
         ));
     }
-    if body.transcript.is_empty() {
-        return Err(RecallError::InvalidInput(
-            "transcript must contain at least one message".into(),
-        ));
-    }
-    let max_chars = body.max_chunk_chars.unwrap_or(1000).clamp(100, 8000);
+    recall_core::validation::validate_namespace(&body.namespace)?;
+    let total_chars: usize = body
+        .transcript
+        .iter()
+        .map(|m| m.content.chars().count() + m.role.as_deref().map_or(0, |r| r.chars().count()))
+        .sum();
+    recall_core::validation::validate_capture(body.transcript.len(), total_chars)?;
+    let max_chars = body
+        .max_chunk_chars
+        .unwrap_or(1000)
+        .clamp(100, recall_core::validation::MAX_CHUNK_CHARS);
     let mut memories: Vec<NewMemory> = Vec::new();
     for message in &body.transcript {
         let content = message.content.trim();
@@ -70,6 +71,9 @@ pub fn prepare(
             _ => content.to_string(),
         };
         for chunk in recall_core::capture::chunk_text(&text, max_chars)? {
+            if memories.len() >= recall_core::validation::MAX_CAPTURE_CHUNKS {
+                recall_core::validation::validate_capture_chunks(memories.len() + 1)?;
+            }
             let mut tags = body.tags.clone();
             if let Some(role) = message
                 .role
@@ -103,13 +107,63 @@ pub fn prepare(
 }
 
 /// Store a prepared capture: the namespace is auto-created (D-009) and every
-/// chunk is inserted under one store lock. Callers hold the lock via
+/// chunk is inserted in ONE write transaction, so a failure part-way through
+/// (duplicate id, validation error, disk full) leaves neither a stray
+/// namespace nor a partial transcript behind. Callers hold the store lock via
 /// `AppState::with_store`.
 pub fn commit(store: &dyn Store, prepared: &PreparedCapture) -> Result<Vec<Memory>, RecallError> {
-    store.get_or_create_namespace(&prepared.namespace)?;
-    prepared
-        .memories
-        .iter()
-        .map(|m| store.insert_memory(m))
-        .collect()
+    let mut captured = Vec::with_capacity(prepared.memories.len());
+    store.write_tx(&mut |tx| {
+        tx.get_or_create_namespace(&prepared.namespace)?;
+        captured.clear();
+        for memory in &prepared.memories {
+            captured.push(tx.insert_memory(memory)?);
+        }
+        Ok(())
+    })?;
+    Ok(captured)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ZeroEmbedder;
+    impl Embedder for ZeroEmbedder {
+        fn dimensions(&self) -> usize {
+            4
+        }
+        fn name(&self) -> &'static str {
+            "zero-test"
+        }
+        fn embed(&self, _text: &str) -> Vec<f32> {
+            vec![0.0; 4]
+        }
+    }
+
+    #[test]
+    fn prepare_rejects_a_capture_that_would_explode_into_too_many_chunks() {
+        // Three 70k-character messages at a 100-character chunk cap would
+        // produce about 2,100 chunks, above the 2,000 chunk ceiling.
+        let body = CaptureRequest {
+            namespace: "too-many".into(),
+            transcript: (0..3)
+                .map(|_| CaptureMessage {
+                    role: None,
+                    content: "a ".repeat(35_000),
+                    at: None,
+                })
+                .collect(),
+            tags: vec![],
+            max_chunk_chars: Some(100),
+            include_memories: false,
+            include_embedding: false,
+        };
+        let err = prepare(&ZeroEmbedder, &body)
+            .err()
+            .expect("too many chunks must fail")
+            .to_string();
+        assert!(err.contains("chunks"), "{err}");
+        assert!(err.contains("2000"), "{err}");
+    }
 }

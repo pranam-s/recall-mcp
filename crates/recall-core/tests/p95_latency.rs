@@ -2,7 +2,7 @@
 //! p95 < 25 ms). Ignored by default because it seeds a large store; run with
 //!
 //! ```text
-//! cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
+//! cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture --test-threads=1
 //! ```
 //!
 //! Release mode is required: the metric is the production latency budget and
@@ -13,11 +13,11 @@
 //! separately for context.
 //!
 //! A warm-up burst runs before the timed region: the first recalls after
-//! seeding fill the D-019 packed vector cache and the OS file cache, and
-//! those one-time costs land in the tail of an un-warmed run (measured
-//! 2026-09-14: cold first run p95 32.8 ms vs 20.3–20.9 ms warm). The PRD
-//! metric is steady-state recall, so the gate measures the warmed path and
-//! the warm-up size is printed for the record.
+//! seeding fill the D-019 packed vector cache and the OS file cache, so an
+//! un-warmed run conflates one-time costs with steady-state recall. The
+//! warm-up size is printed for the record. Even warmed, the 2026-11-08 host
+//! exceeds the budget (see docs/EVALUATION.md); this harness records that
+//! failure rather than lowering the gate.
 
 use std::time::Instant;
 
@@ -146,7 +146,7 @@ fn p95_recall_latency_on_10k_memories_stays_under_budget() {
 /// isolation so optimization and remediation decisions rest on measurements.
 ///
 /// ```text
-/// cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture
+/// cargo test -p recall-core --release --test p95_latency -- --ignored --nocapture --test-threads=1
 /// ```
 #[test]
 #[ignore = "diagnostic over the 10k fixture; run with --ignored (release mode)"]
