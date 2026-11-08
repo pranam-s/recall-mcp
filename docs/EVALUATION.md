@@ -29,7 +29,7 @@ Doc tests: `cargo test --workspace --doc --locked` passed (0 doc tests defined).
 Optional features: `cargo test -p recall-mcp-core --features 'onnx openai' --lib`
 with onnxruntime 1.28.0 and a model cache: **122 passed, 2 ignored** (the
 feature-gated ONNX and OpenAI tests plus the default suite). The full
-`cargo test --workspace --all-features` run measured **206 passed, 0 failed,
+`cargo test --workspace --all-features` run measured **207 passed, 0 failed,
 4 ignored**.
 
 Formatting and lints:
