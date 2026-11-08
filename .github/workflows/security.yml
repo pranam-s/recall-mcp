@@ -71,6 +71,5 @@ jobs:
               repo: context.repo.repo,
               title: "Weekly security scan failed",
               body: "The scheduled advisory scan failed. See the Security workflow run " +
-                `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}.`,
-              labels: ["security"]
+                `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}.`
             });
