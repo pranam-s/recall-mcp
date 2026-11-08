@@ -27,7 +27,7 @@ repository.
 | REST `GET /v1/memories` | bare array + `X-Total-Count` | `{items,total,limit,offset,has_more}` + header |
 | REST capture | summary plus all memories | compact summary; `include_memories=true` |
 | MCP `list_memories` | default 50, cap 10,000 | default 20, cap 100, `offset` supported |
-| MCP `recall` | JSON only | `format=json|text`; text rejects embeddings |
+| MCP `recall` | JSON only | `format=json\|text`; text rejects embeddings |
 | CLI binary | `recall-cli` | `recall` plus the `recall-cli` alias |
 | CLI JSON | pretty, embeddings omitted | compact when piped, pretty on a terminal; `--pretty`, `--full`, `--show-embedding` |
 | CLI commands | remember, recall, update, export, import, backup, vacuum, serve | adds forget, list, capture, stats, keygen |
