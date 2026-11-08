@@ -994,6 +994,8 @@ pub async fn run() -> Result<()> {
         }
         Command::Import { file } => {
             let store = open_store(&db)?;
+            let embedder = resolve_embedder(cli.embedder.as_deref())?;
+            guard_embedder(&store, embedder.as_ref(), allow_mismatch)?;
             let raw = read_text(file).with_context(|| format!("read {}", file.display()))?;
             let data: ExportData = serde_json::from_str(&raw)?;
             let report = import(&*store.lock().unwrap_or_else(|p| p.into_inner()), &data)?;
@@ -1186,6 +1188,34 @@ mod tests {
             err.root_cause().to_string().contains("onnx"),
             "error must name the embedder: {err:#}"
         );
+    }
+
+    /// The shared reader strips a UTF-8 BOM for config, key, and import files.
+    #[test]
+    fn read_text_strips_a_utf8_bom_for_config_key_and_import_reads() {
+        let _guard = env_lock();
+        clear_serve_env();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bom.json");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(br#"{"bind":"127.0.0.1:1"}"#);
+        std::fs::write(&path, bytes).unwrap();
+        let text = read_text(&path).unwrap();
+        assert!(text.starts_with('{'), "BOM must be stripped: {text:?}");
+        let mut args = serve_args();
+        args.bind = None;
+        let (_, bind) = serve_config(&args, Some(&path)).unwrap();
+        assert_eq!(bind, "127.0.0.1:1", "a BOM config must be parsed");
+
+        // The same reader feeds RECALL_MCP_KEY_FILE and import, so this pins
+        // the shared behavior those paths rely on.
+        let key_path = dir.path().join("key.txt");
+        let mut key = vec![0xEF, 0xBB, 0xBF];
+        key.extend_from_slice(
+            b"5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a\n",
+        );
+        std::fs::write(&key_path, key).unwrap();
+        assert_eq!(read_text(&key_path).unwrap().trim().len(), 64);
     }
 
     /// Glue: a `--config` file lands in the produced `ServerConfig`, flags

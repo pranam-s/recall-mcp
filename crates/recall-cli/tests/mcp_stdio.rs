@@ -99,7 +99,7 @@ fn conformance_initialize_tools_list_call_over_stdio() {
     assert_eq!(response["id"], 1);
     let result = unwrap_result(&response);
     assert_eq!(result["serverInfo"]["name"], "recall-mcp");
-    // Wire pin: rmcp 3.3 answers a `2026-07-28` initialize with `2025-11-25`
+    // Wire pin: rmcp 3.9 answers a `2026-07-28` initialize with `2025-11-25`
     // (the newest legacy handshake version — the 2026-07-28 revision replaced
     // the handshake with per-request metadata). Pinned against SDK drift.
     assert_eq!(result["protocolVersion"], "2025-11-25");
