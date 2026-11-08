@@ -13,7 +13,9 @@ other) is claimed or reproduced here.
 | `semantic.json` | 50 paraphrase queries over the same corpus. With the `onnx` feature this is a gated run (hit-rate@5 >= 0.85); the default hash embedder prints a diagnostic and does not gate. |
 
 `crates/recall-core/tests/golden_eval.rs` seeds the corpus verbatim and runs
-every query through the real hybrid recall path with default weights (`k=5`).
+every query through the real hybrid recall path with default weights and
+`k=10`, so MRR@10 sees ten results while the hit-rate gate still reads the
+first five.
 
 ## Labelling rules
 
@@ -39,7 +41,7 @@ Measured on 2026-11-08 in this worktree with `cargo test`. Exact output:
 ```text
 golden: 98/100 hit-rate@5 = 0.980 (gate >= 0.85), MRR@10 = 0.975
   embedder: hash-256
-semantic (diagnostic): 31/50 hit-rate@5 = 0.620 (gate >= 0.85), MRR@10 = 0.498
+semantic (diagnostic): 31/50 hit-rate@5 = 0.620 (gate >= 0.85), MRR@10 = 0.508
   embedder: hash-256
 semantic: 50/50 hit-rate@5 = 1.000 (gate >= 0.85), MRR@10 = 0.740
   embedder: onnx:all-minilm-l6-v2-q

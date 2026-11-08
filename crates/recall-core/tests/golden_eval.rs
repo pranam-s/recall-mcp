@@ -109,6 +109,10 @@ fn measure(
             q.expect_id
         );
         let params = RecallParams {
+            // MRR@10 needs ten results; `take(5)` below still defines the
+            // hit-rate@5 gate. Using the default k=5 would silently measure
+            // MRR@5 while reporting it as MRR@10.
+            k: 10,
             tags: q.tags.clone(),
             ..RecallParams::default()
         };
