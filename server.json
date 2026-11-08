@@ -22,18 +22,6 @@
         { "type": "positional", "value": "serve" },
         { "type": "named", "name": "--stdio" }
       ]
-    },
-    {
-      "registryType": "oci",
-      "identifier": "ghcr.io/pranam-s/recall-mcp:0.5.0",
-      "runtimeHint": "docker",
-      "transport": {
-        "type": "stdio"
-      },
-      "packageArguments": [
-        { "type": "positional", "value": "serve" },
-        { "type": "named", "name": "--stdio" }
-      ]
     }
   ]
 }
