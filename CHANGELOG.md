@@ -72,7 +72,7 @@ First tagged public release. 0.4.0 was never tagged or published.
 
 ### Known gaps
 
-- 10k p95 measured 29.6 to 33.1 ms on the development host, above the 25 ms
+- 10k p95 measured 29.6 to 35.3 ms on the development host, above the 25 ms
   PRD budget. The ignored gate was not relaxed.
 - GitHub Actions is disabled for billing; no workflow has run remotely.
 - The OpenAI embedder has still not been called live (no key).

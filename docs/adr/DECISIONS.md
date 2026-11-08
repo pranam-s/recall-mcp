@@ -9,9 +9,9 @@ These amend earlier entries without rewriting their text or their history.
 
 - **D-002 (as amended by D-016/D-019):** the 10k p95 budget is not met on the
   2026-11-08 development host. The ignored harness measured p95 29.583, 32.745,
-  32.768, and 33.058 ms across serial runs against 25 ms. The threshold stays at
-  25 ms and the failure is recorded in EVALUATION. No ANN or storage-engine
-  change was made in 0.5.0.
+  32.768, 33.058, and 35.256 ms across serial runs against 25 ms. The threshold
+  stays at 25 ms and the failure is recorded in EVALUATION. No ANN or
+  storage-engine change was made in 0.5.0.
 - **D-004:** rmcp is 3.9.0. The 2026-07-28 stateless lifecycle is now exercised
   directly with `server/discover`, `_meta`, and the `MCP-Protocol-Version`,
   `Mcp-Method`, and `Mcp-Name` headers over HTTP and stdio. The legacy

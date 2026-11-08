@@ -262,10 +262,10 @@ revisit applies.
 
 ## Performance
 
-The ignored 10k-memory harness measured p95 **29.6 to 33.1 ms** on this host on
+The ignored 10k-memory harness measured p95 **29.6 to 35.3 ms** on this host on
 2026-11-08, against the PRD budget of 25 ms. The budget is **not met here**;
 the harness remains an ignored manual gate and was not relaxed. Means were
-20.2 to 22.7 ms and p50 19.0 to 22.0 ms. Recorded runs and the older history are
+20.2 to 22.9 ms and p50 19.0 to 22.0 ms. Recorded runs and the older history are
 in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Repository hygiene

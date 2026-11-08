@@ -84,7 +84,7 @@ cargo test -p recall-mcp-core --release --test p95_latency -- --ignored --nocapt
 The harness seeds 10,000 embedded memories, runs 100 untimed warm-up recalls,
 then times 1,000 recalls. Run it with `--test-threads=1`: the cost-breakdown
 test seeds its own 10k store and distorts p95 when both ignored tests run in
-parallel. Runs 1-2 are from implementation; runs 3-4 are review runs with the
+parallel. Runs 1-2 are from implementation; runs 3-5 are review runs with the
 serial command above:
 
 | Run | mean | p50 | p95 | p99 | max | 25 ms gate |
@@ -93,6 +93,7 @@ serial command above:
 | 2 | 22.706 | 21.974 | **32.768** | 40.462 | 48.432 | FAIL |
 | 3 | 22.707 | 21.572 | **32.745** | 40.174 | 51.696 | FAIL |
 | 4 | 20.247 | 19.006 | **29.583** | 40.357 | 48.731 | FAIL |
+| 5 | 22.910 | 21.332 | **35.256** | 45.427 | 50.767 | FAIL |
 
 Cost breakdown from the final clean review run: hybrid recall 19.912 ms/call,
 keyword-only recall 19.233 ms/call, full-row materialization 447.898 ms/call.

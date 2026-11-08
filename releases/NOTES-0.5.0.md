@@ -65,9 +65,9 @@ Local, windows-msvc, rustc 1.99.1, 2026-11-08. Exact output is in
 
 ## Known gaps
 
-- **p95 at 10k is not met on this host.** Four serial runs measured 29.583,
-  32.745, 32.768, and 33.058 ms against the 25 ms PRD budget. The ignored manual
-  gate remains at 25 ms and fails honestly.
+- **p95 at 10k is not met on this host.** Five serial runs measured 29.583,
+  32.745, 32.768, 33.058, and 35.256 ms against the 25 ms PRD budget. The
+  ignored manual gate remains at 25 ms and fails honestly.
 - **CI has not run.** GitHub Actions is disabled for billing. Workflows are
   committed and were not executed remotely. Do not treat them as passing.
 - The OpenAI embedder has never been called live (no key).

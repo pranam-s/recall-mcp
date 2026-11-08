@@ -57,7 +57,7 @@ Reliability and quality:
 - Golden set: hit-rate@5 >= 0.85 on 100 queries; MRR@10 is reported and gated
   at 0.80. The semantic set is gated on ONNX.
 - p95: the ignored 10k harness is a manual gate at 25 ms. It failed on the
-  2026-11-08 host (29.6 to 33.1 ms). Do not lower the threshold to make it pass.
+  2026-11-08 host (29.6 to 35.3 ms). Do not lower the threshold to make it pass.
 - Web: `cd web && npm ci && npm audit --audit-level=high && npm run build &&
   npx playwright test`. axe WCAG 2.1 AA must stay at 0 violations.
 
