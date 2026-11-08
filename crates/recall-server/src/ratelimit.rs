@@ -1,12 +1,11 @@
 //! Token-bucket rate limiting for the HTTP transports.
 //!
-//! One bucket per presented API key (or one shared `anonymous` bucket when
-//! auth is off / no key was presented). The limiter is layered outside the
-//! auth middleware (AR-012), so wrong/missing-key requests are throttled by
-//! the anonymous bucket — brute-force key guessing costs requests even with
-//! auth enabled. Zero dependencies: the bucket math is a few lines and
-//! windows-gnu-safe, and burst/refill are configured explicitly in
-//! `ServerConfig`.
+//! One bucket per validated configured API key, and one shared `anonymous`
+//! bucket for every missing, invalid, or unauthenticated request. The limiter
+//! is layered outside auth (AR-012), so wrong-key requests are throttled by the
+//! anonymous bucket and rotating forged keys cannot create fresh buckets.
+//! Zero dependencies: the bucket math is a few lines and windows-gnu-safe;
+//! burst/refill are configured explicitly in `ServerConfig`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

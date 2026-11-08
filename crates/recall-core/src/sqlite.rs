@@ -544,6 +544,13 @@ impl SqliteStore {
                     }
                     self.rekey_from_legacy(&legacy)?;
                 }
+                // A store created or upgraded by 0.4 may already contain
+                // plaintext-era free pages, and 0.4 did not write this marker.
+                // Schedule the same one-time forensic pass for it; fresh 0.5
+                // stores get the marker in the first-keyed-open branch below.
+                if self.meta_get(META_FORENSIC_CLEAN)?.is_none() {
+                    self.meta_set(META_FORENSIC_CLEAN, FORENSIC_PENDING)?;
+                }
             }
             // First keyed open (fresh or legacy/marked-plain): encrypt everything.
             (Some(_), _) => {
@@ -3627,6 +3634,30 @@ mod tests {
             s.meta_get(META_FORENSIC_CLEAN).unwrap().as_deref(),
             Some(FORENSIC_DONE),
             "the pending marker must be retried, not ignored"
+        );
+    }
+
+    #[test]
+    fn keyed_store_without_a_marker_schedules_the_one_time_forensic_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pre-marker.db");
+        let key = StoreKey::from_hex(&"7c".repeat(32)).unwrap();
+        {
+            let s = SqliteStore::open_with_key(&path, &key).unwrap();
+            ns(&s, "w");
+            s.insert_memory(&mem("w", SECRET)).unwrap();
+            s.conn
+                .execute(
+                    "DELETE FROM store_meta WHERE key = ?1",
+                    params![META_FORENSIC_CLEAN],
+                )
+                .unwrap();
+        }
+        let s = SqliteStore::open_with_key(&path, &key).unwrap();
+        assert_eq!(
+            s.meta_get(META_FORENSIC_CLEAN).unwrap().as_deref(),
+            Some(FORENSIC_DONE),
+            "0.4 keyed stores without the marker must get the one-time pass"
         );
     }
 }
