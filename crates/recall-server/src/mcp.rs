@@ -37,13 +37,22 @@ pub struct RememberParams {
     pub include_embedding: bool,
 }
 
+/// Distinguish an absent field (`None`) from an explicit `null` (`Some(None)`).
+fn deserialize_double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RecallToolParams {
     pub namespace: String,
     pub query: String,
     #[serde(default)]
     pub k: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub tau_days: Option<Option<f64>>,
     #[serde(default)]
     pub pinned_boost: Option<f64>,
@@ -445,6 +454,26 @@ mod tests {
             "tools capability must be declared"
         );
         assert!(info.instructions.is_some());
+    }
+
+    #[test]
+    fn tau_days_distinguishes_absent_from_explicit_null() {
+        let absent: RecallToolParams =
+            serde_json::from_value(serde_json::json!({"namespace": "w", "query": "q"}))
+                .expect("absent tau");
+        assert_eq!(absent.tau_days, None);
+
+        let explicit_null: RecallToolParams = serde_json::from_value(
+            serde_json::json!({"namespace": "w", "query": "q", "tau_days": null}),
+        )
+        .expect("null tau");
+        assert_eq!(explicit_null.tau_days, Some(None));
+
+        let value: RecallToolParams = serde_json::from_value(
+            serde_json::json!({"namespace": "w", "query": "q", "tau_days": 30.0}),
+        )
+        .expect("numeric tau");
+        assert_eq!(value.tau_days, Some(Some(30.0)));
     }
 
     #[test]
