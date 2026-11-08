@@ -66,10 +66,16 @@ test.describe("Recall-MCP UI", () => {
 
   test("browse memories with server-driven pagination", async ({ page, request }) => {
     // Seed through the API (the UI forms are exercised by the other tests).
+    // Distinct created_at values make the newest-first page order deterministic.
+    const base = 1_700_000_000;
     await request.post("/v1/namespaces", { data: { name: "paging" } });
     for (let i = 1; i <= 12; i++) {
       await request.post("/v1/memories", {
-        data: { namespace: "paging", text: `paging seed memory ${i}` },
+        data: {
+          namespace: "paging",
+          text: `paging seed memory ${i}`,
+          created_at: base + i,
+        },
       });
     }
 
@@ -82,8 +88,7 @@ test.describe("Recall-MCP UI", () => {
     await expect(status).toHaveText("Page 1 of 2 · memories 1–10 of 12 · newest first");
     await expect(table).toBeVisible();
     await expect(table.getByRole("row")).toHaveCount(11); // header + 10 rows
-    // Same-second seeds tie-break on random ids, so page contents are not
-    // insertion-ordered — assert membership, not row positions.
+    // The newest seed must lead the first page.
     await expect(table).toContainText("paging seed memory 12");
 
     await section.getByRole("button", { name: "Next page" }).click();
