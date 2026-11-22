@@ -1,5 +1,5 @@
 # Multi-stage build: compile the Rust binary, then ship a small runtime image.
-FROM rust:1.99-bookworm AS build
+FROM rust:1.100-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
